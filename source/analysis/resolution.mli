@@ -104,6 +104,10 @@ val outer_join_refinements : t -> t -> t
 
 val outer_widen_refinements : iteration:int -> widening_threshold:int -> t -> t -> t
 
+val join_with_merge_refinements : t -> t -> t
+
+val widen_with_merge_refinements : iteration:int -> widening_threshold:int -> t -> t -> t
+
 val update_existing_refinements : old_resolution:t -> new_resolution:t -> t
 
 val update_refinements_with_filter

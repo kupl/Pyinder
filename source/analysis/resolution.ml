@@ -290,6 +290,29 @@ let outer_widen_refinements ~iteration ~widening_threshold left right =
         right.annotation_store;
   }
 
+let join_with_merge_refinements left right =
+  let global_resolution = left.global_resolution in
+  {
+    left with
+    annotation_store =
+      Refinement.Store.join_with_merge
+        ~global_resolution
+        left.annotation_store
+        right.annotation_store;
+  }
+
+let widen_with_merge_refinements ~iteration ~widening_threshold left right =
+  let global_resolution = left.global_resolution in
+  {
+    left with
+    annotation_store =
+      Refinement.Store.widen_with_merge
+        ~global_resolution
+        ~iteration 
+        ~widening_threshold
+        left.annotation_store
+        right.annotation_store;
+  }
 
 let update_existing_refinements ~old_resolution ~new_resolution =
   {

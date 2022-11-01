@@ -31,12 +31,15 @@ class Arguments:
     show_error_traces: bool = False
     strict: bool = False
 
+    taint_model_paths: Sequence[str] = dataclasses.field(default_factory=list)
+
     def serialize(self) -> Dict[str, Any]:
         return {
             **self.base_arguments.serialize(),
             "additional_logging_sections": self.additional_logging_sections,
             "show_error_traces": self.show_error_traces,
             "strict": self.strict,
+            "taint_model_paths": self.taint_model_paths,
         }
 
 
@@ -81,6 +84,10 @@ def create_check_arguments(
         else None
     )
 
+    taint_models_path = check_arguments.taint_models_path
+    if len(taint_models_path) == 0:
+        taint_models_path = configuration.get_taint_models_path()
+
     return Arguments(
         base_arguments=backend_arguments.BaseArguments(
             log_path=str(log_directory),
@@ -106,6 +113,7 @@ def create_check_arguments(
         additional_logging_sections=additional_logging_sections,
         show_error_traces=check_arguments.show_error_traces,
         strict=configuration.is_strict(),
+        taint_model_paths=taint_models_path
     )
 
 
@@ -172,7 +180,6 @@ def _run_check_command(command: Sequence[str], output: str, mine: bool) -> comma
                 errors="replace",
             )
             return_code = result.returncode
-
             # Interpretation of the return code needs to be kept in sync with
             # `source/command/checkCommand.ml`.
             if return_code == 0:

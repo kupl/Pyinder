@@ -39,4 +39,8 @@ module AnalyzeConfiguration : sig
   val of_yojson : Yojson.Safe.t -> (t, string) Result.t
 end
 
+val run_analyze : string -> 'a
+
+val run_analyze_mine : (AnalyzeConfiguration.t, string) result -> ExitStatus.t
+
 val command : Command.t

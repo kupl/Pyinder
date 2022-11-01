@@ -55,6 +55,26 @@ module type Signature = sig
   include Fixpoint.State with type t := t
 end
 
+module type PossibleSignature = sig
+  type t [@@deriving eq]
+
+  val create : resolution:Resolution.t -> t
+
+  val unreachable : t
+
+  val resolution : t -> Resolution.t option
+
+  val initial : resolution:Resolution.t -> t
+
+  val parse_and_check_annotation
+    :  ?bind_variables:bool ->
+    resolution:Resolution.t ->
+    Expression.t ->
+    Error.t list * Type.t
+
+  include PossibleFixpoint.PossibleState with type t := t
+end
+
 val unpack_callable_and_self_argument
   :  signature_select:
        (arguments:AttributeResolution.Argument.t list ->
@@ -66,6 +86,8 @@ val unpack_callable_and_self_argument
   TypeOperation.callable_and_self_argument option
 
 module State (Context : Context) : Signature
+
+module PossibleState (Context : Context) : PossibleSignature
 
 module DummyContext : Context
 
@@ -101,6 +123,14 @@ module CheckResult : sig
 end
 
 val check_define_by_name
+  :  type_check_controls:EnvironmentControls.TypeCheckControls.t ->
+  call_graph_builder:(module Callgraph.Builder) ->
+  global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->
+  dependency:SharedMemoryKeys.DependencyKey.registered option ->
+  Ast.Reference.t -> OurTypeSet.OurSummary.t ref ->
+  CheckResult.t option
+
+val search_define_by_name
   :  type_check_controls:EnvironmentControls.TypeCheckControls.t ->
   call_graph_builder:(module Callgraph.Builder) ->
   global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->

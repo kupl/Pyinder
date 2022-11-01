@@ -101,6 +101,8 @@ module State (Context : Context) = struct
 
   let set_possibleconditions _ post = post
 
+  let update_possible _ cur = cur
+
   let value_exn = function
     | Bottom -> failwith "expected value, got bottom"
     | Value value -> value

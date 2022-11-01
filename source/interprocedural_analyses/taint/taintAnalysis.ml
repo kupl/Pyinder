@@ -17,6 +17,7 @@ let initialize_configuration
   (* In order to save time, sanity check models before starting the analysis. *)
   Log.info "Verifying model syntax and configuration.";
   let timer = Timer.start () in
+  (if List.is_empty taint_model_paths then print_endline "EMPTY!" else ());
   ModelParser.get_model_sources ~paths:taint_model_paths
   |> List.iter ~f:(fun (path, source) -> ModelParser.verify_model_syntax ~path ~source);
   let (_ : TaintConfiguration.t) =
@@ -281,10 +282,12 @@ let run_taint_analysis
   =
   try
     let () = initialize_configuration ~static_analysis_configuration in
-
     (* Collect decorators to skip before type-checking because decorator inlining happens in an
        early phase of type-checking and needs to know which decorators to skip. *)
     let () = parse_and_save_decorators_to_skip ~inline_decorators configuration in
+
+    
+    let _ = inline_decorators in
 
     let cache = Cache.load ~scheduler ~configuration ~enabled:use_cache in
 
@@ -363,6 +366,7 @@ let run_taint_analysis
       |> Analysis.TypeEnvironment.ReadOnly.ast_environment
     in
 
+
     Log.info "Computing overrides...";
     let timer = Timer.start () in
     let {
@@ -396,6 +400,19 @@ let run_taint_analysis
     in
     Statistics.performance ~name:"Call graph built" ~phase_name:"Building call graph" ~timer ();
 
+    
+
+    let _ = whole_program_call_graph, define_call_graphs, override_graph_heap, skipped_overrides,
+    ast_environment, class_interval_graph, build_system, repository_root in 
+
+    let () = purge_shared_memory ~environment ~qualifiers in
+
+    let reverse_graph = Interprocedural.CallGraph.WholeProgramCallGraph.reverse_graph whole_program_call_graph in
+    Interprocedural.OurCallGraph.our_callgraph := Interprocedural.OurCallGraph.OurCallGraph.set_callgraph !Interprocedural.OurCallGraph.our_callgraph reverse_graph;
+
+    ()
+
+    (*
     Log.info "Computing dependencies...";
     let timer = Timer.start () in
     let {
@@ -481,6 +498,8 @@ let run_taint_analysis
         ~fixpoint_state
     in
     Yojson.Safe.pretty_to_string (`List summary) |> Log.print "%s"
+    *)
+    
   with
   | (TaintConfiguration.TaintConfigurationError _ | ModelVerificationError.ModelVerificationErrors _)
     as exn ->

@@ -61,7 +61,6 @@ module MapLattice = struct
       in
       fold2 left right ~init:empty ~f
 
-
     let meet ~meet_one left right =
       let f ~key ~data sofar =
         match data with
@@ -245,6 +244,25 @@ module Unit = struct
       in
       { base; attributes }
 
+  let rec join_with_merge ~global_resolution left right =
+    if equal left top || equal right top then
+      top
+    else
+      let base, attributes =
+        match left.base, right.base with
+        | Some left_base, Some right_base ->
+            (
+              Some (Annotation.join ~type_join:(GlobalResolution.join global_resolution) left_base right_base),
+              IdentifierMap.merge_with ~merge_one:(join_with_merge ~global_resolution) left.attributes right.attributes
+            )
+        | Some left_base, None -> Some left_base, left.attributes
+        | None, Some right_base -> Some right_base, right.attributes
+        | None, None ->
+            (* you only want to continue the nested join should both attribute trees exist *)
+            None, IdentifierMap.empty
+      in
+      { base; attributes }
+
 
   let rec meet ~global_resolution left right =
     let should_recurse, base =
@@ -272,28 +290,39 @@ module Unit = struct
     else
       join ~global_resolution left right
 
-  let rec remain_new old_map new_map =
-    let f ~key:iden ~data:t (sofar, flag) =
-      let new_t = IdentifierMap.find sofar iden in
-      match new_t with
-      | Some new_t ->
-        let new_unit, is_new = remain_new t new_t in
-        let sofar = new_unit.attributes in
-        (match base t, base new_t with
-        | Some b, Some new_b ->
-          if Annotation.equal b new_b && not is_new then IdentifierMap.remove sofar iden, false 
-          else
-            sofar, true
-        | _ -> sofar, true
-        )
-      | None -> sofar, true
+  let widen_with_merge ~global_resolution ~widening_threshold ~iteration left right =
+    if iteration + 1 >= widening_threshold then
+      create (Annotation.create_mutable Type.Top)
+    else
+      join_with_merge ~global_resolution left right
+
+  let rec remain_attrs (old_attrs: t IdentifierMap.t) (new_attrs: t IdentifierMap.t) =
+    let f ~key:name ~data:u (sofar, flag) =
+      match u with
+      | `Left _ -> sofar, false || flag
+      | `Right new_unit -> IdentifierMap.set sofar ~key:name ~data:new_unit, true
+      | `Both (old_unit, new_unit) -> 
+        let update_unit, is_update = remain_new old_unit new_unit in
+        if (base update_unit) |> Option.is_some 
+        then
+          IdentifierMap.set sofar ~key:name ~data:update_unit, (is_update || flag)
+        else sofar, false || flag
     in
+    IdentifierMap.fold2 ~init:(IdentifierMap.empty, false) ~f old_attrs new_attrs
 
-    let base = base new_map in
-    
-    let attributes, is_new = IdentifierMap.fold ~init:(new_map.attributes, false) ~f old_map.attributes in
+  and remain_base old_base new_base flag =
+    if flag then new_base, flag else
+    match old_base, new_base with
+    | _, None -> None, false
+    | None, Some anno -> Some anno, true
+    | Some old_anno, Some new_anno ->
+      if Annotation.equal old_anno new_anno then None, false else Some new_anno, true
 
-    { base; attributes }, is_new
+  and remain_new old_t new_t =
+    let update_attrs, is_update = remain_attrs old_t.attributes new_t.attributes in
+    let update_base, is_update = remain_base (base old_t) (base new_t) is_update in
+    { base=update_base; attributes=update_attrs; }, is_update
+
     
 end
 
@@ -305,6 +334,8 @@ module Store = struct
   [@@deriving eq, equal]
 
   let empty = { annotations = ReferenceMap.empty; temporary_annotations = ReferenceMap.empty }
+
+  let set_annotations { temporary_annotations; _ } annotations = { annotations; temporary_annotations; }
 
   let pp format { annotations; temporary_annotations } =
     let show_annotation (reference, unit) =
@@ -465,6 +496,14 @@ module Store = struct
         ReferenceMap.join ~join_one:merge_one left.temporary_annotations right.temporary_annotations;
     }
 
+  let widen_or_join_with_merge ~merge_one left right =
+    {
+      (* Newly-instantiated locals live in `annotations`, so we merge with join *)
+      annotations = ReferenceMap.merge_with ~merge_one left.annotations right.annotations;
+      (* `temporary_annotations` only has type info, so we do a proper join *)
+      temporary_annotations =
+        ReferenceMap.merge_with ~merge_one left.temporary_annotations right.temporary_annotations;
+    }
 
   let outer_join ~global_resolution =
     let merge_one = Unit.join ~global_resolution in
@@ -474,6 +513,14 @@ module Store = struct
   let outer_widen ~global_resolution ~iteration ~widening_threshold =
     let merge_one = Unit.widen ~global_resolution ~iteration ~widening_threshold in
     widen_or_join ~merge_one
+
+  let join_with_merge ~global_resolution =
+    let merge_one = Unit.join_with_merge ~global_resolution in
+    widen_or_join_with_merge ~merge_one
+
+  let widen_with_merge ~global_resolution ~iteration ~widening_threshold =
+    let merge_one = Unit.widen_with_merge ~global_resolution ~iteration ~widening_threshold in
+    widen_or_join_with_merge ~merge_one
 
 
   let update_existing ~old_store ~new_store =
@@ -504,30 +551,20 @@ module Store = struct
     }
 
   let remain_new ~old_store ~new_store =
-    let filter new_unit annotation =
-      match Unit.base new_unit with
-      | Some new_anno ->  Annotation.equal annotation new_anno
-      | None -> false
-      
-    in
-
-    let update_map old_map new_map =
-      let f ~key ~data sofar =
-        let unit_opt = ReferenceMap.find new_map key in
-        match unit_opt with
-        | Some new_unit ->
-          let new_unit, is_new = Unit.remain_new data new_unit in
-          if is_new then sofar else
-            if Unit.base new_unit |> Option.map ~f:(filter new_unit) |> Option.value ~default:false then
-              ReferenceMap.remove sofar key
-            else
-              sofar
-              
-        | None -> sofar
-
-        
+    let update_map (old_map: Unit.t ReferenceMap.t) (new_map: Unit.t ReferenceMap.t) =
+      let f ~key:new_ref ~data:u sofar =
+        match u with
+        | `Left _ -> sofar
+        | `Right new_unit -> ReferenceMap.set sofar ~key:new_ref ~data:new_unit
+        | `Both (old_unit, new_unit) -> 
+          let result, _ = Unit.remain_new old_unit new_unit in
+          if (Unit.base result) |> Option.is_some
+          then
+            ReferenceMap.set sofar ~key:new_ref ~data:result
+          else
+            sofar
       in
-      ReferenceMap.fold ~init:new_map ~f old_map
+      ReferenceMap.fold2 ~init:ReferenceMap.empty ~f old_map new_map
     in
     {
       annotations = update_map old_store.annotations new_store.annotations;
@@ -536,14 +573,15 @@ module Store = struct
     }
 
   let update_self ~global_resolution ({ annotations; temporary_annotations; } as t) =
-    let merge_one = Unit.join ~global_resolution in
+    (*let merge_one = Unit.join ~global_resolution in*)
+    let merge_one = Unit.meet ~global_resolution in
     let extract_self = update_with_filter ~old_store:empty ~new_store:t ~filter:(fun reference _ -> 
         String.is_suffix ~suffix:"$self" (Reference.last reference)
     )
     in
     let x =
     {
-      annotations = ReferenceMap.merge_with ~merge_one annotations extract_self.temporary_annotations;
+      annotations = ReferenceMap.meet ~meet_one:merge_one annotations extract_self.temporary_annotations;
       temporary_annotations = temporary_annotations;
     }
     in
@@ -555,4 +593,56 @@ module Store = struct
     annotations = ReferenceMap.fold ~init:init.annotations ~f annotations;
     temporary_annotations = temporary_annotations;
   }
+
+  let update_from_top_to_bottom { annotations; temporary_annotations; } =
+    let rec f data:Unit.t =
+        let base = Unit.base data in
+        let attributes = Unit.attributes data in
+        if Identifier.Map.Tree.is_empty attributes
+        then
+          let new_base = 
+            match base with
+            | Some { annotation; mutability; } -> if Type.is_top annotation or Type.is_any annotation then Some { annotation=Type.Bottom; mutability; } else base
+            | _ -> base
+          in
+          { base=new_base; attributes; }
+        else
+          let new_attributes = Identifier.Map.Tree.map attributes ~f in
+          { base; attributes=new_attributes; }
+    in
+
+    { 
+      annotations=Reference.Map.map annotations ~f;
+      temporary_annotations=Reference.Map.map temporary_annotations ~f;
+    }
+
+  let update_possible ~global_resolution ({ annotations=prev_anno; temporary_annotations=prev_temp_anno; } as prev) { annotations=cur_anno; temporary_annotations=cur_temp_anno; } =
+      let join left_anno opt =
+        match opt with
+        | None -> left_anno
+        | Some right_anno ->
+          let x = Unit.join_with_merge ~global_resolution left_anno right_anno in
+          (*Format.printf "[[[ JOIN ]]] \n\n%a\n\n" Unit.pp x;*)
+          x
+      in
+      ReferenceMap.fold ~init:prev ~f:(fun ~key ~data { annotations=sofar_anno; temporary_annotations=sofar_temp_anno; } ->
+          let cur_anno_data = ReferenceMap.find cur_anno key in
+          let prev_anno_data = ReferenceMap.find prev_anno key in
+          let prev_temp_anno_data = ReferenceMap.find prev_temp_anno key in
+          let new_anno, new_temp = 
+            if Option.is_some cur_anno_data
+            then
+              if Option.is_some prev_anno_data then
+                ReferenceMap.set sofar_anno ~key ~data:(join data prev_anno_data), sofar_temp_anno
+              else
+                sofar_anno, ReferenceMap.set sofar_temp_anno ~key ~data:(join data prev_temp_anno_data)
+            else
+              ReferenceMap.remove sofar_anno key, ReferenceMap.set sofar_temp_anno ~key ~data:(join data prev_temp_anno_data) 
+          in
+
+        { annotations=new_anno; temporary_annotations=new_temp; }
+      ) cur_temp_anno
+
+  let combine_join_with_merge ~global_resolution { annotations; temporary_annotations; } =
+    ReferenceMap.merge_with ~merge_one:(Unit.join_with_merge ~global_resolution) annotations temporary_annotations
 end

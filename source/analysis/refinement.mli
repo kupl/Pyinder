@@ -51,6 +51,8 @@ module Store : sig
 
   val empty : t
 
+  val set_annotations : t -> Unit.t Reference.Map.t -> t
+
   val to_yojson : Format.formatter -> t -> unit
 
   val has_nontemporary_annotation : name:Reference.t -> t -> bool
@@ -89,6 +91,16 @@ module Store : sig
     t ->
     t
 
+  val join_with_merge : global_resolution:GlobalResolution.t -> t -> t -> t
+
+  val widen_with_merge 
+  :  global_resolution:GlobalResolution.t ->
+    iteration:int ->
+    widening_threshold:int ->
+    t ->
+    t ->
+    t
+
   val update_existing : old_store:t -> new_store:t -> t
 
   val update_with_filter
@@ -102,4 +114,10 @@ module Store : sig
   val update_self : global_resolution:GlobalResolution.t -> t -> t
 
   val fold_map : f:(key:Reference.t -> data:Unit.t -> Unit.t Reference.Map.t -> Unit.t Reference.Map.t) -> t -> t -> t
+
+  val update_from_top_to_bottom : t -> t
+
+  val update_possible : global_resolution:GlobalResolution.t -> t -> t -> t
+
+  val combine_join_with_merge : global_resolution:GlobalResolution.t -> t -> Unit.t Reference.Map.t
 end

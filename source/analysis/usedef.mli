@@ -1,19 +1,8 @@
-(*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *)
-
 open Core
 open Ast
 
-module type State = sig
+module type UsedefState = sig
   type t [@@deriving show]
-
-  val set_possibleconditions : t -> t -> t
-
-  val update_possible : t -> t -> t
 
   val bottom : t
 
@@ -28,13 +17,26 @@ module type State = sig
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
 
-module type Fixpoint = sig
+
+module UsedefState : sig
+  module VarSet : sig
+    type t = Reference.Set.t
+  end
+
+  type usedef
+  type t = {
+    defined: Reference.Set.t;
+    undefined: Reference.Set.t;
+    usedef_table: usedef Reference.Map.t;
+  }
+  include UsedefState with type t := t
+end 
+
+module type UsedefFixpoint = sig
   type state
 
   type t = {
-    preconditions: state Int.Table.t;
-    postconditions: state Int.Table.t;
-    possibleconditions: state Int.Table.t
+    usedef_tables: state Int.Table.t
   }
   [@@deriving show]
 
@@ -44,6 +46,8 @@ module type Fixpoint = sig
 
   val exit : t -> state option
 
+  val find : t -> int -> state option
+
   val forward : cfg:Cfg.t -> initial:state -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
@@ -51,4 +55,6 @@ module type Fixpoint = sig
   val equal : f:(state -> state -> bool) -> t -> t -> bool
 end
 
-module Make (State : State) : Fixpoint with type state = State.t
+module Make (State : UsedefState) : UsedefFixpoint with type state = State.t
+
+module UsedefStruct : UsedefFixpoint with type state = (UsedefState.t)

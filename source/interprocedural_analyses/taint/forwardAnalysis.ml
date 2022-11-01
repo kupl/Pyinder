@@ -47,6 +47,8 @@ module State (FunctionContext : FUNCTION_CONTEXT) = struct
   type t = { taint: ForwardState.t }
 
   let set_possibleconditions _ post = post
+
+  let update_possible _ cur = cur
   let bottom = { taint = ForwardState.bottom }
 
   let pp formatter { taint } = ForwardState.pp formatter taint

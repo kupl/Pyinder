@@ -2000,6 +2000,8 @@ struct
 
     let set_possibleconditions _ post = post
 
+    let update_possible _ cur = cur
+
     let bottom = ()
 
     let less_or_equal ~left:_ ~right:_ = true
@@ -2179,8 +2181,26 @@ module WholeProgramCallGraph = struct
   let merge_disjoint left right =
     Map.merge_skewed ~combine:(fun ~key:_ _ _ -> failwith "call graphs are not disjoint") left right
 
+  let reverse_graph graph =
+    Target.Map.fold graph ~init:empty ~f:(fun ~key:target ~data:(callees: Target.t list) new_graph ->
+      List.fold callees ~init:new_graph ~f:(fun new_graph callee ->
+        Target.Map.update new_graph callee ~f:(fun v -> 
+          match v with
+          | Some v -> target::v
+          | None -> [target]
+        )
+      )
+      
+    )
 
   let to_target_graph graph = graph
+
+  let pp formatter graph =
+    Target.Map.iteri graph ~f:(fun ~key:target ~data:callees -> 
+      Format.fprintf formatter "%a ===> \n" Target.pp target;
+      List.iter callees ~f:(fun callee -> Format.fprintf formatter "%a, " Target.pp callee);
+      Format.fprintf formatter "\n[ END ] \n"
+    )
 end
 
 type call_graphs = {

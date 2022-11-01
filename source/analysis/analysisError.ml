@@ -4230,3 +4230,17 @@ let create_mismatch ~resolution ~actual ~expected ~covariant =
     actual;
     due_to_invariance = GlobalResolution.is_invariance_mismatch resolution ~left ~right;
   }
+
+let filter_type_error errors =
+  List.filter errors ~f:(fun {kind;_} ->
+      (match kind with
+      | UnsupportedOperand _ | IncompatibleParameterType _ | UndefinedAttribute _ 
+        -> true
+      | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
+      | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
+      | IncompatibleAttributeType _ | UndefinedImport _ 
+      | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
+        -> false
+      | _ -> true
+      )
+  )

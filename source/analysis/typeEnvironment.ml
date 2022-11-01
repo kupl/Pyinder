@@ -41,13 +41,22 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
-  TypeCheck.check_define_by_name
-    ~type_check_controls
-    ~call_graph_builder
-    ~global_environment
-    ~dependency
-    define_name
-    OurTypeSet.our_model
+  if !OurTypeSet.is_search_mode then
+    TypeCheck.search_define_by_name
+      ~type_check_controls
+      ~call_graph_builder
+      ~global_environment
+      ~dependency
+      define_name
+      OurTypeSet.our_model
+  else
+    TypeCheck.check_define_by_name
+      ~type_check_controls
+      ~call_graph_builder
+      ~global_environment
+      ~dependency
+      define_name
+      OurTypeSet.our_model
 
 
 module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
@@ -161,8 +170,7 @@ let populate_for_modules ~scheduler environment qualifiers =
     ~name:"shared memory size post-typecheck"
     ~integers:["size", Memory.heap_size ()]
     ();
-  Profiling.track_shared_memory_usage ~name:"After legacy type check" ();
-  print_endline (OurTypeSet.ClassSummary.pp_json !OurTypeSet.our_model.class_summary)
+  Profiling.track_shared_memory_usage ~name:"After legacy type check" ()
 
 
 

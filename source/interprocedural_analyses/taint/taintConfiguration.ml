@@ -1115,6 +1115,7 @@ let create
   let file_paths =
     PyrePath.get_matching_files_recursively ~suffix:".config" ~paths:taint_model_paths
   in
+
   let parse_configuration path =
     if not (PyrePath.file_exists path) then
       Error (Error.create ~path ~kind:Error.FileNotFound)

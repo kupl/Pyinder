@@ -118,6 +118,7 @@ class CheckArguments:
     output: str = TEXT
     sequential: bool = False
     show_error_traces: bool = False
+    taint_models_path: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

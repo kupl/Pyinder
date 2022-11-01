@@ -8,7 +8,7 @@
 open Core
 open Ast
 
-module type State = sig
+module type PossibleState = sig
   type t [@@deriving show]
 
   val set_possibleconditions : t -> t -> t
@@ -23,12 +23,16 @@ module type State = sig
 
   val widen : previous:t -> next:t -> iteration:int -> t
 
+  val join_possible : t -> t -> t
+
+  val widen_possible : previous:t -> next:t -> iteration:int -> t
+
   val forward : statement_key:int -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
 
-module type Fixpoint = sig
+module type PossibleFixpoint = sig
   type state
 
   type t = {
@@ -44,6 +48,8 @@ module type Fixpoint = sig
 
   val exit : t -> state option
 
+  val exit_possible : t -> state option
+
   val forward : cfg:Cfg.t -> initial:state -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
@@ -51,4 +57,4 @@ module type Fixpoint = sig
   val equal : f:(state -> state -> bool) -> t -> t -> bool
 end
 
-module Make (State : State) : Fixpoint with type state = State.t
+module Make (State : PossibleState) : PossibleFixpoint with type state = State.t

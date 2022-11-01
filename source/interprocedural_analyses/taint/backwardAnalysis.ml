@@ -43,6 +43,8 @@ module State (FunctionContext : FUNCTION_CONTEXT) = struct
 
   let set_possibleconditions _ post = post
 
+  let update_possible _ cur = cur
+
   let bottom = { taint = BackwardState.bottom }
 
   let pp formatter { taint } = BackwardState.pp formatter taint

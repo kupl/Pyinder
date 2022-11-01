@@ -197,7 +197,7 @@ let with_performance_tracking ~f =
   result
 
 
-let run_analyze analyze_configuration =
+let run_analyze_config analyze_configuration =
   let { AnalyzeConfiguration.base = { CommandStartup.BaseConfiguration.source_paths; _ }; _ } =
     analyze_configuration
   in
@@ -264,11 +264,50 @@ let run_analyze configuration_file =
           ();
         Lwt_main.run
           (Lwt.catch
-             (fun () -> run_analyze analyze_configuration)
+             (fun () -> run_analyze_config analyze_configuration)
              (fun exn -> Lwt.return (on_exception exn)))
   in
   Statistics.flush ();
   exit (ExitStatus.exit_code exit_status)
+
+  let run_analyze_mine json =
+    let exit_status =
+      match
+        json
+      with
+      | Result.Error message ->
+          Log.error "%s" message;
+          ExitStatus.CheckStatus CheckCommand.ExitStatus.PyreError
+      | Result.Ok
+          ({
+             AnalyzeConfiguration.base =
+               {
+                 CommandStartup.BaseConfiguration.global_root;
+                 local_root;
+                 debug;
+                 remote_logging;
+                 profiling_output;
+                 memory_profiling_output;
+                 _;
+               };
+             _;
+           } as analyze_configuration) ->
+          CommandStartup.setup_global_states
+            ~global_root
+            ~local_root
+            ~debug
+            ~additional_logging_sections:[]
+            ~remote_logging
+            ~profiling_output
+            ~memory_profiling_output
+            ();
+          Lwt_main.run
+            (Lwt.catch
+               (fun () -> run_analyze_config analyze_configuration)
+               (fun exn -> Lwt.return (on_exception exn)))
+    in
+    Statistics.flush ();
+    exit_status
 
 
 let command =

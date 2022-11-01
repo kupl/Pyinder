@@ -513,6 +513,8 @@ val create_mismatch
   covariant:bool ->
   mismatch
 
+val filter_type_error : t list -> t list
+
 module SimplificationMap : sig
   type t = Reference.t Reference.Map.t
 

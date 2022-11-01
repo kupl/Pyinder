@@ -7,7 +7,9 @@
 
 open Core
 open Ast
+open Usedef
 
+exception DuplicateException;;
 let weaken_typ typ =
   let weaken_typ = Type.weaken_literals typ in
   let weaken_typ =
@@ -24,15 +26,19 @@ module ClassSummary = struct
 
   
   let extract_self store =
+    (*Format.printf "[[[ BEFORE EXTRACT SELF ]]] \n\n%a\n\n" Refinement.Store.pp store;*)
     Refinement.Store.update_with_filter ~old_store:Refinement.Store.empty ~new_store:store ~filter:(fun reference _ -> 
       String.is_suffix ~suffix:"$self" (Reference.last reference)
     )
 
   let extract_element_type store =
+    (*Format.printf "[[[ BEFORE EXTRACT ELEMENT ]]] \n\n%a\n\n" Refinement.Store.pp store;*)
     let filter_element_type (typ: Type.t) =
+      
       match typ with
-      | Bottom | Any | Top -> print_endline "NOPE"; false
-      | _ -> print_endline "GOTCHA"; true
+      | Bottom | Any | Top -> false
+      | _ -> true
+      
     in
     let rec fold_unit u =
       let base = 
@@ -48,7 +54,6 @@ module ClassSummary = struct
       in
       Refinement.Unit.create_all base attributes
     in
-    Format.printf "[ Before Extract ] \n\n%a \n\n" Refinement.Store.pp store;
     let store = Refinement.Store.fold_map ~f:(fun ~key:reference ~data:unit store ->
       (*Format.printf "[ ITER ] \n\n%a \n\n%a \n\n" Reference.pp reference Refinement.Unit.pp unit;*)
       Reference.Map.set store ~key:reference ~data:(fold_unit unit)
@@ -68,6 +73,9 @@ module ClassSummary = struct
   let set t ~key ~data =
     Hashtbl.set t ~key ~data:(extract_element_type (extract_self data))
 
+  let get t ~key =
+    Hashtbl.find t key
+
   let meet ~global_resolution (t: t) class_name method_postcondition =
     let current_postcondition = Hashtbl.find t class_name in
     match current_postcondition with
@@ -78,9 +86,17 @@ module ClassSummary = struct
     
 
   let outer_join ~global_resolution (t: t) class_name method_postcondition =
-    Format.printf "[ Before SET ] \n\n%a \n\n" Refinement.Store.pp method_postcondition;
     let current_postcondition = Hashtbl.find t class_name |> Option.value ~default:(Refinement.Store.empty) in
-    set t ~key:class_name ~data:(Refinement.Store.outer_join ~global_resolution current_postcondition method_postcondition)
+    if Refinement.Store.less_or_equal ~global_resolution ~left:current_postcondition ~right:Refinement.Store.empty 
+    then 
+      set t ~key:class_name ~data:method_postcondition
+    else
+      set t ~key:class_name ~data:(Refinement.Store.outer_join ~global_resolution current_postcondition method_postcondition)
+
+    
+  let join_with_merge ~global_resolution (t: t) class_name method_postcondition =
+    let current_postcondition = Hashtbl.find t class_name |> Option.value ~default:(Refinement.Store.empty) in
+    set t ~key:class_name ~data:(Refinement.Store.join_with_merge ~global_resolution current_postcondition method_postcondition)
 
   let outer_widen ~global_resolution (t: t) class_name method_postcondition =
     let current_postcondition = Hashtbl.find t class_name |> Option.value ~default:(Refinement.Store.empty) in
@@ -143,9 +159,11 @@ module FunctionSummary = struct
   type t = {
     arg_types : ArgTypes.t;
     return_types : Type.t;
+    possible_condition : Refinement.Store.t;
+    usedef_table : UsedefState.t option
   }
 
-  let create () = { arg_types = ArgTypes.create (); return_types = Type.Bottom; }
+  let create () = { arg_types = ArgTypes.create (); return_types = Type.Bottom; possible_condition = Refinement.Store.empty; usedef_table = None }
 
     (*
   let extract_self store =
@@ -166,18 +184,28 @@ module FunctionSummary = struct
       return_types = meet_type left_return_types right_return_types;
     }
     *)
-  let equal {arg_types=ref1; return_types=typ1;} {arg_types=ref2; return_types=typ2;} =
+  let equal {arg_types=ref1; return_types=typ1; _} {arg_types=ref2; return_types=typ2; _} =
       (ArgTypes.equal ref1 ref2) && (Type.equal typ1 typ2)
 
-  let pp format {arg_types; return_types;} =
-    Format.fprintf format "%a \nreturn : %a \n" ArgTypes.pp arg_types Type.pp return_types
+  let pp format {arg_types; return_types; possible_condition; _} =
+    Format.fprintf format "%a \nreturn : %a \n\n%a\n" ArgTypes.pp arg_types Type.pp return_types Refinement.Store.pp possible_condition
 
   let add_arg_types {arg_types; _} arg_typ_list =
     List.iter arg_typ_list ~f:(fun (arg, typ) -> ArgTypes.add_arg_type arg_types arg typ)
 
-  let add_return_info {arg_types; return_types} return_type =
+  let add_return_info {arg_types; return_types; possible_condition; usedef_table; _} return_type =
     let modified_typ = weaken_typ return_type in
-    {arg_types; return_types=Type.union [return_types; modified_typ]}
+    {arg_types; return_types=Type.union [return_types; modified_typ]; possible_condition; usedef_table}
+
+  let set_possible_condition { arg_types; return_types; usedef_table; _ } possible_condition =
+    { arg_types; return_types; possible_condition=(ClassSummary.extract_self possible_condition); usedef_table; }
+ 
+  let set_usedef_table { arg_types; return_types; possible_condition; _ } usedef_table =
+    { arg_types; return_types; possible_condition; usedef_table; }
+
+  let get_usedef_table {usedef_table; _} = usedef_table
+
+  let get_possible_condition { possible_condition; _ } = possible_condition
 
   let get_arg_types {arg_types; _} = arg_types
 
@@ -206,6 +234,22 @@ module FunctionTable = struct
     let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
     Hashtbl.set t ~key:func ~data:(FunctionSummary.add_return_info func_summary return_type)
 
+  let set_possible_condition t func possible_condition =
+    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
+    Hashtbl.set t ~key:func ~data:(FunctionSummary.set_possible_condition func_summary possible_condition)
+
+  let set_usedef_table t func usedef_table =
+    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
+    Hashtbl.set t ~key:func ~data:(FunctionSummary.set_usedef_table func_summary usedef_table)
+
+  let get_usedef_table t func_name =
+    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummary.get_usedef_table func_summary
+
+  let get_possible_condition t func_name =
+    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummary.get_possible_condition func_summary
+
   let get_func_arg_types t func_name =
     let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_arg_types func_summary
@@ -221,20 +265,48 @@ module OurSummary = struct
     class_summary : ClassSummary.t;
     function_table : FunctionTable.t;
     current_function : Reference.t option;
+    current_possiblecondition : Refinement.Store.t option;
   }
   [@@deriving equal]
 
-  let create () = {class_summary = ClassSummary.create (); function_table = FunctionTable.create (); current_function=None}
+  let create () = {
+    class_summary = ClassSummary.create (); 
+    function_table = FunctionTable.create (); 
+    current_function = None;
+    current_possiblecondition = None  
+  }
 
   let class_summary {class_summary; _} = class_summary
 
-  let set_current_function {class_summary; function_table; _} current_function = {class_summary; function_table; current_function=Some current_function}
+  let set_current_function {class_summary; function_table; current_possiblecondition; _} current_function = 
+    {class_summary; 
+    function_table; 
+    current_function=Some current_function;
+    current_possiblecondition
+    }
 
-  let copy {class_summary; function_table; current_function;} = 
+  let set_current_possiblecondition {class_summary; function_table; current_function; _} current_possiblecondition = 
+    {
+      class_summary; 
+      function_table; 
+      current_function;
+      current_possiblecondition=current_possiblecondition
+    }
+
+  let join_with_merge_current_possiblecondition t ~global_resolution possiblecondition =
+    let update_possiblecondition =
+    match t.current_possiblecondition with
+    | Some current_possiblecondition -> Refinement.Store.join_with_merge ~global_resolution current_possiblecondition possiblecondition
+    | None -> possiblecondition
+    in
+    set_current_possiblecondition t (Some update_possiblecondition)
+
+  let copy {class_summary; function_table; current_function; current_possiblecondition } = 
     {
       class_summary = ClassSummary.copy class_summary;
       function_table = FunctionTable.copy function_table;
       current_function;
+      current_possiblecondition
     }
   
   let equal {class_summary=cs1; function_table=ft1; _} {class_summary=cs2; function_table=ft2; _} =
@@ -245,6 +317,9 @@ module OurSummary = struct
   let pp_func format {function_table; _} = 
     Format.fprintf format "%a" FunctionTable.pp function_table
 
+  let pp formatter t =
+    Format.fprintf formatter "%a\n\n%a" pp_class t pp_func t
+
   let add_arg_types { function_table; _} reference arg_typ_list =
     FunctionTable.add_arg_types function_table reference arg_typ_list
 
@@ -254,11 +329,86 @@ module OurSummary = struct
       FunctionTable.add_return_info function_table func return_type
     | None -> ()
 
+  let set_possible_condition {function_table; _} func_name possible_condition =
+    FunctionTable.set_possible_condition function_table func_name possible_condition
+  let set_usedef_table {function_table; _} func_name usedef_tables =
+    FunctionTable.set_usedef_table function_table func_name usedef_tables
+
+  
+
+  let get_usedef_table {function_table; _} func_name = 
+    FunctionTable.get_usedef_table function_table func_name
+
+  let get_possible_condition {function_table; _} func_name = 
+    FunctionTable.get_possible_condition function_table func_name
+
+  let get_current_usedef_table ({current_function; _} as t) =
+    match current_function with
+    | Some func_name -> get_usedef_table t func_name
+    | None -> None
+
   let get_func_arg_types {function_table; _} func_name =
     FunctionTable.get_func_arg_types function_table func_name
 
   let get_func_return_types {function_table; _} func_name =
     FunctionTable.get_func_return_types function_table func_name
+
+  let get_current_possiblecondition { current_possiblecondition; _ } = current_possiblecondition
+
+  let search_suspicious_variable t ~global_resolution parent =
+    (*let usedef_table = get_usedef_table t func_name |> Option.value ~default:UsedefState.bottom in*)
+    let possible_condition = ClassSummary.get t.class_summary ~key:parent in
+    match possible_condition with
+    | None -> []
+    | Some possible_condition -> 
+      let total_annotation = Refinement.Store.combine_join_with_merge ~global_resolution possible_condition in
+      (*print_endline "This is total";
+      Reference.Map.iteri total_annotation ~f:(fun ~key ~data -> Format.printf "%a -> %a\n" Reference.pp key Refinement.Unit.pp data);
+      print_endline "End";
+      *)
+      (* split each variables and types *)
+      let f ~key ~data sofar = 
+        let rec split_attrs (target_unit: Refinement.Unit.t)  = 
+          let cand_attrs = Identifier.Map.Tree.fold (Refinement.Unit.attributes target_unit) ~init:[] ~f:(fun ~key:attr ~data:inner_unit cand -> 
+            let cand_attrs = split_attrs inner_unit in
+            cand@(List.map cand_attrs ~f:(fun cand_attr -> Identifier.Map.Tree.add Identifier.Map.Tree.empty ~key:attr ~data:cand_attr))
+          )
+          in
+          if List.is_empty cand_attrs 
+          then 
+            let new_base_list =
+              let new_anno_list =
+                match (Refinement.Unit.base target_unit) with
+                | None -> [None]
+                | Some anno ->
+                  (match Annotation.annotation anno with
+                  | Type.Union t_list ->  List.map t_list ~f:(fun t -> Some (Annotation.create_mutable t))
+                  | _ -> [Some anno]
+                  )
+              in
+              List.map new_anno_list ~f:(fun new_anno -> Refinement.Unit.create_all new_anno Identifier.Map.Tree.empty)
+            in
+            new_base_list
+          else
+          List.map cand_attrs ~f:(fun cand_attr -> 
+            match cand_attr with
+            | `Duplicate -> raise DuplicateException
+            | `Ok cand_attr -> 
+              Refinement.Unit.create_all (Refinement.Unit.base target_unit) cand_attr)
+        in
+        let candidates = split_attrs data in
+        sofar@(List.map candidates ~f:(fun cand -> Reference.Map.set Reference.Map.empty ~key ~data:cand ))
+      in
+
+      let candidates = Reference.Map.fold total_annotation ~init:[] ~f:f in
+      (*
+      List.iter candidates ~f:(fun cand -> Reference.Map.iteri cand ~f:(fun ~key ~data -> Format.printf "%a -> %a\n" Reference.pp key Refinement.Unit.pp data));
+      *)
+      candidates
+
+
 end
 
 let our_model = ref (OurSummary.create ());;
+
+let is_search_mode = ref false;;

@@ -226,7 +226,7 @@ end
 (** Whole-program call graph, stored in the ocaml heap. This is a mapping from a callable to all its
     callees. *)
 module WholeProgramCallGraph : sig
-  type t
+  type t = Target.t list Target.Map.t
 
   val empty : t
 
@@ -238,7 +238,11 @@ module WholeProgramCallGraph : sig
 
   val fold : t -> init:'a -> f:(target:Target.t -> callees:Target.t list -> 'a -> 'a) -> 'a
 
+  val reverse_graph : t -> t
+
   val to_target_graph : t -> TargetGraph.t
+
+  val pp : Format.formatter -> t -> unit
 end
 
 type call_graphs = {

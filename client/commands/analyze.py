@@ -135,6 +135,7 @@ def create_analyze_arguments(
     taint_models_path = analyze_arguments.taint_models_path
     if len(taint_models_path) == 0:
         taint_models_path = configuration.get_taint_models_path()
+
     repository_root = analyze_arguments.repository_root
     if repository_root is not None:
         repository_root = str(Path(repository_root).resolve(strict=False))

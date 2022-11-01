@@ -150,24 +150,26 @@
    let rec fixpoint configuration n =
     let prev_model = Analysis.OurTypeSet.OurSummary.copy !Analysis.OurTypeSet.our_model in
     let errors, ast_environment = do_check configuration in
-    let errors = List.filter errors ~f:(fun {kind;_} ->
-      (match kind with
-      | UnsupportedOperand _ | IncompatibleParameterType _ 
-        -> true
-      | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
-      | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
-      | IncompatibleAttributeType _ | UndefinedAttribute _ | UndefinedImport _ 
-      | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
-        -> false
-      | _ -> true
-      )
-    )
-    in
+    let errors = Analysis.AnalysisError.filter_type_error errors in
     if Analysis.OurTypeSet.OurSummary.equal prev_model (!Analysis.OurTypeSet.our_model)
     then errors, ast_environment
     else fixpoint configuration (n+1)
    in
-   let errors, ast_environment = fixpoint configuration 1 in
+   Log.dump "%s" "Type Inferecne...";
+   let single_errors, ast_environment = fixpoint configuration 1 in
+   Unix.sleep(1);
+   Log.dump "%s" "Type Inferecne End";
+   let _ = single_errors in
+
+   Log.dump "%s" "Type Error Searching...";
+   Analysis.OurTypeSet.is_search_mode := true;
+   (*print_endline "[[[ Search Mode ]]]";*)
+   let errors, _ = do_check configuration in
+   Unix.sleep(1);
+   Log.dump "%s" "Type Error Searching End";
+   let errors = Analysis.AnalysisError.filter_type_error errors in
+   Pyinder.Summarize.errors := errors;
+   
    List.map
      (List.sort ~compare:Analysis.AnalysisError.compare errors)
      ~f:(Server.RequestHandler.instantiate_error ~build_system ~configuration ~ast_environment)
@@ -196,6 +198,13 @@
            ~build_system
            ()
        in
+
+       (* ADD ERRORS *)
+       
+       (*
+       print_endline "";
+       Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
+       *)
        print_errors errors;
        Lwt.return ExitStatus.Ok)
  
@@ -251,6 +260,17 @@
        ExitStatus.PyreError
  
  
+ let our_analysis check_configuration analyze_json = 
+    let x = run_check check_configuration in 
+    Log.dump "%s" "Analyze Call Graph...";
+    Unix.sleep(1);
+    let _ = AnalyzeCommand.run_analyze_mine analyze_json in
+
+    let pyinder_model = Pyinder.Summarize.Summarize.create () in
+    Log.dump "%s" (Format.asprintf "[[[ Pyinder ]]]\n\n%a\n\n[[[ Pyinder End ]]]" Pyinder.Summarize.Summarize.pp pyinder_model);
+    
+    Unix.sleep(1);
+    x
  let run_mine configuration_file =
    let exit_status =
      match CommandStartup.read_and_parse_json configuration_file ~f:CheckConfiguration.of_yojson with
@@ -281,12 +301,17 @@
            ~profiling_output
            ~memory_profiling_output
            ();
+
+         let analyze_json = CommandStartup.read_and_parse_json configuration_file ~f:AnalyzeCommand.AnalyzeConfiguration.of_yojson in
  
          Lwt_main.run
            (Lwt.catch
-              (fun () -> run_check check_configuration)
+              (fun () -> 
+                our_analysis check_configuration analyze_json
+              )
               (fun exn -> Lwt.return (on_exception exn)))
    in
+   Unix.sleep(1);
    Statistics.flush ();
    exit (ExitStatus.exit_code exit_status)
  

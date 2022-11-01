@@ -66,3 +66,5 @@ module UninitializedLocalCheck = UninitializedLocalCheck
 module WeakenMutableLiterals = WeakenMutableLiterals
 module WeakTopologicalOrder = WeakTopologicalOrder
 module OurTypeSet = OurTypeSet
+module PossibleFixpoint = PossibleFixpoint
+module Usedef = Usedef

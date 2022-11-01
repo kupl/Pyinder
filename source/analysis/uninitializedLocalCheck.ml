@@ -210,6 +210,8 @@ module State (Context : Context) = struct
 
   let set_possibleconditions _ post = post
 
+  let update_possible _ cur = cur
+
   let show = function
     | Bottom -> "Bottom"
     | Value state ->

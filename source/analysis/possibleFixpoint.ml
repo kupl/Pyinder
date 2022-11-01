@@ -13,7 +13,7 @@ module Stmt = Statement.Statement
 module Class = Statement.Class
 module Define = Statement.Define
 
-module type State = sig
+module type PossibleState = sig
   type t [@@deriving show]
 
   val set_possibleconditions : t -> t -> t
@@ -28,13 +28,16 @@ module type State = sig
 
   val widen : previous:t -> next:t -> iteration:int -> t
 
+  val join_possible : t -> t -> t
+
+  val widen_possible : previous:t -> next:t -> iteration:int -> t
+
   val forward : statement_key:int -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
 
-
-module type Fixpoint = sig
+module type PossibleFixpoint = sig
   type state
 
   type t = {
@@ -50,6 +53,8 @@ module type Fixpoint = sig
 
   val exit : t -> state option
 
+  val exit_possible : t -> state option
+
   val forward : cfg:Cfg.t -> initial:state -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
@@ -57,7 +62,7 @@ module type Fixpoint = sig
   val equal : f:(state -> state -> bool) -> t -> t -> bool
 end
 
-module Make (State : State) = struct
+module Make (State : PossibleState) = struct
   type state = State.t
 
 
@@ -78,7 +83,7 @@ module Make (State : State) = struct
     in
     Hashtbl.iteri preconditions ~f:(print_state ~name:"Precondition");
     Hashtbl.iteri postconditions ~f:(print_state ~name:"Postcondition");
-    Hashtbl.iteri possibleconditions ~f:(print_state ~name:"Postcondition");
+    Hashtbl.iteri possibleconditions ~f:(print_state ~name:"Possiblecondition");
     let _ = possibleconditions in ()
 
 
@@ -89,6 +94,8 @@ module Make (State : State) = struct
   let normal_exit { postconditions; _ } = Hashtbl.find postconditions Cfg.normal_index
 
   let exit { postconditions; _ } = Hashtbl.find postconditions Cfg.exit_index
+
+  let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
 
   let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
     (*
@@ -130,12 +137,13 @@ module Make (State : State) = struct
         |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
               Hashtbl.find possibleconditions predecessor_index
               |> Option.value ~default:State.bottom
-              |> State.join sofar)
+              |> State.join_possible sofar)
     in
 
     let analyze_node node =
       let node_id = Cfg.Node.id node in
       let precondition =
+        (*Log.print "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);*)
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
@@ -148,6 +156,7 @@ module Make (State : State) = struct
       in
 
       (*Log.print "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);*)
+      OurTypeSet.our_model := (OurTypeSet.OurSummary.set_current_possiblecondition !OurTypeSet.our_model None);
       
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
@@ -261,9 +270,6 @@ module Make (State : State) = struct
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
       in
-
-      Format.printf "[[[ precondition ]]] \n%a\n\n" State.pp precondition;
-
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
       Hashtbl.set postconditions ~key:node_id ~data:postcondition
