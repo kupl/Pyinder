@@ -86,6 +86,7 @@ let handle_ignores_and_fixmes
             Node.location = Ignore.location unused_ignore;
             value = Statement.Define.Signature.create_toplevel ~qualifier:None;
           };
+        cause=None;
       }
     in
     List.map (Hashtbl.data unused_ignores) ~f:to_error

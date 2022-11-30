@@ -117,11 +117,13 @@ let errors_from_not_found
     ?callee_expression
     ~arguments
   =
+
   let callee =
     match kind with
     | Type.Callable.Named callable -> Some callable
     | _ -> None
   in
+
   match reason with
   | SignatureSelectionTypes.AbstractClassInstantiation { class_name; abstract_methods } ->
       [
@@ -151,8 +153,27 @@ let errors_from_not_found
                 position,
                 Node.location mismatch )
             in
+
+            (* Skip when type is TOP *)
+            if Type.is_top mismatch.actual then []
+            else
+
             let kind =
-              let normal = Error.IncompatibleParameterType { name; position; callee; mismatch } in
+              let target_reference =
+                (match arguments with
+                | Some args -> 
+                  if position < 1 then Reference.empty
+                  else
+                    let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
+                    (match expression with
+                    | Some exp -> Reference.create (Expression.show exp)
+                    | None ->  Reference.empty
+                    )
+                | None -> Reference.empty
+                )
+              in
+              let normal = Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_reference; mismatch } in
+              
               let typed_dictionary_error
                   ~method_name
                   ~position
@@ -184,7 +205,7 @@ let errors_from_not_found
                         (List.map fields ~f:(fun { name; _ } -> name))
                   | _ -> normal
                 else
-                  match method_name, arguments with
+                  (match method_name, arguments with
                   | ( "__setitem__",
                       Some
                         ({
@@ -200,6 +221,7 @@ let errors_from_not_found
                       Error.TypedDictionaryInvalidOperation
                         { typed_dictionary_name; field_name; method_name; mismatch }
                   | _ -> normal
+                  )
               in
               match self_argument, callee >>| Reference.as_list with
               | Some self_annotation, Some callee_reference_list
@@ -1007,8 +1029,8 @@ module State (Context : Context) = struct
                         ~errors
                         ~location
                         ~kind:
-                          (Error.UndefinedAttribute
-                             { attribute = Reference.last reference; origin = Error.Module origin })
+                          (Error.UndefinedAttributeWithReference
+                             { reference; attribute = Reference.last reference; origin = Error.Module origin })
                     else
                       errors
                 | _ -> errors
@@ -1071,6 +1093,7 @@ module State (Context : Context) = struct
           >>= fun { ClassSummary.qualifier; _ } ->
           AstEnvironment.ReadOnly.get_module_path ast_environment qualifier
         in
+        
         match Type.resolve_class resolved_base >>| List.map ~f:find_attribute >>= Option.all with
         | None ->
             let errors =
@@ -1081,8 +1104,9 @@ module State (Context : Context) = struct
                   ~errors
                   ~location
                   ~kind:
-                    (Error.UndefinedAttribute
+                    (Error.UndefinedAttributeWithReference
                        {
+                         reference=reference |> Option.value ~default:Reference.empty;
                          attribute;
                          origin =
                            Error.Class
@@ -1163,8 +1187,9 @@ module State (Context : Context) = struct
                       ~errors
                       ~location
                       ~kind:
-                        (Error.UndefinedAttribute
+                        (Error.UndefinedAttributeWithReference
                            {
+                            reference=reference |> Option.value ~default:Reference.empty;
                              attribute = attribute_name;
                              origin =
                                Error.Class
@@ -1782,7 +1807,7 @@ module State (Context : Context) = struct
               
 
               OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
-            | _ -> print_endline "Anonymous";
+            | _ -> () (* Must Fix *)
             );
           | _ -> ()
       );
@@ -7088,8 +7113,8 @@ module PossibleState (Context : Context) = struct
                         ~errors
                         ~location
                         ~kind:
-                          (Error.UndefinedAttribute
-                             { attribute = Reference.last reference; origin = Error.Module origin })
+                          (Error.UndefinedAttributeWithReference
+                             { reference; attribute = Reference.last reference; origin = Error.Module origin })
                     else
                       errors
                 | _ -> errors
@@ -7162,8 +7187,9 @@ module PossibleState (Context : Context) = struct
                   ~errors
                   ~location
                   ~kind:
-                    (Error.UndefinedAttribute
+                    (Error.UndefinedAttributeWithReference
                        {
+                         reference=reference |> Option.value ~default:Reference.empty;
                          attribute;
                          origin =
                            Error.Class
@@ -7244,8 +7270,9 @@ module PossibleState (Context : Context) = struct
                       ~errors
                       ~location
                       ~kind:
-                        (Error.UndefinedAttribute
+                        (Error.UndefinedAttributeWithReference
                            {
+                             reference=reference |> Option.value ~default:Reference.empty;
                              attribute = attribute_name;
                              origin =
                                Error.Class
@@ -7863,7 +7890,7 @@ module PossibleState (Context : Context) = struct
               
 
               OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
-            | _ -> print_endline "Anonymous";
+            | _ -> () (* Must Fix *)
             );
           | _ -> ()
       );
@@ -10385,8 +10412,9 @@ module PossibleState (Context : Context) = struct
                                 ~errors
                                 ~location
                                 ~kind:
-                                  (Error.UndefinedAttribute
+                                  (Error.UndefinedAttributeWithReference
                                      {
+                                       reference = name_reference |> Option.value ~default:Reference.empty;
                                        attribute = AnnotatedAttribute.public_name attribute;
                                        origin =
                                          Error.Class
@@ -13221,7 +13249,7 @@ let exit_state ~our_model ~resolution (module Context : Context) =
   *)
 
   let initial = PossibleState.initial ~resolution in
-  (*Format.printf "[[[ Possible Initial ]]] \n\n%a\n\n" PossibleState.pp initial;*)
+  (*Log.dump "[[[ Possible Initial ]]] \n\n%a\n\n" PossibleState.pp initial;*)
   
   let global_resolution = Resolution.global_resolution resolution in
   if Define.is_stub define then
@@ -13244,14 +13272,15 @@ let exit_state ~our_model ~resolution (module Context : Context) =
     our_model := (OurTypeSet.OurSummary.set_current_possiblecondition !our_model None);
     
     (*
-    Format.printf "\n\n [[[ TEST ]]] \n\n %a \n\n" Resolution.pp resolution;
-    Format.printf "\n\n [[[ TEST ]]] \n\n %a \n\n" State.pp initial;
+    Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
+    Log.dump "\n\n [[[ TEST ]]] \n%a" PossibleState.pp initial;
     *)
 
     let cfg = Cfg.create define in
 
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
-    OurTypeSet.OurSummary.set_usedef_table !our_model name (Usedef.UsedefStruct.normal_exit usedef_tables);
+    OurTypeSet.OurSummary.set_usedef_tables !our_model name (Some usedef_tables);
+    OurTypeSet.OurSummary.set_cfg !our_model name (Some cfg);
 
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial in
     let exit = PossibleFixpoint.exit fixpoint in
@@ -13325,15 +13354,19 @@ let exit_state ~our_model ~resolution (module Context : Context) =
         | Some state ->
           (match state with
           | Value v -> 
+            (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
             (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
             OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
-            OurTypeSet.ClassSummary.join_with_merge ~global_resolution (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v);
+            OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
+            (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v);
           | Unreachable -> ()
           )
         | None -> ()
       )
     | None -> ()
     );
+
+    
 
     
 
@@ -13527,6 +13560,7 @@ let check_define_by_name
     name
     our_model
   =
+  (*Log.dump ">>> %a" Reference.pp name;*)
   let global_resolution = GlobalResolution.create global_environment ?dependency in
   (* TODO(T65923817): Eliminate the need of creating a dummy context here *)
   let resolution = resolution global_resolution (module DummyContext) in
@@ -13550,6 +13584,7 @@ let search_define
   =
 
   (*Format.printf "[[[ Search %a]]]\n" Reference.pp name;*)
+  (*Log.dump "name : %a / parent : %a" Reference.pp name Reference.pp (Option.value parent ~default:Reference.empty);*)
   
   let annotation_list = 
     match parent with
@@ -13557,10 +13592,51 @@ let search_define
       OurTypeSet.OurSummary.search_suspicious_variable !our_model ~global_resolution:(Resolution.global_resolution resolution) parent
     | None -> []
   in
+  
+  (
+  match parent with
+  | Some parent_name ->
+    let vartype_map = OurTypeSet.OurSummary.make_map_function_of_types !OurTypeSet.our_model name in
+    OurTypeSet.OurSummary.update_map_function_of_types !OurTypeSet.our_model parent_name vartype_map
+  | _ -> ()
+  );
+
   let { CheckResult.errors; local_annotations; } = 
     List.fold annotation_list ~init:{ CheckResult.errors=None; local_annotations=None; } 
     ~f:(fun { CheckResult.errors; _ } annotation -> 
-      let update_resolution = Resolution.set_annotation_store resolution (Refinement.Store.set_annotations Refinement.Store.empty annotation) in
+      let update_resolution = Resolution.set_annotation_store resolution (Refinement.Store.set_temporary_annotations Refinement.Store.empty annotation) in
+
+      (**)
+
+      let extract_type annotation =
+        let rec extract_type_of_unit (data:Refinement.Unit.t) typ = 
+          let data_base = Refinement.Unit.base data in
+          let data_attrs = Refinement.Unit.attributes data in
+          if Identifier.Map.Tree.is_empty data_attrs
+          then
+            "", data_base |> Option.value ~default:typ
+          else
+            Identifier.Map.Tree.fold data_attrs ~init:("", typ) ~f:(fun ~key ~data (_, typ) -> 
+              let (name, typ) = extract_type_of_unit data typ in
+              ((if String.equal name "" then key else key ^ "." ^ name), typ)
+            )
+        in
+
+        let name, target_anno = Reference.Map.fold annotation ~init:("", Annotation.create_mutable Type.Bottom) 
+        ~f:(fun ~key ~data (_, typ) -> 
+          let (name, typ) = extract_type_of_unit data typ in
+          ((if String.equal name "" then Reference.show key else (Reference.show key) ^ "." ^ name), typ)
+        )
+        in
+
+        (*Log.dump ">>> %a" Annotation.pp target_anno;*)
+
+        Reference.create name, Annotation.annotation target_anno
+      in
+
+      let target_name, target_type = extract_type annotation in
+
+      
 
       let update_errors, local_annotations, callees =
         try
@@ -13632,12 +13708,44 @@ let search_define
         else
           None
       in
+
+      (*
+      Log.dump ">>> %a %a" Reference.pp name Resolution.pp update_resolution;
+      Log.dump "%a >> %a" Reference.pp target_name Type.pp target_type;
+      List.iter (Option.value update_errors ~default:[]) ~f:(fun error ->
+        Log.dump "%a" Error.pp error
+      );
+      *)
       
+
+      let update_errors =
+        match update_errors with
+        | Some error_list ->
+          let global_resolution = Resolution.global_resolution resolution in
+          Some (AnalysisError.filter_single_errors ~resolution:global_resolution ~single_errors:(!OurTypeSet.single_errors) error_list)
+        | None -> None
+      in
+      
+      let update_errors =
+        match update_errors with
+        | Some error_list -> 
+          let error_list = List.map error_list ~f:(fun error -> 
+            Error.add_cause error (Some (target_name, target_type))
+          )
+          in
+          Some error_list
+        | None -> None
+      in
+
       let errors =
         match errors, update_errors with
         | None, e | e, None -> e
         | Some e1, Some e2 -> Some (List.append e1 e2)
       in
+
+      
+
+      
 
       { CheckResult.errors; local_annotations; }
     )

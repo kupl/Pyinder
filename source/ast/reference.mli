@@ -61,7 +61,11 @@ val is_suffix : suffix:t -> t -> bool
 
 val is_strict_prefix : prefix:t -> t -> bool
 
+val is_contain : base:t -> target:t -> bool
+
 val drop_prefix : prefix:t -> t -> t
+
+val drop_suffix : suffix:t -> t -> t
 
 val prefix : t -> t option
 

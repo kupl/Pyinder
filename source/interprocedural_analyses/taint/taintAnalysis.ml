@@ -407,8 +407,10 @@ let run_taint_analysis
 
     let () = purge_shared_memory ~environment ~qualifiers in
 
+    
     let reverse_graph = Interprocedural.CallGraph.WholeProgramCallGraph.reverse_graph whole_program_call_graph in
-    Interprocedural.OurCallGraph.our_callgraph := Interprocedural.OurCallGraph.OurCallGraph.set_callgraph !Interprocedural.OurCallGraph.our_callgraph reverse_graph;
+    Interprocedural.OurCallGraph.our_callgraph := 
+      Interprocedural.OurCallGraph.OurCallGraph.create_callgraph reverse_graph define_call_graphs;
 
     ()
 

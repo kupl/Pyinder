@@ -139,6 +139,8 @@ and Define : sig
     }
     [@@deriving compare, sexp, show, hash, to_yojson]
 
+    val set_name : t -> Reference.t -> t
+
     val location_insensitive_compare : t -> t -> int
 
     val create_toplevel : qualifier:Reference.t option -> t

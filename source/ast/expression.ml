@@ -2279,14 +2279,32 @@ let name_to_reference name =
   get_reversed_identifiers name >>| List.rev >>| Reference.create_from_list
 
 
+let error_name_to_reference name =
+    let rec get_reversed_identifiers = function
+      | Name.Identifier identifier -> Some [identifier]
+      | Name.Attribute { base = { Node.value = Name base; _ }; attribute; _ } -> (
+          match get_reversed_identifiers base with
+          | Some sofar -> Some (attribute :: sofar)
+          | None -> None)
+      | Name.Attribute n ->
+        Some [Expression.show n.base;]
+    in
+    get_reversed_identifiers name >>| List.rev >>| Reference.create_from_list
+
 let name_to_reference_exn name =
   match name_to_reference name with
   | Some name -> name
   | None ->
-      failwith
-        (Format.sprintf
-           "Cannot convert expression %s with non-identifiers to reference."
-           (Name.show name))
+      let get_item_var = error_name_to_reference name in (* $parameter$app["handle"].hi 이런거 위함 *)
+      (match get_item_var with
+      | Some name -> name
+      | None ->
+          failwith
+          (Format.sprintf
+            "Cannot convert expression %s with non-identifiers to reference."
+            (Name.show name))
+      )
+      
 
 
 let is_simple_name name = Option.is_some (name_to_identifiers name)

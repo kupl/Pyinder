@@ -79,6 +79,21 @@ module T = struct
     in
     let less_than_stop = line < stop_line || (line = stop_line && column < stop_column) in
     greater_or_equal_to_start && less_than_stop
+
+  let contains_eq
+      ~location:
+        {
+          start = { column = start_column; line = start_line };
+          stop = { column = stop_column; line = stop_line };
+        }
+      { line; column }
+    =
+    (* Location ranges are left-inclusive, right-inclusive. *)
+    let greater_or_equal_to_start =
+      line > start_line || (line = start_line && column >= start_column)
+    in
+    let less_than_stop = line < stop_line || (line = stop_line && column <= stop_column) in
+    greater_or_equal_to_start && less_than_stop
 end
 
 include T

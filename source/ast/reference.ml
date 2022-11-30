@@ -42,6 +42,8 @@ module SerializableMap = Data_structures.SerializableMap.Make (T)
 module Set = Set.Make (T)
 include Hashable.Make (T)
 
+
+
 let empty = []
 
 let create_from_list names = names
@@ -131,6 +133,13 @@ let rec is_strict_prefix ~prefix reference =
       is_strict_prefix ~prefix reference
   | _ -> false
 
+let rec is_contain ~base ~target =
+  (* whether base contains target *)
+  match base, target with
+  | _, [] -> true
+  | base_hd::base_tl, target_hd::target_tl -> (String.equal base_hd target_hd) && (is_contain ~base:base_tl ~target:target_tl)
+  | _ -> false
+
 
 let drop_prefix ~prefix reference =
   let rec strip stripped reference prefix =
@@ -143,6 +152,8 @@ let drop_prefix ~prefix reference =
   in
   strip false reference prefix |> Option.value ~default:reference
 
+let drop_suffix ~suffix reference =
+  List.rev (drop_prefix ~prefix:suffix (List.rev reference)) 
 
 let prefix reference =
   match List.rev reference with

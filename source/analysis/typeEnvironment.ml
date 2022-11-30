@@ -41,6 +41,8 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
+  let cur_model = ref (OurTypeSet.OurSummary.create ()) in
+  let x = 
   if !OurTypeSet.is_search_mode then
     TypeCheck.search_define_by_name
       ~type_check_controls
@@ -48,7 +50,7 @@ let produce_check_results global_environment define_name ~dependency =
       ~global_environment
       ~dependency
       define_name
-      OurTypeSet.our_model
+      cur_model
   else
     TypeCheck.check_define_by_name
       ~type_check_controls
@@ -56,7 +58,9 @@ let produce_check_results global_environment define_name ~dependency =
       ~global_environment
       ~dependency
       define_name
-      OurTypeSet.our_model
+      cur_model
+  in
+  x, cur_model
 
 
 module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
@@ -109,7 +113,9 @@ let populate_for_definitions ~scheduler environment defines =
       let () = ReadOnly.get read_only name |> ignore in
       number_defines + 1
     in
-    List.fold names ~init:0 ~f:analyze_define
+    let x = List.fold names ~init:0 ~f:analyze_define in
+    (*Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;*)
+    x
   in
 
   let reduce left right =
@@ -133,6 +139,9 @@ let populate_for_definitions ~scheduler environment defines =
       ~inputs:defines
       ()
   in
+  Log.dump "END";
+  if List.is_empty !OurTypeSet.our_models then Log.dump "OHMYGOD";
+  Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
 
@@ -165,6 +174,7 @@ let populate_for_modules ~scheduler environment qualifiers =
       ()
   in
   populate_for_definitions ~scheduler environment all_defines;
+  Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;
   Statistics.event
     ~section:`Memory
     ~name:"shared memory size post-typecheck"

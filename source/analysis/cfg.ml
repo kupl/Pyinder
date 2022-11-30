@@ -399,6 +399,7 @@ let match_cases_refutable cases =
   (* The parser guarantees irrefutable case will only appear at the last one. *)
   List.last cases >>| Match.Case.is_refutable |> Option.value ~default:true
 
+let empty = Int.Table.create ()
 
 let pp format graph =
   let print_node index = Format.fprintf format "%a\n" Node.pp (Hashtbl.find_exn graph index) in

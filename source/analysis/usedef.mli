@@ -12,6 +12,10 @@ module type UsedefState = sig
 
   val widen : previous:t -> next:t -> iteration:int -> t
 
+  val is_defined : t -> Reference.t -> bool
+
+  val is_undefined : t -> Reference.t -> bool
+
   val forward : statement_key:int -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
@@ -46,7 +50,13 @@ module type UsedefFixpoint = sig
 
   val exit : t -> state option
 
+  val empty : t
+
+  val get_usedef_tables : t -> state Int.Table.t
+
   val find : t -> int -> state option
+
+  val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 

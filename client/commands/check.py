@@ -154,12 +154,12 @@ def parse_type_error_response_json(response_json: object) -> List[error.Error]:
 
 def parse_type_error_response(response: str) -> List[error.Error]:
     try:
-        print(response)
-        split_json = response.split('\n')
-        response_json = json.loads(split_json[-2])
+        # split_json = response.split('\n')
+        # response_json = json.loads(split_json[-2])
+        response_json = json.loads(response)
         with open('result.json', 'w') as f :
             json.dump(response_json, f, indent=4)
-        response_json = json.loads(split_json[-1])
+        # response_json = json.loads(split_json[-1])
         return parse_type_error_response_json(response_json)
     except json.JSONDecodeError as decode_error:
         message = f"Cannot parse response as JSON: {decode_error}"

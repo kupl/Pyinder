@@ -20,9 +20,13 @@ module Summarize : sig
 
   val create : unit -> t
 
-  val analyze : t -> unit
+  val analyze : t -> (Ast.Reference.t list list list * Ast.Reference.t list list) list
 
   val pp : Format.formatter -> t -> unit
 end
 
 val errors : (AnalysisError.t list) ref
+
+val ast_environment : (AstEnvironment.ReadOnly.t) option ref
+
+val show_candidate_scenarios : (Ast.Reference.t list list list * Ast.Reference.t list list) -> string

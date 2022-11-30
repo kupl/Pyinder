@@ -135,6 +135,7 @@ module Make (State : PossibleState) = struct
       else
         predecessors node
         |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
+              (*Log.dump "Join %i" predecessor_index;*)
               Hashtbl.find possibleconditions predecessor_index
               |> Option.value ~default:State.bottom
               |> State.join_possible sofar)
@@ -143,7 +144,7 @@ module Make (State : PossibleState) = struct
     let analyze_node node =
       let node_id = Cfg.Node.id node in
       let precondition =
-        (*Log.print "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);*)
+        (*Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);*)
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
@@ -155,22 +156,22 @@ module Make (State : PossibleState) = struct
         |> join_with_predcessors_possibleconditions node
       in
 
-      (*Log.print "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);*)
+      (*Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);*)
       OurTypeSet.our_model := (OurTypeSet.OurSummary.set_current_possiblecondition !OurTypeSet.our_model None);
       
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
-      (*Log.print "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);*)
+      (*Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);*)
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       
-      (*Log.print "%s" (Format.asprintf "[ Node Pre Possiblecondition ]\n%a\n" State.pp prepossible);*)
+      (*Log.dump "%s" (Format.asprintf "[ Node Pre Possiblecondition ]\n%a\n" State.pp prepossible);*)
       let possiblecondition = State.set_possibleconditions precondition postcondition in
       (*Log.print "%s" (Format.asprintf "[ Node Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
 
       
 
       let possiblecondition = State.update_possible prepossible possiblecondition in
-      (*Log.print "%s" (Format.asprintf "[ Node Update Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
+      (*Log.dump "%s" (Format.asprintf "[ Node Update Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
       Hashtbl.set possibleconditions ~key:node_id ~data:possiblecondition
 
     in
@@ -187,10 +188,20 @@ module Make (State : PossibleState) = struct
             let new_head_precondition =
               join_with_predecessors_postconditions head current_head_precondition
             in
-
             let converged =
               State.less_or_equal ~left:new_head_precondition ~right:current_head_precondition
             in
+            (*
+            Log.dump
+              "\n%a\n  { <= (result %b) (iteration = %d) }\n\n%a"
+              State.pp
+              new_head_precondition
+              converged
+              local_iteration
+              State.pp
+              current_head_precondition;
+            *)
+            (*
             Log.log
               ~section:`Fixpoint
               "\n%a\n  { <= (result %b) (iteration = %d) }\n\n%a"
@@ -200,6 +211,7 @@ module Make (State : PossibleState) = struct
               local_iteration
               State.pp
               current_head_precondition;
+              *)
             if not converged then (
               let precondition =
                 State.widen

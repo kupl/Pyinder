@@ -7,6 +7,9 @@
 
  open Core
 
+ exception NoAstEnvironment;;
+ exception UnequalErrorScenario;;
+
  module ExitStatus = struct
    type t =
      | Ok
@@ -142,6 +145,7 @@
              in
              Analysis.ErrorsEnvironment.read_only read_write_environment
            in
+           (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
              Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment )))
  
@@ -151,23 +155,28 @@
     let prev_model = Analysis.OurTypeSet.OurSummary.copy !Analysis.OurTypeSet.our_model in
     let errors, ast_environment = do_check configuration in
     let errors = Analysis.AnalysisError.filter_type_error errors in
+
     if Analysis.OurTypeSet.OurSummary.equal prev_model (!Analysis.OurTypeSet.our_model)
     then errors, ast_environment
     else fixpoint configuration (n+1)
    in
    Log.dump "%s" "Type Inferecne...";
    let single_errors, ast_environment = fixpoint configuration 1 in
+   (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
    Unix.sleep(1);
-   Log.dump "%s" "Type Inferecne End";
-   let _ = single_errors in
+   Analysis.OurTypeSet.single_errors := single_errors;
 
    Log.dump "%s" "Type Error Searching...";
    Analysis.OurTypeSet.is_search_mode := true;
    (*print_endline "[[[ Search Mode ]]]";*)
    let errors, _ = do_check configuration in
+   Log.dump "END";
+  (*
+   Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
+  *)
    Unix.sleep(1);
-   Log.dump "%s" "Type Error Searching End";
    let errors = Analysis.AnalysisError.filter_type_error errors in
+   Pyinder.Summarize.ast_environment := Some ast_environment;
    Pyinder.Summarize.errors := errors;
    
    List.map
@@ -187,27 +196,70 @@
    |> Log.print "%s"
  
  
- let run_check check_configuration =
+ let print_error_and_scenario check_configuration error_and_scenario_list =
    let { CheckConfiguration.base = { CommandStartup.BaseConfiguration.source_paths; _ }; _ } =
      check_configuration
    in
-   Server.BuildSystem.with_build_system source_paths ~f:(fun build_system ->
-       let errors =
-         compute_errors
-           ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration)
-           ~build_system
-           ()
-       in
+   let ast_environment = !Pyinder.Summarize.ast_environment in
+   match ast_environment with
+   | Some ast_environment ->
+      Server.BuildSystem.with_build_system source_paths ~f:(fun build_system ->
+          let errors =
+              List.map
+              (List.sort ~compare:(fun (e1, _) (e2, _) -> Analysis.AnalysisError.compare e1 e2) error_and_scenario_list)
+              ~f:(fun (error, scenarios) ->
+                Server.RequestHandler.instantiate_error 
+                ~build_system ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration) 
+                ~ast_environment
+                ?scenarios:(Some scenarios)
+                error
+              )
+          in
 
-       (* ADD ERRORS *)
-       
-       (*
-       print_endline "";
-       Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
-       *)
-       print_errors errors;
-       Lwt.return ExitStatus.Ok)
+          (*
+          let single_errors =
+            List.map
+            !Analysis.OurTypeSet.single_errors
+            ~f:(fun error ->
+              Server.RequestHandler.instantiate_error 
+              ~build_system ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration) 
+              ~ast_environment
+              error
+            )
+          in
+          *)
+
+          (* ADD ERRORS *)
+          
+          (*
+          print_endline "";
+          Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
+          *)
+          print_errors (errors);
+          Lwt.return ExitStatus.Ok)
+    | None -> raise NoAstEnvironment
  
+  let run_check check_configuration =
+    let { CheckConfiguration.base = { CommandStartup.BaseConfiguration.source_paths; _ }; _ } =
+     check_configuration
+    in
+    Server.BuildSystem.with_build_system source_paths ~f:(fun build_system ->
+    let errors =
+      compute_errors
+        ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration)
+        ~build_system
+        ()
+    in
+
+    (* ADD ERRORS *)
+    
+    (*
+    print_endline "";
+    Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
+    *)
+    (*print_errors errors;*)
+    let _ = errors in
+    Lwt.return ExitStatus.Ok)
  
  let on_exception = function
    | Buck.Raw.BuckError { buck_command; arguments; description; exit_code; additional_logs } ->
@@ -266,8 +318,21 @@
     Unix.sleep(1);
     let _ = AnalyzeCommand.run_analyze_mine analyze_json in
 
+    let errors = !Pyinder.Summarize.errors in
     let pyinder_model = Pyinder.Summarize.Summarize.create () in
-    Log.dump "%s" (Format.asprintf "[[[ Pyinder ]]]\n\n%a\n\n[[[ Pyinder End ]]]" Pyinder.Summarize.Summarize.pp pyinder_model);
+    let candidates_scenarios = Pyinder.Summarize.Summarize.analyze pyinder_model in
+
+    let error_and_scenario_list =
+      List.map2 errors candidates_scenarios ~f:(fun error candidate_scenarios -> 
+        (error, Pyinder.Summarize.show_candidate_scenarios candidate_scenarios)
+      )
+    in
+
+    (match error_and_scenario_list with
+    | List.Or_unequal_lengths.Ok error_and_scenario_list -> 
+      let _ = print_error_and_scenario check_configuration error_and_scenario_list in ()
+    | List.Or_unequal_lengths.Unequal_lengths -> raise UnequalErrorScenario
+    );
     
     Unix.sleep(1);
     x

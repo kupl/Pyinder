@@ -301,6 +301,13 @@ and kind =
       callee: Reference.t option;
       mismatch: mismatch;
     }
+  | IncompatibleParameterTypeWithReference of {
+      name: Identifier.t option;
+      position: int;
+      callee: Reference.t option;
+      reference: Reference.t;
+      mismatch: mismatch;
+    }
   | IncompatibleReturnType of {
       mismatch: mismatch;
       is_implicit: bool;
@@ -406,6 +413,11 @@ and kind =
       attribute: Identifier.t;
       origin: origin;
     }
+  | UndefinedAttributeWithReference of {
+    reference : Reference.t;
+    attribute: Identifier.t;
+    origin: origin;
+  }
   | UndefinedImport of undefined_import
   | UndefinedType of Type.t
   | UnexpectedKeyword of {
@@ -463,6 +475,7 @@ let code_of_kind = function
   | MissingAttributeAnnotation _ -> 4
   | MissingGlobalAnnotation _ -> 5
   | IncompatibleParameterType _ -> 6
+  | IncompatibleParameterTypeWithReference _ -> 71
   | IncompatibleReturnType _ -> 7
   | IncompatibleAttributeType _ -> 8
   | IncompatibleVariableType _ -> 9
@@ -475,6 +488,7 @@ let code_of_kind = function
       | StrengthenedPrecondition _ -> 14
       | WeakenedPostcondition _ -> 15)
   | UndefinedAttribute _ -> 16
+  | UndefinedAttributeWithReference _ -> 70
   | IncompatibleConstructorAnnotation _ -> 17
   | TooManyArguments _ -> 19
   | MissingArgument _ -> 20
@@ -538,6 +552,7 @@ let name_of_kind = function
   | IncompatibleAwaitableType _ -> "Incompatible awaitable type"
   | IncompatibleConstructorAnnotation _ -> "Incompatible constructor annotation"
   | IncompatibleParameterType _ -> "Incompatible parameter type"
+  | IncompatibleParameterTypeWithReference _ -> "Incompatible parameter type with reference"
   | IncompatibleReturnType _ -> "Incompatible return type"
   | IncompatibleVariableType _ -> "Incompatible variable type"
   | InconsistentOverride _ -> "Inconsistent override"
@@ -579,6 +594,7 @@ let name_of_kind = function
   | UnawaitedAwaitable _ -> "Unawaited awaitable"
   | UnboundName _ -> "Unbound name"
   | UndefinedAttribute _ -> "Undefined attribute"
+  | UndefinedAttributeWithReference _ -> "Undefined attribute with reference"
   | UndefinedImport _ -> "Undefined import"
   | UndefinedType _ -> "Undefined or invalid type"
   | UnexpectedKeyword _ -> "Unexpected keyword"
@@ -648,6 +664,8 @@ let weaken_literals kind =
         { inconsistent with override = StrengthenedPrecondition (Found (weaken_mismatch mismatch)) }
   | IncompatibleParameterType ({ mismatch; _ } as incompatible) ->
       IncompatibleParameterType { incompatible with mismatch = weaken_mismatch mismatch }
+  | IncompatibleParameterTypeWithReference ({ mismatch; _ } as incompatible) ->
+      IncompatibleParameterTypeWithReference { incompatible with mismatch = weaken_mismatch mismatch }
   | IncompatibleReturnType ({ mismatch; _ } as incompatible) ->
       IncompatibleReturnType { incompatible with mismatch = weaken_mismatch mismatch }
   | UninitializedAttribute ({ mismatch; _ } as uninitialized) ->
@@ -793,6 +811,8 @@ let simplify_kind kind =
         { details with incompatible_type = simplify_incompatible_type details.incompatible_type }
   | IncompatibleParameterType details ->
       IncompatibleParameterType { details with mismatch = simplify_mismatch details.mismatch }
+  | IncompatibleParameterTypeWithReference details ->
+      IncompatibleParameterTypeWithReference { details with mismatch = simplify_mismatch details.mismatch }
   | IncompatibleReturnType details ->
       IncompatibleReturnType { details with mismatch = simplify_mismatch details.mismatch }
   | IncompatibleVariableType details ->
@@ -973,7 +993,10 @@ let rec messages ~concise ~signature location kind =
       | MisplacedOverloadDecorator ->
           ["The @overload decorator must be the topmost decorator if present."])
   | IncompatibleParameterType
-      { name; position; callee; mismatch = { actual; expected; due_to_invariance; _ } } -> (
+      { name; position; callee; mismatch = { actual; expected; due_to_invariance; _ } } 
+  | IncompatibleParameterTypeWithReference
+      { name; position; callee; mismatch = { actual; expected; due_to_invariance; _ }; _ }    
+    -> (
       let trace =
         if due_to_invariance then
           [Format.asprintf "This call might modify the type of the parameter."; invariance_message]
@@ -2270,7 +2293,7 @@ let rec messages ~concise ~signature location kind =
           name;
         "Check if the variable is defined in all preceding branches of logic.";
       ]
-  | UndefinedAttribute { attribute; origin } -> (
+  | UndefinedAttribute { attribute; origin } | UndefinedAttributeWithReference { attribute; origin; _ } -> (
       let private_attribute_warning () =
         if String.is_prefix ~prefix:"__" attribute && not (String.is_suffix ~suffix:"__" attribute)
         then
@@ -2507,6 +2530,7 @@ module T = struct
     location: Location.WithModule.t;
     kind: kind;
     signature: Define.Signature.t Node.t;
+    cause: (Reference.t * Type.t) option;
   }
   [@@deriving compare, sexp, show, hash]
 end
@@ -2516,7 +2540,7 @@ include Hashable.Make (T)
 
 let create ~location ~kind ~define =
   let { Node.value = { Define.signature; _ }; location = define_location } = define in
-  { location; kind; signature = { Node.value = signature; location = define_location } }
+  { location; kind; signature = { Node.value = signature; location = define_location }; cause=None; }
 
 
 let module_reference { location = { Location.WithModule.module_reference; _ }; _ } =
@@ -2528,6 +2552,8 @@ let code { kind; _ } = code_of_kind kind
 let _ = show (* shadowed below *)
 
 let show error = Format.asprintf "%a" pp error
+
+let add_cause error cause = { error with cause }
 
 module Instantiated = struct
   type t = {
@@ -2542,6 +2568,7 @@ module Instantiated = struct
     long_description: string;
     concise_description: string;
     define: string;
+    scenarios: string;
   }
   [@@deriving sexp, compare, show, hash, yojson { strict = false }]
 
@@ -2569,7 +2596,9 @@ module Instantiated = struct
          } as location)
       ~kind
       ~signature:({ Node.value = signature; _ } as signature_node)
+      ~cause:_
       ~show_error_traces
+      ~scenarios
       ()
     =
     let kind_name = name_of_kind kind in
@@ -2585,6 +2614,7 @@ module Instantiated = struct
         else
           List.nth_exn messages 0)
     in
+    let scenarios = Option.value scenarios ~default:"" in
     {
       line = start_line;
       column = start_column;
@@ -2597,15 +2627,18 @@ module Instantiated = struct
       long_description = description ~show_error_traces:true ~concise:false ~separator:"\n";
       concise_description = description ~show_error_traces ~concise:true ~separator:"\n";
       define = Reference.show_sanitized (Reference.delocalize signature.name);
+      scenarios;
     }
 end
 
-let instantiate ~show_error_traces ~lookup { location; kind; signature } =
+let instantiate ~show_error_traces ~lookup ?scenarios { location; kind; signature; cause; } =
   Instantiated.create
     ~location:(Location.WithModule.instantiate ~lookup location)
     ~kind
     ~signature
+    ~cause
     ~show_error_traces
+    ~scenarios:scenarios
     ()
 
 
@@ -2626,6 +2659,7 @@ let due_to_analysis_limitations { kind; _ } =
   match kind with
   | IncompatibleAwaitableType actual
   | IncompatibleParameterType { mismatch = { actual; _ }; _ }
+  | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; _ }
   | TypedDictionaryInvalidOperation { mismatch = { actual; _ }; _ }
   | TypedDictionaryInitializationError (FieldTypeMismatch { actual_type = actual; _ })
   | IncompatibleReturnType { mismatch = { actual; _ }; _ }
@@ -2652,6 +2686,8 @@ let due_to_analysis_limitations { kind; _ } =
   | UnsupportedOperand (Unary { operand; _ }) -> is_due_to_analysis_limitations operand
   | Top -> true
   | UndefinedAttribute { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
+      Type.contains_unknown annotation
+  | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
       Type.contains_unknown annotation
   | AnalysisFailure _
   | BroadcastError _
@@ -2700,6 +2736,7 @@ let due_to_analysis_limitations { kind; _ } =
   | UnboundName _
   | UninitializedLocal _
   | UndefinedAttribute _
+  | UndefinedAttributeWithReference _
   | UndefinedImport _
   | UndefinedType _
   | UnexpectedKeyword _
@@ -2738,6 +2775,9 @@ let less_or_equal ~resolution left right =
   | IncompatibleAwaitableType left, IncompatibleAwaitableType right ->
       GlobalResolution.less_or_equal resolution ~left ~right
   | IncompatibleParameterType left, IncompatibleParameterType right
+    when Option.equal Identifier.equal_sanitized left.name right.name ->
+      less_or_equal_mismatch left.mismatch right.mismatch
+  | IncompatibleParameterTypeWithReference left, IncompatibleParameterTypeWithReference right
     when Option.equal Identifier.equal_sanitized left.name right.name ->
       less_or_equal_mismatch left.mismatch right.mismatch
   | IncompatibleConstructorAnnotation left, IncompatibleConstructorAnnotation right ->
@@ -2940,6 +2980,16 @@ let less_or_equal ~resolution left right =
       | _ -> false)
   | UndefinedAttribute left, UndefinedAttribute right
     when Identifier.equal_sanitized left.attribute right.attribute -> (
+        match left.origin, right.origin with
+        | Class { class_origin = ClassType left; _ }, Class { class_origin = ClassType right; _ } ->
+            GlobalResolution.less_or_equal resolution ~left ~right
+        | Module (ImplicitModule left), Module (ImplicitModule right)
+        | ( Module (ExplicitModule { ModulePath.qualifier = left; _ }),
+            Module (ExplicitModule { ModulePath.qualifier = right; _ }) ) ->
+            Reference.equal_sanitized left right
+        | _ -> false)
+  | UndefinedAttributeWithReference left, UndefinedAttributeWithReference right
+    when Identifier.equal_sanitized left.attribute right.attribute -> (
       match left.origin, right.origin with
       | Class { class_origin = ClassType left; _ }, Class { class_origin = ClassType right; _ } ->
           GlobalResolution.less_or_equal resolution ~left ~right
@@ -3009,6 +3059,7 @@ let less_or_equal ~resolution left right =
   | IncompatibleAwaitableType _, _
   | IncompatibleConstructorAnnotation _, _
   | IncompatibleParameterType _, _
+  | IncompatibleParameterTypeWithReference _, _
   | IncompatibleReturnType _, _
   | IncompatibleOverload _, _
   | IncompleteType _, _
@@ -3054,6 +3105,7 @@ let less_or_equal ~resolution left right =
   | UninitializedLocal _, _
   | DuplicateTypeVariables _, _
   | UndefinedAttribute _, _
+  | UndefinedAttributeWithReference _, _
   | UndefinedImport _, _
   | UndefinedType _, _
   | UnexpectedKeyword _, _
@@ -3226,6 +3278,12 @@ let join ~resolution left right =
            && Option.equal Reference.equal_sanitized left.callee right.callee ->
         let mismatch = join_mismatch left.mismatch right.mismatch in
         IncompatibleParameterType { left with mismatch }
+    | IncompatibleParameterTypeWithReference left, IncompatibleParameterTypeWithReference right
+      when Option.equal Identifier.equal_sanitized left.name right.name
+           && left.position = right.position
+           && Option.equal Reference.equal_sanitized left.callee right.callee ->
+        let mismatch = join_mismatch left.mismatch right.mismatch in
+        IncompatibleParameterTypeWithReference { left with mismatch }
     | IncompatibleConstructorAnnotation left, IncompatibleConstructorAnnotation right ->
         IncompatibleConstructorAnnotation (GlobalResolution.join resolution left right)
     | IncompatibleReturnType left, IncompatibleReturnType right ->
@@ -3486,6 +3544,7 @@ let join ~resolution left right =
     | IncompatibleAwaitableType _, _
     | IncompatibleConstructorAnnotation _, _
     | IncompatibleParameterType _, _
+    | IncompatibleParameterTypeWithReference _, _
     | IncompatibleReturnType _, _
     | IncompatibleOverload _, _
     | IncompleteType _, _
@@ -3530,6 +3589,7 @@ let join ~resolution left right =
     | UninitializedLocal _, _
     | DuplicateTypeVariables _, _
     | UndefinedAttribute _, _
+    | UndefinedAttributeWithReference _, _
     | UndefinedImport _, _
     | UndefinedType _, _
     | UnexpectedKeyword _, _
@@ -3555,7 +3615,7 @@ let join ~resolution left right =
     else
       right.location
   in
-  { location; kind; signature = left.signature }
+  { location; kind; signature = left.signature; cause=None; }
 
 
 let meet ~resolution:_ left _ =
@@ -3654,10 +3714,12 @@ let filter ~resolution errors =
       | IncompatibleAttributeType { incompatible_type = { mismatch = { actual; _ }; _ }; _ }
       | IncompatibleAwaitableType actual
       | IncompatibleParameterType { mismatch = { actual; _ }; _ }
+      | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; _ }
       | IncompatibleReturnType { mismatch = { actual; _ }; _ }
       | IncompatibleVariableType { incompatible_type = { mismatch = { actual; _ }; _ }; _ }
       | TypedDictionaryInvalidOperation { mismatch = { actual; _ }; _ }
-      | UndefinedAttribute { origin = Class { class_origin = ClassType actual; _ }; _ } ->
+      | UndefinedAttribute { origin = Class { class_origin = ClassType actual; _ }; _ } 
+      | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; _ } ->
           let is_subclass_of_mock annotation =
             try
               match annotation with
@@ -3699,6 +3761,7 @@ let filter ~resolution errors =
           { override = StrengthenedPrecondition (Found { expected; actual; _ }); _ }
       | InconsistentOverride { override = WeakenedPostcondition { expected; actual; _ }; _ }
       | IncompatibleParameterType { mismatch = { expected; actual; _ }; _ }
+      | IncompatibleParameterTypeWithReference { mismatch = { expected; actual; _ }; _ }
       | IncompatibleReturnType { mismatch = { expected; actual; _ }; _ }
       | IncompatibleAttributeType
           { incompatible_type = { mismatch = { expected; actual; _ }; _ }; _ }
@@ -3735,6 +3798,29 @@ let filter ~resolution errors =
           } ->
           true
       | UndefinedAttribute
+          { origin = Class { class_origin = ClassType (Callable { kind = Named name; _ }); _ }; _ }
+        ->
+          String.equal (Reference.last name) "patch"
+
+      | UndefinedAttributeWithReference
+          { origin = Class { class_origin = ClassType (Callable _); _ }; attribute = "command"; _ } ->
+          true
+      (* We also need to filter errors for common mocking patterns. *)
+      | UndefinedAttributeWithReference
+          {
+            origin =
+              Class
+                {
+                  class_origin = ClassType (Callable _ | Parametric { name = "BoundMethod"; _ });
+                  _;
+                };
+            attribute =
+              ( "assert_not_called" | "assert_called_once" | "assert_called_once_with"
+              | "reset_mock" | "assert_has_calls" | "assert_any_call" );
+            _
+          } ->
+          true
+      | UndefinedAttributeWithReference
           { origin = Class { class_origin = ClassType (Callable { kind = Named name; _ }); _ }; _ }
         ->
           String.equal (Reference.last name) "patch"
@@ -4050,6 +4136,13 @@ let dequalify
             mismatch = dequalify_mismatch mismatch;
             callee = Option.map callee ~f:dequalify_reference;
           }
+    | IncompatibleParameterTypeWithReference ({ mismatch; callee; _ } as parameter) ->
+       IncompatibleParameterTypeWithReference
+          {
+            parameter with
+            mismatch = dequalify_mismatch mismatch;
+            callee = Option.map callee ~f:dequalify_reference;
+          }
     | IncompatibleReturnType ({ mismatch; _ } as return) ->
         IncompatibleReturnType { return with mismatch = dequalify_mismatch mismatch }
     | IncompatibleAttributeType { parent; incompatible_type = { mismatch; _ } as incompatible_type }
@@ -4176,6 +4269,29 @@ let dequalify
               Module (ImplicitModule (dequalify_reference module_name))
         in
         UndefinedAttribute { attribute; origin }
+    | UndefinedAttributeWithReference { reference; attribute; origin } ->
+        let origin : origin =
+          match origin with
+          | Class { class_origin = ClassType class_type; parent_module_path } ->
+              let annotation =
+                (* Don't dequalify optionals because we special case their display. *)
+                if Type.is_optional_primitive class_type then
+                  class_type
+                else
+                  dequalify class_type
+              in
+              Class { class_origin = ClassType annotation; parent_module_path }
+          | Class { class_origin = ClassInUnion { unions; index }; parent_module_path } ->
+              Class
+                {
+                  class_origin = ClassInUnion { unions = List.map ~f:dequalify unions; index };
+                  parent_module_path;
+                }
+          | Module (ExplicitModule module_path) -> Module (ExplicitModule module_path)
+          | Module (ImplicitModule module_name) ->
+              Module (ImplicitModule (dequalify_reference module_name))
+        in
+        UndefinedAttributeWithReference { reference; attribute; origin }
     | UndefinedType annotation -> UndefinedType (dequalify annotation)
     | UndefinedImport reference -> UndefinedImport reference
     | UnexpectedKeyword { name; callee } ->
@@ -4234,7 +4350,9 @@ let create_mismatch ~resolution ~actual ~expected ~covariant =
 let filter_type_error errors =
   List.filter errors ~f:(fun {kind;_} ->
       (match kind with
-      | UnsupportedOperand _ | IncompatibleParameterType _ | UndefinedAttribute _ 
+      | UnsupportedOperand _ 
+      | IncompatibleParameterType _ | IncompatibleParameterTypeWithReference _ 
+      | UndefinedAttribute _ | UndefinedAttributeWithReference _
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
@@ -4243,4 +4361,11 @@ let filter_type_error errors =
         -> false
       | _ -> true
       )
+  )
+
+let filter_single_errors ~resolution ~single_errors errors =
+  List.filter errors ~f:(fun error ->
+    List.fold single_errors ~init:true ~f:(fun flag single_error -> 
+      flag && (not (less_or_equal ~resolution error single_error))
+    )
   )

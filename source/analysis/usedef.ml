@@ -14,6 +14,10 @@ module type UsedefState = sig
 
   val widen : previous:t -> next:t -> iteration:int -> t
 
+  val is_defined : t -> Reference.t -> bool
+
+  val is_undefined : t -> Reference.t -> bool
+
   val forward : statement_key:int -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
@@ -102,6 +106,12 @@ module UsedefState = struct
       | Def | Both -> add_reference key varset
       | Use -> varset
     )
+
+  let is_defined { defined; _ } reference =
+    Reference.Set.mem defined reference
+
+  let is_undefined t reference =
+    not (is_defined t reference)
 
   let update_defined t usedef_table =
     let use_variables = get_use_variables usedef_table in
@@ -242,7 +252,13 @@ module type UsedefFixpoint = sig
 
   val exit : t -> state option
 
+  val empty : t
+
+  val get_usedef_tables : t -> state Int.Table.t
+
   val find : t -> int -> state option
+
+  val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 
@@ -277,6 +293,23 @@ module Make (State : UsedefState) = struct
   let normal_exit { usedef_tables; } = Hashtbl.find usedef_tables Cfg.normal_index
 
   let exit { usedef_tables; _ } = Hashtbl.find usedef_tables Cfg.exit_index
+
+  let empty = { usedef_tables=Int.Table.create (); }
+
+  let get_usedef_tables { usedef_tables; _ } = usedef_tables
+
+  let find_usedef_table_of_location t (cfg: Cfg.t) location =
+    Int.Table.fold cfg ~init:None ~f:(fun ~key:node_id ~data:node state ->
+      if Option.is_some state then state
+      else
+        let statements = Cfg.Node.statements node in
+        List.fold statements ~init:state ~f:(fun state statement -> 
+          let start_contains = Location.contains_eq ~location:(Node.location statement) (Location.start location) in
+          let stop_contains = Location.contains_eq ~location:(Node.location statement) (Location.stop location) in
+          if start_contains && stop_contains then find t node_id else state
+        )
+    )
+
 
   let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
     (*

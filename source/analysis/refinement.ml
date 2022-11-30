@@ -9,6 +9,8 @@ open Core
 open Ast
 open Annotation
 
+
+
 module MapLattice = struct
   module type MapSignature = sig
     type key
@@ -123,6 +125,15 @@ module Unit = struct
   let create_mutable type_ = create (Annotation.create_mutable type_)
 
   let top = create (Annotation.create_mutable Type.Top)
+
+  (*
+  let compare { base=base1; attributes=attrs1; } { base=base2; attributes=attrs2; } =
+    match base1, base2 with
+    | Some _, None -> -1
+    | None, Some _ -> 1
+    | Some b1, Some b2 -> Annotation.compare b1 b2
+    | None, None -> 
+  *)
 
   let rec pp format { base; attributes } =
     let attribute_map_entry (identifier, refinement_unit) =
@@ -323,7 +334,27 @@ module Unit = struct
     let update_base, is_update = remain_base (base old_t) (base new_t) is_update in
     { base=update_base; attributes=update_attrs; }, is_update
 
-    
+  let rec fold_full_reference ?(skip_none=false) { base; attributes; } (f : Annotation.t option -> 'a) =
+    if Identifier.Map.Tree.is_empty attributes 
+    then
+      let result_opt = f base in
+      match result_opt with
+      | Some e_list -> List.map e_list ~f:(fun e -> [], Some e)
+      | None -> [[], None]
+    else
+      let candidates = Identifier.Map.Tree.fold attributes ~init:[] ~f:(fun ~key ~data sofar -> 
+        let attrs_result = fold_full_reference data f ~skip_none in
+        List.fold attrs_result ~init:[] ~f:(fun sofar (str_list, f_result) ->
+          if skip_none && Option.is_none f_result
+          then
+            sofar
+          else
+            (key::str_list, f_result)::sofar
+        )@sofar
+      )
+      in
+      candidates
+
 end
 
 module Store = struct
@@ -336,6 +367,8 @@ module Store = struct
   let empty = { annotations = ReferenceMap.empty; temporary_annotations = ReferenceMap.empty }
 
   let set_annotations { temporary_annotations; _ } annotations = { annotations; temporary_annotations; }
+
+  let set_temporary_annotations { annotations; _ } temporary_annotations = { annotations; temporary_annotations; }
 
   let pp format { annotations; temporary_annotations } =
     let show_annotation (reference, unit) =
@@ -493,7 +526,8 @@ module Store = struct
       annotations = ReferenceMap.merge_with ~merge_one left.annotations right.annotations;
       (* `temporary_annotations` only has type info, so we do a proper join *)
       temporary_annotations =
-        ReferenceMap.join ~join_one:merge_one left.temporary_annotations right.temporary_annotations;
+        ReferenceMap.merge_with ~merge_one left.temporary_annotations right.temporary_annotations;
+        (*ReferenceMap.join ~join_one:merge_one left.temporary_annotations right.temporary_annotations;*)
     }
 
   let widen_or_join_with_merge ~merge_one left right =
@@ -645,4 +679,20 @@ module Store = struct
 
   let combine_join_with_merge ~global_resolution { annotations; temporary_annotations; } =
     ReferenceMap.merge_with ~merge_one:(Unit.join_with_merge ~global_resolution) annotations temporary_annotations
+
+  let make_map_function_of_types { annotations; temporary_annotations; } f =
+    let result_of_anno = ReferenceMap.fold annotations ~init:[] ~f:(fun ~key ~data sofar -> 
+      let reference_list = Unit.fold_full_reference data f ~skip_none:true in
+      sofar@(List.map reference_list ~f:(fun (str_list, res) -> (Reference.show key)::str_list, res))
+    )
+    in
+
+    let result_of_temp = ReferenceMap.fold temporary_annotations ~init:[] ~f:(fun ~key ~data sofar -> 
+      let reference_list = Unit.fold_full_reference data f ~skip_none:true in
+      sofar@(List.map reference_list ~f:(fun (str_list, res) -> (Reference.show key)::str_list, res))
+    )
+    in
+    
+    result_of_anno@result_of_temp
+
 end

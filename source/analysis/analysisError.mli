@@ -292,6 +292,13 @@ and kind =
       callee: Reference.t option;
       mismatch: mismatch;
     }
+  | IncompatibleParameterTypeWithReference of {
+      name: Identifier.t option;
+      position: int;
+      callee: Reference.t option;
+      reference: Reference.t;
+      mismatch: mismatch;
+    }
   | IncompatibleReturnType of {
       mismatch: mismatch;
       is_implicit: bool;
@@ -397,6 +404,11 @@ and kind =
       attribute: Identifier.t;
       origin: origin;
     }
+  | UndefinedAttributeWithReference of {
+      reference: Reference.t;
+      attribute: Identifier.t;
+      origin: origin;
+    }
   | UndefinedImport of undefined_import
   | UndefinedType of Type.t
   | UnexpectedKeyword of {
@@ -447,6 +459,7 @@ type t = {
   location: Location.WithModule.t;
   kind: kind;
   signature: Statement.Define.Signature.t Node.t;
+  cause: (Reference.t * Type.t) option;
 }
 [@@deriving compare, show, sexp, hash]
 
@@ -474,9 +487,12 @@ val module_reference : t -> Reference.t
 
 val code : t -> int
 
+val add_cause : t -> (Reference.t * Type.t) option -> t
+
 val instantiate
   :  show_error_traces:bool ->
   lookup:(Reference.t -> string option) ->
+  ?scenarios:string ->
   t ->
   Instantiated.t
 
@@ -514,6 +530,8 @@ val create_mismatch
   mismatch
 
 val filter_type_error : t list -> t list
+
+val filter_single_errors : resolution:GlobalResolution.t -> single_errors:t list -> t list -> t list
 
 module SimplificationMap : sig
   type t = Reference.t Reference.Map.t

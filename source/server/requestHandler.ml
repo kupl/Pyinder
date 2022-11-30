@@ -20,11 +20,13 @@ let instantiate_error
     ~build_system
     ~configuration:{ Configuration.Analysis.show_error_traces; _ }
     ~ast_environment
+    ?scenarios
     error
   =
   AnalysisError.instantiate
     ~show_error_traces
     ~lookup:(PathLookup.instantiate_path ~build_system ~ast_environment)
+    ?scenarios
     error
 
 

@@ -40,6 +40,9 @@ val stop_column : t -> int
 
 val contains : location:t -> position -> bool
 
+val contains_eq : location:t -> position -> bool
+
+
 val pp_start : Format.formatter -> t -> unit
 
 val pp_line_and_column : Format.formatter -> t -> unit

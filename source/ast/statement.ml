@@ -381,6 +381,8 @@ and Define : sig
     }
     [@@deriving compare, sexp, show, hash, to_yojson]
 
+    val set_name : t -> Reference.t -> t
+
     val location_insensitive_compare : t -> t -> int
 
     val create_toplevel : qualifier:Reference.t option -> t
@@ -544,6 +546,8 @@ end = struct
     }
     [@@deriving compare, sexp, show, hash, to_yojson]
 
+    let set_name {parameters; decorators; return_annotation; async; generator; parent; nesting_define; _ } name =
+      {name; parameters; decorators; return_annotation; async; generator; parent; nesting_define;}
     let location_insensitive_compare left right =
       match Reference.compare left.name right.name with
       | x when not (Int.equal x 0) -> x

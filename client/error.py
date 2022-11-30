@@ -34,6 +34,7 @@ class Error:
     code: int
     name: str
     description: str
+    scenarios: str
     long_description: str = ""
     concise_description: str = ""
 
@@ -49,6 +50,7 @@ class Error:
                 code=error_json["code"],
                 name=error_json["name"],
                 description=error_json["description"],
+                scenarios=error_json.get("scenarios", "[]"),
                 long_description=error_json.get("long_description", ""),
                 concise_description=error_json.get("concise_description", ""),
             )
@@ -78,6 +80,7 @@ class Error:
             code=self.code,
             name=self.name,
             description=self.description,
+            scenarios=self.scenarios,
             long_description=self.long_description,
             concise_description=self.concise_description,
         )
@@ -92,6 +95,7 @@ class Error:
             "code": self.code,
             "name": self.name,
             "description": self.description,
+            "scenarios": self.scenarios,
             "long_description": self.long_description,
             "concise_description": self.concise_description,
         }
@@ -100,7 +104,7 @@ class Error:
         path = click.style(str(self.path), fg="red")
         line = click.style(str(self.line), fg="yellow")
         column = click.style(str(self.column), fg="yellow")
-        return f"{path}:{line}:{column} {self.description}"
+        return f"{path}:{line}:{column} {self.description}\n{self.scenarios}"
 
     def to_sarif(self) -> Dict[str, Any]:
         return {

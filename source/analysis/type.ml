@@ -2313,7 +2313,9 @@ let union parameters =
       | parameter -> Base.Hash_set.add parameter_set parameter
     in
     List.iter parameters ~f:add_parameter;
-    Base.Hash_set.to_list parameter_set |> List.sort ~compare
+    Base.Hash_set.to_list parameter_set |> List.dedup_and_sort ~compare:(fun t1 t2 -> 
+      if String.equal (show t1) (show t2) then 0 else compare t1 t2
+    )
   in
   if List.exists ~f:is_top parameters then
     Top

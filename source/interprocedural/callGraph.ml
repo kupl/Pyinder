@@ -606,6 +606,15 @@ module DefineCallGraph = struct
 
   let add call_graph ~location ~callees = Location.Map.set call_graph ~key:location ~data:callees
 
+  let get_keys_of_target call_graph target =
+    let filtered_call_graph = Location.Map.fold call_graph ~init:empty ~f:(fun ~key:location ~data:callees new_call_graph -> 
+      if List.exists (LocationCallees.all_targets callees) ~f:(Target.equal target) then
+        add new_call_graph ~location ~callees
+      else
+        new_call_graph
+    ) in
+    Location.Map.keys filtered_call_graph
+
   let resolve_expression call_graph ~location ~expression_identifier =
     match Location.Map.find call_graph location with
     | Some (LocationCallees.Singleton callees) -> Some callees
@@ -2155,6 +2164,8 @@ module DefineCallGraphSharedMemory = struct
   let set Handle ~callable ~call_graph = add callable (Location.Map.to_tree call_graph)
 
   let get Handle ~callable = get callable >>| Location.Map.of_tree
+
+  let empty = Handle
 end
 
 module WholeProgramCallGraph = struct
@@ -2228,6 +2239,9 @@ let build_whole_program_call_graph
           ~attribute_targets
           ~callable
       in
+      (*
+      Format.printf "[[[ DEFINE CALL GRAPH ]]]\n\n%a\n\n" DefineCallGraph.pp callable_call_graph;
+      *)
       let () =
         if store_shared_memory then
           DefineCallGraphSharedMemory.set

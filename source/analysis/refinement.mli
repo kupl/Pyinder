@@ -51,7 +51,9 @@ module Store : sig
 
   val empty : t
 
-  val set_annotations : t -> Unit.t Reference.Map.t -> t
+  val set_temporary_annotations : t -> Unit.t Reference.Map.t -> t
+
+  val set_annotations : t -> Unit.t Reference.Map.t -> t  
 
   val to_yojson : Format.formatter -> t -> unit
 
@@ -120,4 +122,6 @@ module Store : sig
   val update_possible : global_resolution:GlobalResolution.t -> t -> t -> t
 
   val combine_join_with_merge : global_resolution:GlobalResolution.t -> t -> Unit.t Reference.Map.t
+
+  val make_map_function_of_types : t -> (Annotation.t option -> 'a list option) -> (string list * 'a option) list
 end

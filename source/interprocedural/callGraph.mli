@@ -169,6 +169,8 @@ module DefineCallGraph : sig
 
   val add : t -> location:Ast.Location.t -> callees:LocationCallees.t -> t
 
+  val get_keys_of_target : t -> Target.t -> Location.t list
+
   val resolve_call
     :  t ->
     location:Ast.Location.t ->
@@ -221,6 +223,8 @@ module DefineCallGraphSharedMemory : sig
   type t
 
   val get : t -> callable:Target.t -> DefineCallGraph.t option
+
+  val empty : t
 end
 
 (** Whole-program call graph, stored in the ocaml heap. This is a mapping from a callable to all its
