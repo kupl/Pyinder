@@ -114,7 +114,7 @@ module Unit = struct
     base: Annotation.t option;
     attributes: t Identifier.Map.Tree.t;
   }
-  [@@deriving eq]
+  [@@deriving sexp, eq]
 
   let empty = { base = None; attributes = IdentifierMap.empty }
 

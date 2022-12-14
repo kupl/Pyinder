@@ -41,7 +41,6 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
-  let cur_model = ref (OurTypeSet.OurSummary.create ()) in
   let x = 
   if !OurTypeSet.is_search_mode then
     TypeCheck.search_define_by_name
@@ -50,7 +49,7 @@ let produce_check_results global_environment define_name ~dependency =
       ~global_environment
       ~dependency
       define_name
-      cur_model
+      OurTypeSet.our_model
   else
     TypeCheck.check_define_by_name
       ~type_check_controls
@@ -58,9 +57,10 @@ let produce_check_results global_environment define_name ~dependency =
       ~global_environment
       ~dependency
       define_name
-      cur_model
+      OurTypeSet.our_model
   in
-  x, cur_model
+  OurTypeSet.save_summary !OurTypeSet.our_model define_name;
+  x
 
 
 module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
@@ -110,11 +110,12 @@ let populate_for_definitions ~scheduler environment defines =
   Log.info "Checking %d functions..." number_of_defines;
   let map _ names =
     let analyze_define number_defines name =
-      let () = ReadOnly.get read_only name |> ignore in
+      let x = ReadOnly.get read_only name in
+      let () = x |> ignore in
+      (*let () = ReadOnly.get read_only name |> ignore in*)
       number_defines + 1
     in
     let x = List.fold names ~init:0 ~f:analyze_define in
-    (*Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;*)
     x
   in
 
@@ -139,9 +140,7 @@ let populate_for_definitions ~scheduler environment defines =
       ~inputs:defines
       ()
   in
-  Log.dump "END";
-  if List.is_empty !OurTypeSet.our_models then Log.dump "OHMYGOD";
-  Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;
+
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
 
@@ -214,17 +213,19 @@ module ReadOnly = struct
 
 
   let get_errors environment ?dependency reference =
-    get ?dependency environment reference
-    >>= TypeCheck.CheckResult.errors
+    let x = get ?dependency environment reference in
+    x >>= TypeCheck.CheckResult.errors
     |> Option.value ~default:[]
 
 
   let get_local_annotations environment ?dependency reference =
-    get ?dependency environment reference >>= TypeCheck.CheckResult.local_annotations
+    let x = get ?dependency environment reference in 
+    x >>= TypeCheck.CheckResult.local_annotations
 
 
   let get_or_recompute_local_annotations environment name =
-    match get_local_annotations environment name with
+    let x= get_local_annotations environment name in
+    match x with
     | Some _ as local_annotations -> local_annotations
     | None ->
         (* Local annotations not preserved in shared memory in a standard pyre server (they can be,

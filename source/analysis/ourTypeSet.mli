@@ -5,21 +5,31 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+
 open Ast
 open Usedef
 open Core
+open MyUtil
 
 module VarType : sig
-  type t = Reference.t * Type.t [@@deriving compare, sexp, equal, hash, to_yojson, show]
+  type t = Reference.t * Type.t [@@deriving compare]
 end
 
+module FunctionSet : module type of SSet (Reference)
+module VarTypeMap : module type of SMap (VarType)
+
+module StoreMap : module type of SMap (Reference)
+module ClassMap : module type of SMap (Reference)
+(*
 module VarTypeMap : Map.S with type Key.t = VarType.t
+
 module FunctionSet : Set.S with type Elt.t = Reference.t
+*)
 
 module ClassSummary : sig
   type t = { 
-    store_info : (Reference.t, Refinement.Store.t) Base.Hashtbl.t;
-    class_vartype : (Reference.t, (FunctionSet.t VarTypeMap.t)) Base.Hashtbl.t;
+    store_info : Refinement.Store.t StoreMap.t;
+    class_vartype : (FunctionSet.t VarTypeMap.t) ClassMap.t;
   }
   [@@deriving equal]
 
@@ -27,27 +37,27 @@ module ClassSummary : sig
 
   val get : t -> key:Reference.t -> Refinement.Store.t option
 
-  val meet : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> unit
+  val meet : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
-  val outer_join : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> unit
+  val outer_join : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
-  val outer_widen : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> unit
+  val outer_widen : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
-  val join_with_merge : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> unit
+  val join_with_merge : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
   val pp_class_vartype : Format.formatter -> t -> unit
 
   val pp : Format.formatter -> t -> unit
 
-  val pp_json : t -> string
-
-  val copy : t -> t
+  (*val copy : t -> t*)
 
   val find_map_function_of_types : t -> Reference.t -> Reference.t -> Type.t -> FunctionSet.t
 end
 
+module ArgTypeMap : module type of SMap (Identifier)
+
 module ArgTypes : sig
-  type t = (Identifier.t, Type.t) Base.Hashtbl.t
+  type t = Type.t ArgTypeMap.t
 
   val pp : Format.formatter -> t -> unit
 
@@ -66,8 +76,10 @@ module FunctionSummary : sig
   }
 end
 
+module FunctionSummaryMap : module type of SMap (Reference)
+
 module FunctionTable : sig
-  type t = (Reference.t, FunctionSummary.t) Base.Hashtbl.t
+  type t = FunctionSummary.t FunctionSummaryMap.t
 end
 
 module OurSummary : sig
@@ -83,6 +95,8 @@ module OurSummary : sig
 
   val class_summary : t -> ClassSummary.t
 
+  val set_class_summary : t -> ClassSummary.t -> t
+
   val set_current_function : t -> Reference.t -> t
 
   val set_current_possiblecondition : t -> Refinement.Store.t option -> t
@@ -95,17 +109,17 @@ module OurSummary : sig
 
   val pp : Format.formatter -> t -> unit
 
-  val copy : t -> t
+  (*val copy : t -> t*)
 
-  val add_arg_types : t -> Reference.t -> (Identifier.t * Type.t) list -> unit
+  val add_arg_types : t -> Reference.t -> (Identifier.t * Type.t) list -> t
 
-  val add_return_info : t -> Type.t -> unit
+  val add_return_info : t -> Type.t -> t
 
-  val set_possible_condition : t -> Reference.t -> Refinement.Store.t -> unit
+  val set_possible_condition : t -> Reference.t -> Refinement.Store.t -> t
 
-  val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> unit
+  val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 
-  val set_cfg : t -> Reference.t -> Cfg.t option -> unit
+  val set_cfg : t -> Reference.t -> Cfg.t option -> t
 
   val get_usedef_tables : t -> Reference.t -> UsedefStruct.t option
 
@@ -123,15 +137,16 @@ module OurSummary : sig
 
   val make_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t
 
-  val update_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t -> unit
+  val update_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t -> t
 
   val search_suspicious_variable : t -> global_resolution:GlobalResolution.t -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 end
 
+val save_summary : OurSummary.t -> Reference.t -> unit
+
+val load_summary : Reference.t -> OurSummary.t
  
 val our_model : OurSummary.t ref
-
-val our_models : OurSummary.t list ref
 
 val is_search_mode : bool ref
 

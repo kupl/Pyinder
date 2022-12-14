@@ -1,5 +1,6 @@
 open Core
 open Ast
+open MyUtil
 
 module type UsedefState = sig
   type t [@@deriving show]
@@ -23,15 +24,18 @@ end
 
 
 module UsedefState : sig
+  module ReferenceSet : module type of SSet (Reference)
+  module ReferenceMap : module type of SMap (Reference)
+  
   module VarSet : sig
-    type t = Reference.Set.t
+    type t = ReferenceSet.t
   end
 
   type usedef
   type t = {
-    defined: Reference.Set.t;
-    undefined: Reference.Set.t;
-    usedef_table: usedef Reference.Map.t;
+    defined: ReferenceSet.t;
+    undefined: ReferenceSet.t;
+    usedef_table: usedef ReferenceMap.t;
   }
   include UsedefState with type t := t
 end 

@@ -318,8 +318,8 @@ module EnvironmentTable = struct
         let update ~names_to_update () =
           let register () =
             let set (name, dependency) =
-              In.produce_value upstream_environment name ~dependency:(Some dependency)
-              |> Table.add table (In.convert_trigger name)
+              let value = In.produce_value upstream_environment name ~dependency:(Some dependency) in
+              value |> Table.add table (In.convert_trigger name)
             in
             List.iter ~f:set
           in

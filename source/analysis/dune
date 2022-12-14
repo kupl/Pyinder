@@ -5,7 +5,7 @@
  (preprocess
   (pps ppx_deriving.eq ppx_deriving.show ppx_hash ppx_compare ppx_sexp_conv
     ppx_sexp_message ppx_deriving_yojson))
- (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast))
+ (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast pyrelib.myUtil))
 
 (library
  (name preprocessing)
@@ -14,7 +14,7 @@
  (preprocess
   (pps ppx_deriving.eq ppx_deriving.show ppx_hash ppx_compare ppx_sexp_conv
     ppx_sexp_message ppx_deriving_yojson))
- (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast
+ (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast pyrelib.myUtil
    pyrelib.pyreParser pyrelib.recognized pyrelib.statistics pyrelib.file
    scope))
 
@@ -25,7 +25,7 @@
  (preprocess
   (pps ppx_deriving.eq ppx_deriving.show ppx_hash ppx_compare ppx_sexp_conv
     ppx_sexp_message ppx_deriving_yojson))
- (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast
+ (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast pyrelib.myUtil
    pyrelib.scheduler pyrelib.pyreParser pyrelib.recognized pyrelib.statistics
    preprocessing pyrelib.file))
 
@@ -36,7 +36,7 @@
  (preprocess
   (pps ppx_deriving.eq ppx_deriving.show ppx_hash ppx_compare ppx_sexp_conv
     ppx_sexp_message ppx_deriving_yojson))
- (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast 
+ (libraries core sexplib yojson ppx_deriving_yojson ppx_deriving pyrelib.ast pyrelib.myUtil
    pyrelib.memory pyrelib.dependencyTrackedMemory pyrelib.scheduler
    pyrelib.pyreParser pyrelib.pyreNewParser pyrelib.recognized
    pyrelib.statistics pyrelib.file type preprocessing pyrelib.decorators))

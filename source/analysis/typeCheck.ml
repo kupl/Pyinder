@@ -1806,7 +1806,8 @@ module State (Context : Context) = struct
               *)
               
 
-              OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
+              OurTypeSet.our_model := OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list;
+              ()
             | _ -> () (* Must Fix *)
             );
           | _ -> ()
@@ -4983,7 +4984,7 @@ module State (Context : Context) = struct
             return_type
         in
         
-        OurTypeSet.OurSummary.add_return_info !OurTypeSet.our_model actual;
+        OurTypeSet.our_model := OurTypeSet.OurSummary.add_return_info !OurTypeSet.our_model actual;
 
         (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } ->
@@ -7889,7 +7890,7 @@ module PossibleState (Context : Context) = struct
               *)
               
 
-              OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
+              OurTypeSet.our_model := OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
             | _ -> () (* Must Fix *)
             );
           | _ -> ()
@@ -11103,7 +11104,7 @@ module PossibleState (Context : Context) = struct
             return_type
         in
         
-        OurTypeSet.OurSummary.add_return_info !OurTypeSet.our_model actual;
+        OurTypeSet.our_model := OurTypeSet.OurSummary.add_return_info !OurTypeSet.our_model actual;
 
         (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } ->
@@ -13279,8 +13280,8 @@ let exit_state ~our_model ~resolution (module Context : Context) =
     let cfg = Cfg.create define in
 
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
-    OurTypeSet.OurSummary.set_usedef_tables !our_model name (Some usedef_tables);
-    OurTypeSet.OurSummary.set_cfg !our_model name (Some cfg);
+    our_model := OurTypeSet.OurSummary.set_usedef_tables !our_model name (Some usedef_tables);
+    our_model := OurTypeSet.OurSummary.set_cfg !our_model name (Some cfg);
 
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial in
     let exit = PossibleFixpoint.exit fixpoint in
@@ -13356,9 +13357,11 @@ let exit_state ~our_model ~resolution (module Context : Context) =
           | Value v -> 
             (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
             (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
-            OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
-            OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
-            (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v);
+            our_model := OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
+            our_model := OurTypeSet.OurSummary.set_class_summary !our_model (
+              OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
+                (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v)
+              );
           | Unreachable -> ()
           )
         | None -> ()
@@ -13597,7 +13600,7 @@ let search_define
   match parent with
   | Some parent_name ->
     let vartype_map = OurTypeSet.OurSummary.make_map_function_of_types !OurTypeSet.our_model name in
-    OurTypeSet.OurSummary.update_map_function_of_types !OurTypeSet.our_model parent_name vartype_map
+    OurTypeSet.our_model := OurTypeSet.OurSummary.update_map_function_of_types !OurTypeSet.our_model parent_name vartype_map
   | _ -> ()
   );
 

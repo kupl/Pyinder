@@ -2,6 +2,8 @@ open Core
 open Ast
 open Expression
 open Statement
+open MyUtil
+
 
 module type UsedefState = sig
   type t [@@deriving show]
@@ -25,14 +27,18 @@ end
 
 
 module UsedefState = struct
-  module VarSet = struct 
-    type t = Reference.Set.t
-    let empty = Reference.Set.empty
-    let singleton name = Reference.Set.singleton name
-    let union left right = Reference.Set.union left right
+  module ReferenceSet = SSet (Reference)
+  module ReferenceMap = SMap (Reference)
 
-    let inter left right = Reference.Set.inter left right
-    let fold ~init ~f t = Reference.Set.fold t ~init ~f
+  module VarSet = struct 
+    
+    type t = ReferenceSet.t
+    let empty = ReferenceSet.empty
+    let singleton name = ReferenceSet.singleton name
+    let union left right = ReferenceSet.union left right
+
+    let inter left right = ReferenceSet.inter left right
+    let fold ~init ~f t = ReferenceSet.fold t ~init ~f
 
   end
 
@@ -43,9 +49,9 @@ module UsedefState = struct
     | Both
 
   type t = { 
-    defined : Reference.Set.t;
-    undefined : Reference.Set.t;
-    usedef_table : usedef Reference.Map.t;
+    defined : ReferenceSet.t;
+    undefined : ReferenceSet.t;
+    usedef_table : usedef ReferenceMap.t;
   }
 
   let show _ = "Not Implemented"
@@ -60,55 +66,55 @@ module UsedefState = struct
     ) 
 
   let pp_table format table = 
-    Reference.Map.iteri ~f:(fun ~key ~data -> 
+    ReferenceMap.iter ~f:(fun key data -> 
       Format.fprintf format "%a -> %a\n" Reference.pp key pp_usedef data
     ) table
 
   let pp format t = 
     Format.fprintf format "%a\n\n" pp_table t.usedef_table;
     Format.fprintf format "[ Defined Variables ] => \n";
-    Reference.Set.iter t.defined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
+    ReferenceSet.iter t.defined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
     Format.fprintf format "\n";
     Format.fprintf format "[ Undefined Variables ] => \n";
-    Reference.Set.iter t.undefined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
+    ReferenceSet.iter t.undefined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
     Format.fprintf format "\n"
 
   
 
   
-  let usedef_create = Reference.Map.empty
+  let usedef_create = ReferenceMap.empty
 
-  let create = {defined=Reference.Set.empty; undefined=Reference.Set.empty; usedef_table=usedef_create}
+  let create = {defined=ReferenceSet.empty; undefined=ReferenceSet.empty; usedef_table=usedef_create}
   let bottom = create
 
   let less_or_equal ~left:_ ~right:_ = true
 
   let join left right = 
-    let undefined = Reference.Set.union left.undefined right.undefined in
-    let defined = Reference.Set.diff (Reference.Set.union left.defined right.defined) undefined in
+    let undefined = ReferenceSet.union left.undefined right.undefined in
+    let defined = ReferenceSet.diff (ReferenceSet.union left.defined right.defined) undefined in
     { defined; undefined; usedef_table=usedef_create; }
 
   let widen ~previous:_ ~next ~iteration:_ = next
 
   let add_reference key varset =
-    List.fold (Reference.possible_qualifiers key) ~init:(Reference.Set.add varset key) ~f:(fun varset k -> Reference.Set.add varset k)
+    List.fold (Reference.possible_qualifiers key) ~init:(ReferenceSet.add varset key) ~f:(fun varset k -> ReferenceSet.add varset k)
 
   let get_use_variables usedef_table =
-    Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
+    ReferenceMap.fold usedef_table ~init:ReferenceSet.empty ~f:(fun key data varset ->
       match data with
       | Use | Both -> add_reference key varset
       | Def -> varset
     )
 
   let get_def_variables usedef_table = 
-    Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
+    ReferenceMap.fold usedef_table ~init:ReferenceSet.empty ~f:(fun key data varset ->
       match data with
       | Def | Both -> add_reference key varset
       | Use -> varset
     )
 
   let is_defined { defined; _ } reference =
-    Reference.Set.mem defined reference
+    ReferenceSet.mem defined reference
 
   let is_undefined t reference =
     not (is_defined t reference)
@@ -117,26 +123,26 @@ module UsedefState = struct
     let use_variables = get_use_variables usedef_table in
     let def_variables = get_def_variables usedef_table in 
     (* if all use variabels are defined, then put def variables in defined set *)
-    let _ = if Reference.Set.is_subset use_variables ~of_:t.defined 
-    then Reference.Set.union t.defined def_variables
+    let _ = if ReferenceSet.is_subset use_variables ~of_:t.defined 
+    then ReferenceSet.union t.defined def_variables
     else t.defined
     in
-    Reference.Set.union t.defined def_variables
+    ReferenceSet.union t.defined def_variables
 
   let update_undefined t usedef_table =
     let use_variables = get_use_variables usedef_table in
     let def_variables = get_def_variables usedef_table in 
-    let undefined = Reference.Map.fold usedef_table ~init:t.undefined ~f:(fun ~key ~data:_ varset -> 
-      if Reference.Set.mem t.defined key then varset else add_reference key varset
+    let undefined = ReferenceMap.fold usedef_table ~init:t.undefined ~f:(fun key _ varset -> 
+      if ReferenceSet.mem t.defined key then varset else add_reference key varset
     )
     in
     (* if all use variabels are defined, then put def variables in defined set *)
     let _ =
-    if Reference.Set.is_subset use_variables ~of_:t.defined 
+    if ReferenceSet.is_subset use_variables ~of_:t.defined 
     then undefined
-    else  Reference.Set.union undefined def_variables
+    else  ReferenceSet.union undefined def_variables
     in
-    Reference.Set.diff undefined def_variables
+    ReferenceSet.diff undefined def_variables
 
 
   let update_state t usedef_table =
@@ -212,14 +218,14 @@ module UsedefState = struct
     let target_variables = forward_expression target in
     let value_variables = forward_expression value in
     let both_variables = VarSet.inter target_variables value_variables in
-    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Def) target_variables in
-    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) value_variables in
-    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Both) both_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun key usedef_map -> ReferenceMap.add usedef_map ~key ~data:Def) target_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun key usedef_map -> ReferenceMap.add usedef_map ~key ~data:Use) value_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun key usedef_map -> ReferenceMap.add usedef_map ~key ~data:Both) both_variables in
     usedef_map
 
   let forward_assert test usedef_map =
     let test_variables = forward_expression test in
-    VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) test_variables
+    VarSet.fold ~init:usedef_map ~f:(fun key usedef_map -> ReferenceMap.add usedef_map ~key ~data:Use) test_variables
 
   let forward_statement ~(statement: Statement.t) state =
     match Node.value statement with

@@ -8,7 +8,7 @@
 open Ast
 
 module Unit : sig
-  type t [@@deriving eq, show]
+  type t [@@deriving sexp, eq, show]
 
   val empty : t
 

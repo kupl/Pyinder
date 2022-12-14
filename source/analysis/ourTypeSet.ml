@@ -5,9 +5,19 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+ (*
+let _ =
+  let target_path = "/home/wonseok/test/test.marshalled" in
+  let data_oc = open_out target_path in
+  let test = Core.Int.Set.empty in 
+  Marshal.to_channel data_oc test [];
+  close_out data_oc
+*)
+
 open Core
 open Ast
 open Usedef
+open MyUtil
 
 exception DuplicateException;;
 let weaken_typ typ =
@@ -20,18 +30,28 @@ let weaken_typ typ =
   weaken_typ
 
 module VarType = struct
-  type t = Reference.t * Type.t [@@deriving compare, sexp, equal, hash, to_yojson, show]
+  type t = Reference.t * Type.t [@@deriving compare]
+
+  (*
+  let json_string (reference, typ) =
+    Format.asprintf "(%a, %a)" Reference.pp reference Type.pp typ
+    *)
 end
 
-include VarType
-module FunctionSet = Set.Make (Reference)
-module VarTypeMap = Map.Make (VarType)
+module FunctionSet = SSet (Reference)
+module VarTypeMap = SMap (VarType)
 
+module StoreMap = SMap (Reference)
+module ClassMap = SMap (Reference)
 
 module ClassSummary = struct
+  
   type t = { 
-    store_info: (Reference.t, Refinement.Store.t) Base.Hashtbl.t;
+    store_info : Refinement.Store.t StoreMap.t;
+    class_vartype: (FunctionSet.t VarTypeMap.t) ClassMap.t;
+    (*store_info: (Reference.t, Refinement.Store.t) Base.Hashtbl.t;
     class_vartype: (Reference.t, (FunctionSet.t VarTypeMap.t)) Base.Hashtbl.t;
+    *)
     (*
     * 이 self varaible (reference.map.t) 는 다음과 같은 annotation (annotationMap) 이 가능하고
     * 그 annotation은 다음과 같은 함수 reference (reference.t list) 에서 온다   
@@ -39,8 +59,8 @@ module ClassSummary = struct
   }
 
   let create () = { 
-    store_info=Hashtbl.create (module Reference);
-    class_vartype=Hashtbl.create (module Reference);
+    store_info=StoreMap.empty;
+    class_vartype=ClassMap.empty;
   }
 
   
@@ -89,14 +109,17 @@ module ClassSummary = struct
     (*Format.printf "[ After Extract ] \n\n%a \n\n" Refinement.Store.pp x;*)
     x
   
-  let set { store_info; _ } ~key ~data =
-    Hashtbl.set store_info ~key ~data:(extract_element_type (extract_self data))
+  let set { store_info; class_vartype; } ~key ~data =
+    {
+      store_info = StoreMap.add ~key ~data:(extract_element_type (extract_self data)) store_info;
+      class_vartype;
+    }
 
   let get { store_info; _ } ~key =
-    Hashtbl.find store_info key
+    StoreMap.find_opt store_info key
 
   let meet ~global_resolution (({ store_info; _ } as t): t) class_name method_postcondition =
-    let current_postcondition = Hashtbl.find store_info class_name in
+    let current_postcondition = StoreMap.find_opt store_info class_name in
     match current_postcondition with
     | Some postcondition ->
       set t ~key:class_name ~data:(Refinement.Store.meet ~global_resolution postcondition method_postcondition)
@@ -105,7 +128,7 @@ module ClassSummary = struct
     
 
   let outer_join ~global_resolution (({ store_info; _ } as t): t) class_name method_postcondition =
-    let current_postcondition = Hashtbl.find store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
+    let current_postcondition = StoreMap.find_opt store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
     if Refinement.Store.less_or_equal ~global_resolution ~left:current_postcondition ~right:Refinement.Store.empty 
     then 
       set t ~key:class_name ~data:method_postcondition
@@ -119,100 +142,147 @@ module ClassSummary = struct
     *)
     
 
-    let current_postcondition = Hashtbl.find store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
+    let current_postcondition = StoreMap.find_opt store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
     set t ~key:class_name ~data:(Refinement.Store.join_with_merge ~global_resolution current_postcondition method_postcondition)
 
-  let outer_widen ~global_resolution ({ store_info; _ }: t) class_name method_postcondition =
-    let current_postcondition = Hashtbl.find store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
-    Hashtbl.set store_info ~key:class_name ~data:(Refinement.Store.outer_widen ~global_resolution current_postcondition method_postcondition ~iteration:0 ~widening_threshold:3)
+  let outer_widen ~global_resolution ({ store_info; _ } as t) class_name method_postcondition =
+    let current_postcondition = StoreMap.find_opt store_info class_name |> Option.value ~default:(Refinement.Store.empty) in
+    { t with store_info = StoreMap.add ~key:class_name ~data:(
+        Refinement.Store.outer_widen ~global_resolution current_postcondition method_postcondition ~iteration:0 ~widening_threshold:3
+      ) store_info
+    }
 
   let pp_functionset format functionset = 
-    FunctionSet.iter functionset ~f:(fun func_name -> 
-      Format.fprintf format "%a, " Reference.pp func_name)
+    FunctionSet.iter ~f:(fun func_name -> 
+    Format.fprintf format "%a, " Reference.pp func_name) functionset
 
   let pp_vartype_map format vartype_map =
-    VarTypeMap.iteri vartype_map ~f:(fun ~key:(var_name, typ) ~data ->
-      Format.fprintf format "%a: %a => { %a }\n" Reference.pp var_name Type.pp typ pp_functionset data
-    )
+    VarTypeMap.iter ~f:(fun (var_name, typ) data ->
+    Format.fprintf format "%a: %a => { %a }\n" Reference.pp var_name Type.pp typ pp_functionset data
+  ) vartype_map
 
   let pp_class_vartype format { class_vartype; _ } =
-    Hashtbl.iteri class_vartype ~f:(fun ~key ~data ->
+    ClassMap.iter ~f:(fun key data ->
       Format.fprintf format "[[[ Class VarType: %a ]]] \n%a\n" Reference.pp key pp_vartype_map data
-    )
+    ) class_vartype
+  let pp_store_info format store_info =
+    StoreMap.iter ~f:(fun key data ->
+      Format.fprintf format "[[[ Class Info ]]] \n %a \n -> %a \n" Reference.pp key Refinement.Store.pp data
+  ) store_info
 
   let pp format t =
-    Hashtbl.iteri t.store_info ~f:(fun ~key ~data ->
+    StoreMap.iter ~f:(fun key data ->
       Format.fprintf format "[[[ Class Info ]]] \n %a \n -> %a \n" Reference.pp key Refinement.Store.pp data
-    )
+    ) t.store_info
 
-  let pp_json t =
+    (*
+  let store_info_json_string { store_info; _ } =
     let json_string =
-    Hashtbl.fold t.store_info ~init:"" ~f:(fun ~key ~data json_string ->
-      json_string ^ (Format.asprintf {|{"%a" : {%a},|} Reference.pp key Refinement.Store.to_yojson data)
+    Hashtbl.fold store_info ~init:"{" ~f:(fun ~key ~data json_string ->
+      json_string ^ (Format.asprintf {|"%a" : {%a},|} Reference.pp key Refinement.Store.to_yojson data)
     )
     in
     let json_string = String.chop_suffix_exn json_string ~suffix:"," in
     let json_string = json_string ^ "}" in
     json_string
 
-  let equal t1 t2 =
-    Hashtbl.equal (fun ref1 ref2 -> Refinement.Store.equal ref1 ref2) t1.store_info t2.store_info
+  let function_set_json_string function_set =
+    let json_string = FunctionSet.fold function_set ~init:"{" ~f:(fun json_string func_name ->
+      json_string ^ (Format.asprintf {|%a,|} Reference.pp func_name)
+    )
+    in
+    let json_string = String.chop_suffix_exn json_string ~suffix:"," in
+    let json_string = json_string ^ "}" in
+    json_string
 
+  let vartype_map_json_string vartype_map =
+    let json_string = VarTypeMap.fold vartype_map ~init:"{" ~f:(fun ~key ~data json_string -> 
+      json_string ^ (Format.asprintf {|"%s" : %s,|} (VarType.json_string key) (function_set_json_string data))
+    )
+    in
+    let json_string = String.chop_suffix_exn json_string ~suffix:"," in
+    let json_string = json_string ^ "}" in
+    json_string
+
+  let class_vartype_json_string { class_vartype; _ } =
+    let json_string =
+    Hashtbl.fold class_vartype ~init:"{" ~f:(fun ~key ~data json_string ->
+      json_string ^ (Format.asprintf {|"%a : %s|} Reference.pp key (vartype_map_json_string data))
+    )
+    in
+    let json_string = String.chop_suffix_exn json_string ~suffix:"," in
+    let json_string = json_string ^ "}" in
+    json_string
+    *)
+
+
+
+  let equal t1 t2 =
+    StoreMap.equal (fun ref1 ref2 -> Refinement.Store.equal ref1 ref2) t1.store_info t2.store_info
+
+    (*
   let copy t = 
     { 
-      store_info = Hashtbl.copy t.store_info;
+      store_info = StoreMap.copy t.store_info;
       class_vartype = t.class_vartype;
     }
+    *)
 
-  let update_map_function_of_types { class_vartype; _ } class_name vartype_map =
-    let class_vartype_map = Hashtbl.find class_vartype class_name |> Option.value ~default:(VarTypeMap.empty) in
+  let update_map_function_of_types ({ class_vartype; _ } as t) class_name vartype_map =
+    let class_vartype_map = ClassMap.find_opt class_vartype class_name |> Option.value ~default:(VarTypeMap.empty) in
     let class_vartype_map = 
-      VarTypeMap.merge class_vartype_map vartype_map ~f:(fun ~key:_ v -> 
-        match v with
-        | `Left v | `Right v -> Some v
-        | `Both (v1, v2) -> Some (FunctionSet.union v1 v2)
-      )
+      VarTypeMap.merge (fun _ left right -> 
+      match left, right with
+      | None, None -> None
+      | Some left, None -> Some left
+      | None, Some right -> Some right
+      | Some left, Some right -> Some (FunctionSet.union left right)
+    ) class_vartype_map vartype_map 
     in
-    Hashtbl.set class_vartype ~key:class_name ~data:class_vartype_map
+    { t with class_vartype = ClassMap.add ~key:class_name ~data:class_vartype_map class_vartype }
 
   let find_map_function_of_types { class_vartype; _ } class_name var_name var_type =
-    let class_vartype_map = Hashtbl.find class_vartype class_name |> Option.value ~default:(VarTypeMap.empty) in
-    VarTypeMap.find class_vartype_map (var_name, var_type) |> Option.value ~default:FunctionSet.empty
+    let class_vartype_map = ClassMap.find_opt class_vartype class_name |> Option.value ~default:(VarTypeMap.empty) in
+    if VarTypeMap.mem class_vartype_map (var_name, var_type)
+    then VarTypeMap.find class_vartype_map (var_name, var_type)  
+    else FunctionSet.empty
 
 end
 
-module ArgTypes = struct
-  type t = (Identifier.t, Type.t) Base.Hashtbl.t
+module ArgTypeMap = SMap (Identifier)
 
-  let create () = Hashtbl.create (module Identifier)
+module ArgTypes = struct
+  type t = Type.t ArgTypeMap.t
+
+  let create () = ArgTypeMap.empty
 
   let add_arg_type t ident typ =
     let modified_typ = weaken_typ typ in
-    let exn_typ = Hashtbl.find t ident |> Option.value ~default:modified_typ in
+    let exn_typ = ArgTypeMap.find_opt t ident |> Option.value ~default:modified_typ in
     match exn_typ with
-    | Bottom | Any | Top -> ()
+    | Bottom | Any | Top -> t
     | _ ->
-      Hashtbl.set t ~key:ident ~data:(Type.union [modified_typ; exn_typ])
+    ArgTypeMap.add ~key:ident ~data:(Type.union [modified_typ; exn_typ]) t
 (*
   let modify_arg_typ t ident typ =
     Hashtbl.set t ~key:ident ~data:typ
 *)
 
   let equal t1 t2 =
-    Hashtbl.equal (fun typ1 typ2 -> Type.equal typ1 typ2) t1 t2
+    ArgTypeMap.equal (fun typ1 typ2 -> Type.equal typ1 typ2) t1 t2
 
   let pp format t =
-    Hashtbl.iteri t ~f:(fun ~key ~data ->
+    ArgTypeMap.iter ~f:(fun key data ->
       Format.fprintf format "%a -> %a \n" Identifier.pp key Type.pp data;
-    )
+    ) t
 
   let get_type t ident =
-    Hashtbl.find t ident |> Option.value ~default:Type.Bottom
+    ArgTypeMap.find_opt t ident |> Option.value ~default:Type.Bottom
 
   let export_to_resolution t resolution = 
-    Hashtbl.fold t ~init:resolution ~f:(fun ~key ~data resolution ->
+    ArgTypeMap.fold ~f:(fun key data resolution ->
         Resolution.new_local resolution ~reference:(Reference.create key) ~annotation:(Annotation.create_immutable data)
-    )
+    ) t ~init:resolution
 
 end
 
@@ -258,8 +328,8 @@ module FunctionSummary = struct
   let pp format {arg_types; return_types; possible_condition; _} =
     Format.fprintf format "%a \nreturn : %a \n\n%a\n" ArgTypes.pp arg_types Type.pp return_types Refinement.Store.pp possible_condition
 
-  let add_arg_types {arg_types; _} arg_typ_list =
-    List.iter arg_typ_list ~f:(fun (arg, typ) -> ArgTypes.add_arg_type arg_types arg typ)
+  let add_arg_types ({arg_types; _} as t) arg_typ_list =
+    { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type arg_types arg typ) }
 
   let add_return_info {arg_types; return_types; possible_condition; usedef_tables; cfg; _} return_type =
     let modified_typ = weaken_typ return_type in
@@ -302,60 +372,63 @@ module FunctionSummary = struct
 
 end
 
-module FunctionTable = struct
-  type t = (Reference.t, FunctionSummary.t) Base.Hashtbl.t
-  let create () = Hashtbl.create (module Reference)
+module FunctionSummaryMap = SMap (Reference)
 
-  let copy t = Hashtbl.copy t
+module FunctionTable = struct
+  type t = FunctionSummary.t FunctionSummaryMap.t
+  let create () = FunctionSummaryMap.empty
+
+  (*let copy t = Hashtbl.copy t*)
+
   let equal t1 t2 =
-    Hashtbl.equal (fun fs1 fs2 -> 
+    FunctionSummaryMap.equal (fun fs1 fs2 -> 
       FunctionSummary.equal fs1 fs2
     ) t1 t2
 
   let pp format table =
-    Hashtbl.iteri table ~f:(fun ~key ~data ->
+    FunctionSummaryMap.iter ~f:(fun key data ->
       Format.fprintf format "[[[ Function Info ]]] \n%a \n%a \n" Reference.pp key FunctionSummary.pp data
-    )
+    ) table
 
   let add_arg_types t reference arg_typ_list =
-    let func_summary = Hashtbl.find t reference |> Option.value ~default:(FunctionSummary.create ()) in
-    FunctionSummary.add_arg_types func_summary arg_typ_list;
-    Hashtbl.set t ~key:reference ~data:func_summary
+    let func_summary = FunctionSummaryMap.find_opt t reference |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummary.add_arg_types func_summary arg_typ_list in
+    FunctionSummaryMap.add ~key:reference ~data:func_summary t
 
   let add_return_info t func return_type =
-    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
-    Hashtbl.set t ~key:func ~data:(FunctionSummary.add_return_info func_summary return_type)
+    let func_summary = FunctionSummaryMap.find_opt t func |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummaryMap.add ~key:func ~data:(FunctionSummary.add_return_info func_summary return_type) t
 
   let set_possible_condition t func possible_condition =
-    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
-    Hashtbl.set t ~key:func ~data:(FunctionSummary.set_possible_condition func_summary possible_condition)
+    let func_summary = FunctionSummaryMap.find_opt t func |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummaryMap.add ~key:func ~data:(FunctionSummary.set_possible_condition func_summary possible_condition) t
 
   let set_usedef_tables t func usedef_tables =
-    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
-    Hashtbl.set t ~key:func ~data:(FunctionSummary.set_usedef_tables func_summary usedef_tables)
+    let func_summary = FunctionSummaryMap.find_opt t func |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummaryMap.add ~key:func ~data:(FunctionSummary.set_usedef_tables func_summary usedef_tables) t
 
   let set_cfg t func cfg =
-    let func_summary = Hashtbl.find t func |> Option.value ~default:(FunctionSummary.create ()) in
-    Hashtbl.set t ~key:func ~data:(FunctionSummary.set_cfg func_summary cfg)
+    let func_summary = FunctionSummaryMap.find_opt t func |> Option.value ~default:(FunctionSummary.create ()) in
+    FunctionSummaryMap.add ~key:func ~data:(FunctionSummary.set_cfg func_summary cfg) t
 
   let get_usedef_tables t func_name =
-    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummaryMap.find_opt t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_usedef_tables func_summary
 
   let get_possible_condition t func_name =
-    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummaryMap.find_opt t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_possible_condition func_summary
 
   let get_func_arg_types t func_name =
-    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummaryMap.find_opt t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_arg_types func_summary
 
   let get_func_return_types t func_name =
-    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummaryMap.find_opt t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_return_types func_summary
 
   let get_cfg t func_name =
-    let func_summary = Hashtbl.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
+    let func_summary = FunctionSummaryMap.find_opt t func_name |> Option.value ~default:(FunctionSummary.create ()) in
     FunctionSummary.get_cfg func_summary
 
   let make_map_function_of_types t class_name =
@@ -364,17 +437,30 @@ module FunctionTable = struct
     *)
     let vartype_map = VarTypeMap.empty in
 
+    FunctionSummaryMap.fold ~f:(fun func_name data vartype_map ->
+      if Reference.is_contain ~base:func_name ~target:class_name then
+        let candidates_vartype = FunctionSummary.make_map_function_of_types data in
+        List.fold candidates_vartype ~init:vartype_map ~f:(fun vartype_map (str_list, anno) -> 
+          VarTypeMap.update (Reference.create_from_list str_list, Option.value_exn anno) (fun func_set_opt -> 
+            Some (FunctionSet.add (Option.value func_set_opt ~default:FunctionSet.empty) func_name)
+          ) vartype_map
+        )
+      else
+        vartype_map
+    ) t ~init:vartype_map
+    (*
     Hashtbl.fold t ~init:vartype_map ~f:(fun ~key:func_name ~data vartype_map ->
       if Reference.is_contain ~base:func_name ~target:class_name then
         let candidates_vartype = FunctionSummary.make_map_function_of_types data in
         List.fold candidates_vartype ~init:vartype_map ~f:(fun vartype_map (str_list, anno) -> 
-          VarTypeMap.update vartype_map (Reference.create_from_list str_list, Option.value_exn anno) ~f:(fun func_set_opt -> 
-            FunctionSet.add (Option.value func_set_opt ~default:FunctionSet.empty) func_name
-          )
+          VarTypeMap.update (Reference.create_from_list str_list, Option.value_exn anno) (fun func_set_opt -> 
+            Some (FunctionSet.add func_name (Option.value func_set_opt ~default:FunctionSet.empty))
+          ) vartype_map
         )
       else
         vartype_map
     )
+    *)
 
 end
 
@@ -395,6 +481,9 @@ module OurSummary = struct
   }
 
   let class_summary {class_summary; _} = class_summary
+
+  let set_class_summary t class_summary =
+    { t with class_summary; }
 
   let set_current_function {class_summary; function_table; current_possiblecondition; _} current_function = 
     {class_summary; 
@@ -419,6 +508,7 @@ module OurSummary = struct
     in
     set_current_possiblecondition t (Some update_possiblecondition)
 
+    (*
   let copy {class_summary; function_table; current_function; current_possiblecondition } = 
     {
       class_summary = ClassSummary.copy class_summary;
@@ -426,6 +516,7 @@ module OurSummary = struct
       current_function;
       current_possiblecondition
     }
+    *)
   
   let equal {class_summary=cs1; function_table=ft1; _} {class_summary=cs2; function_table=ft2; _} =
     (ClassSummary.equal cs1 cs2) && (FunctionTable.equal ft1 ft2)
@@ -438,22 +529,23 @@ module OurSummary = struct
   let pp formatter t =
     Format.fprintf formatter "%a\n\n%a" pp_class t pp_func t
 
-  let add_arg_types { function_table; _} reference arg_typ_list =
-    FunctionTable.add_arg_types function_table reference arg_typ_list
+  let add_arg_types ({ function_table; _} as t) reference arg_typ_list =
+    { t with function_table = FunctionTable.add_arg_types function_table reference arg_typ_list }
 
-  let add_return_info {function_table; current_function; _} return_type =
-    match current_function with
+  let add_return_info ({function_table; current_function; _} as t) return_type =
+    { t with function_table = match current_function with
     | Some func ->
       FunctionTable.add_return_info function_table func return_type
-    | None -> ()
+    | None -> FunctionSummaryMap.empty
+    }
 
-  let set_possible_condition {function_table; _} func_name possible_condition =
-    FunctionTable.set_possible_condition function_table func_name possible_condition
-  let set_usedef_tables {function_table; _} func_name usedef_tables =
-    FunctionTable.set_usedef_tables function_table func_name usedef_tables
+  let set_possible_condition ({function_table; _} as t) func_name possible_condition =
+    { t with function_table=FunctionTable.set_possible_condition function_table func_name possible_condition }
+  let set_usedef_tables ({function_table; _} as t) func_name usedef_tables =
+    { t with function_table=FunctionTable.set_usedef_tables function_table func_name usedef_tables }
 
-  let set_cfg {function_table; _} func_name cfg =
-    FunctionTable.set_cfg function_table func_name cfg
+  let set_cfg ({function_table; _} as t) func_name cfg =
+    { t with function_table=FunctionTable.set_cfg function_table func_name cfg }
 
   let get_usedef_tables {function_table; _} func_name = 
     FunctionTable.get_usedef_tables function_table func_name
@@ -481,8 +573,8 @@ module OurSummary = struct
   let make_map_function_of_types { function_table; _ } class_name =
     FunctionTable.make_map_function_of_types function_table class_name
 
-  let update_map_function_of_types { class_summary; _ } class_name vartype_map =
-    ClassSummary.update_map_function_of_types class_summary class_name vartype_map
+  let update_map_function_of_types ({ class_summary; _ } as t) class_name vartype_map =
+    { t with class_summary = ClassSummary.update_map_function_of_types class_summary class_name vartype_map }
 
   let search_suspicious_variable t ~global_resolution parent =
     (*let usedef_table = get_usedef_table t func_name |> Option.value ~default:UsedefState.bottom in*)
@@ -536,10 +628,53 @@ module OurSummary = struct
       candidates
 end
 
-let our_model = ref (OurSummary.create ());;
+(* 
+let check_dir : string -> bool 
+= fun path ->
+  match Sys.is_directory path with
+  | `Yes -> true
+  | _ -> false
+  *)
 
-let our_models = ref []
+let check_file : string -> bool
+= fun path ->
+match Sys.file_exists path with
+| `Yes -> true
+| _ -> false
+
+let data_path = "/home/wonseok/test"
+let save_summary (summary: OurSummary.t) func_name =
+  let target_path = data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled" in
+  let _ = summary in 
+  let store_info = summary.class_summary.store_info in 
+  Log.dump "%a" ClassSummary.pp_store_info store_info;
+  let store_info = FunctionSummaryMap.map store_info ~f:(fun ref ->
+    let sexp = Reference.Map.sexp_of_t (Refinement.Unit.sexp_of_t) (ref.annotations) in
+    let t = Reference.Map.t_of_sexp (Refinement.Unit.t_of_sexp) sexp in
+    Out_channel.with_file target_path ~f:(fun oc -> Marshal.to_channel oc sexp []);
+    Refinement.Store.set_annotations ref t
+  ) in
+  Log.dump "%a" ClassSummary.pp_store_info store_info;
+  let _ = store_info in 
+  (*Out_channel.with_file target_path ~f:(fun oc -> Marshal.to_channel oc test []);*)
+  (*Caml.output_value data_oc test;*)
+  Log.dump "hEU"
+
+let load_summary func_name =
+  let target_path = data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled" in
+  if check_file target_path then
+    let data_in = open_in target_path in
+    let summary = Marshal.from_channel data_in in
+    close_in data_in;
+    summary
+  else OurSummary.create ()
+
+
+
+let our_model = ref (OurSummary.create ());;
 
 let is_search_mode = ref false;;
 
-let single_errors = ref [];
+let single_errors = ref [];;
+
+

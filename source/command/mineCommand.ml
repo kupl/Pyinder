@@ -152,7 +152,7 @@
  
  let compute_errors ~configuration ~build_system () =
    let rec fixpoint configuration n =
-    let prev_model = Analysis.OurTypeSet.OurSummary.copy !Analysis.OurTypeSet.our_model in
+    let prev_model = !Analysis.OurTypeSet.our_model in
     let errors, ast_environment = do_check configuration in
     let errors = Analysis.AnalysisError.filter_type_error errors in
 
@@ -314,6 +314,12 @@
  
  let our_analysis check_configuration analyze_json = 
     let x = run_check check_configuration in 
+    (match Lwt.state x with
+    | Return _ -> print_endline "?"
+    | Fail exn -> let _ = on_exception exn in ()
+    | _ -> ()
+    );
+
     Log.dump "%s" "Analyze Call Graph...";
     Unix.sleep(1);
     let _ = AnalyzeCommand.run_analyze_mine analyze_json in
@@ -336,6 +342,8 @@
     
     Unix.sleep(1);
     x
+
+    
  let run_mine configuration_file =
    let exit_status =
      match CommandStartup.read_and_parse_json configuration_file ~f:CheckConfiguration.of_yojson with
