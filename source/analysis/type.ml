@@ -6642,3 +6642,19 @@ let callable_name = function
     ->
       Some name
   | _ -> None
+
+let union_join left right =
+  let dedup =
+    List.dedup_and_sort ~compare:compare
+  in
+
+  let single_union_check t =
+    match t with
+    | Union t_list -> if List.length t_list == 1 then List.nth_exn t_list 0 else t
+    | _ -> t
+  in
+
+  match left, right with
+  | Union t1, Union t2 -> single_union_check (Union (dedup (t1@t2)))
+  | Union t_list, t | t, Union t_list -> single_union_check (Union (dedup (t::t_list)))
+  | _ -> single_union_check (Union (dedup [left; right]))

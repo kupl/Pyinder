@@ -47,7 +47,7 @@ module Store : sig
     annotations: Unit.t Reference.Map.t;
     temporary_annotations: Unit.t Reference.Map.t;
   }
-  [@@deriving eq, show]
+  [@@deriving sexp, eq, show]
 
   val empty : t
 

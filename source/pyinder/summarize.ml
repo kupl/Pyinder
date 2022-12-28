@@ -228,7 +228,7 @@ module Summarize = struct
           let prev_list = List.map primitives ~f:(fun primitive ->
             let class_name = Type.class_name primitive in
             let function_set = find_origin_function_set type_summary class_name error_reference error_type in
-            FunctionSet.fold ~f:(fun prev_func_name sofar -> 
+            FunctionSet.fold ~f:(fun sofar prev_func_name -> 
               let prev_func_paths = 
                 analyze_scenario ~check_defined:true type_summary call_graph prev_func_name error_reference |> remove_empty_list_of_list |> List.map ~f:List.rev 
               in

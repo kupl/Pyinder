@@ -50,16 +50,29 @@ let produce_check_results global_environment define_name ~dependency =
       ~dependency
       define_name
       OurTypeSet.our_model
-  else
-    TypeCheck.check_define_by_name
+  else if !OurTypeSet.is_inference_mode then
+    let x = TypeCheck.check_define_by_name
       ~type_check_controls
       ~call_graph_builder
       ~global_environment
       ~dependency
       define_name
       OurTypeSet.our_model
+    in
+    let global_resolution = GlobalResolution.create global_environment ?dependency in
+    OurTypeSet.global_resolution := Some global_resolution;
+    OurTypeSet.save_summary !OurTypeSet.our_model define_name;
+    x
+  else
+    TypeCheck.check_define_by_name
+          ~type_check_controls
+          ~call_graph_builder
+          ~global_environment
+          ~dependency
+          define_name
+          OurTypeSet.our_model
+
   in
-  OurTypeSet.save_summary !OurTypeSet.our_model define_name;
   x
 
 
@@ -173,7 +186,6 @@ let populate_for_modules ~scheduler environment qualifiers =
       ()
   in
   populate_for_definitions ~scheduler environment all_defines;
-  Log.dump "%a" OurTypeSet.OurSummary.pp !OurTypeSet.our_model;
   Statistics.event
     ~section:`Memory
     ~name:"shared memory size post-typecheck"

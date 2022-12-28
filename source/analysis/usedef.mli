@@ -1,13 +1,14 @@
 open Core
 open Ast
-open MyUtil
 
 module type UsedefState = sig
-  type t [@@deriving show]
+  type t [@@deriving show, sexp]
 
   val bottom : t
 
   val less_or_equal : left:t -> right:t -> bool
+
+  val equal : t -> t -> bool
 
   val join : t -> t -> t
 
@@ -24,19 +25,17 @@ end
 
 
 module UsedefState : sig
-  module ReferenceSet : module type of SSet (Reference)
-  module ReferenceMap : module type of SMap (Reference)
   
   module VarSet : sig
-    type t = ReferenceSet.t
+    type t = Reference.Set.t
   end
 
   type usedef
   type t = {
-    defined: ReferenceSet.t;
-    undefined: ReferenceSet.t;
-    usedef_table: usedef ReferenceMap.t;
-  }
+    defined: Reference.Set.t;
+    undefined: Reference.Set.t;
+    usedef_table: usedef Reference.Map.t;
+  } 
   include UsedefState with type t := t
 end 
 
@@ -46,7 +45,7 @@ module type UsedefFixpoint = sig
   type t = {
     usedef_tables: state Int.Table.t
   }
-  [@@deriving show]
+  [@@deriving show, sexp]
 
   val entry : t -> state option
 
@@ -69,6 +68,18 @@ module type UsedefFixpoint = sig
   val equal : f:(state -> state -> bool) -> t -> t -> bool
 end
 
-module Make (State : UsedefState) : UsedefFixpoint with type state = State.t
+
+module Make (State : UsedefState) : UsedefFixpoint with type state = State.t 
 
 module UsedefStruct : UsedefFixpoint with type state = (UsedefState.t)
+
+
+(*
+module Make (State : UsedefState) :sig
+  type state  = State.t 
+  type t [@@deriving sexp]
+end
+
+module UsedefStruct : sig 
+  include module type of Make (UsedefState) 
+end*)

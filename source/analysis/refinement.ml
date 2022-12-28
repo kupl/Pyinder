@@ -362,7 +362,7 @@ module Store = struct
     annotations: Unit.t Reference.Map.t;
     temporary_annotations: Unit.t Reference.Map.t;
   }
-  [@@deriving eq, equal]
+  [@@deriving sexp, eq, equal]
 
   let empty = { annotations = ReferenceMap.empty; temporary_annotations = ReferenceMap.empty }
 

@@ -9,22 +9,17 @@
 open Ast
 open Usedef
 open Core
-open MyUtil
 
 module VarType : sig
   type t = Reference.t * Type.t [@@deriving compare]
 end
 
-module FunctionSet : module type of SSet (Reference)
-module VarTypeMap : module type of SMap (VarType)
-
-module StoreMap : module type of SMap (Reference)
-module ClassMap : module type of SMap (Reference)
-(*
 module VarTypeMap : Map.S with type Key.t = VarType.t
-
 module FunctionSet : Set.S with type Elt.t = Reference.t
-*)
+
+module StoreMap : Map.S with type Key.t = Reference.t
+module ClassMap : Map.S with type Key.t = Reference.t
+
 
 module ClassSummary : sig
   type t = { 
@@ -54,7 +49,7 @@ module ClassSummary : sig
   val find_map_function_of_types : t -> Reference.t -> Reference.t -> Type.t -> FunctionSet.t
 end
 
-module ArgTypeMap : module type of SMap (Identifier)
+module ArgTypeMap : Map.S with type Key.t = Identifier.t
 
 module ArgTypes : sig
   type t = Type.t ArgTypeMap.t
@@ -76,7 +71,7 @@ module FunctionSummary : sig
   }
 end
 
-module FunctionSummaryMap : module type of SMap (Reference)
+module FunctionSummaryMap : Map.S with type Key.t = Reference.t
 
 module FunctionTable : sig
   type t = FunctionSummary.t FunctionSummaryMap.t
@@ -141,13 +136,17 @@ module OurSummary : sig
 
   val search_suspicious_variable : t -> global_resolution:GlobalResolution.t -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 end
-
-val save_summary : OurSummary.t -> Reference.t -> unit
-
-val load_summary : Reference.t -> OurSummary.t
  
 val our_model : OurSummary.t ref
 
 val is_search_mode : bool ref
 
+val is_inference_mode : bool ref
+
 val single_errors : AnalysisError.t list ref
+
+val global_resolution : GlobalResolution.t option ref
+
+val save_summary : OurSummary.t -> Reference.t -> unit
+
+val load_summary : unit -> unit

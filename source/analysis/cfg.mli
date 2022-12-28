@@ -45,7 +45,7 @@ module Node : sig
 end
 
 (* Control flow graph of a define body. *)
-type t = Node.t Int.Table.t [@@deriving show]
+type t = Node.t Int.Table.t [@@deriving show, sexp]
 
 val entry_index : int
 

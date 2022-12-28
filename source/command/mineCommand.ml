@@ -155,22 +155,29 @@
     let prev_model = !Analysis.OurTypeSet.our_model in
     let errors, ast_environment = do_check configuration in
     let errors = Analysis.AnalysisError.filter_type_error errors in
-
-    if Analysis.OurTypeSet.OurSummary.equal prev_model (!Analysis.OurTypeSet.our_model)
+    Analysis.OurTypeSet.load_summary ();
+    if true or (Analysis.OurTypeSet.OurSummary.equal prev_model (!Analysis.OurTypeSet.our_model))
     then errors, ast_environment
     else fixpoint configuration (n+1)
    in
+   let single_errors, ast_environment = do_check configuration in
+   Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
    Log.dump "%s" "Type Inferecne...";
-   let single_errors, ast_environment = fixpoint configuration 1 in
+   Analysis.OurTypeSet.is_inference_mode := true;
+   let _, _ = fixpoint configuration 1 in
    (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
+   Analysis.OurTypeSet.is_inference_mode := false;
    Unix.sleep(1);
-   Analysis.OurTypeSet.single_errors := single_errors;
 
+  
+   (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
    Log.dump "%s" "Type Error Searching...";
+   
    Analysis.OurTypeSet.is_search_mode := true;
    (*print_endline "[[[ Search Mode ]]]";*)
    let errors, _ = do_check configuration in
    Log.dump "END";
+   Analysis.OurTypeSet.is_search_mode := false;
   (*
    Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
   *)
@@ -315,7 +322,7 @@
  let our_analysis check_configuration analyze_json = 
     let x = run_check check_configuration in 
     (match Lwt.state x with
-    | Return _ -> print_endline "?"
+    | Return _ -> ()
     | Fail exn -> let _ = on_exception exn in ()
     | _ -> ()
     );
@@ -323,6 +330,7 @@
     Log.dump "%s" "Analyze Call Graph...";
     Unix.sleep(1);
     let _ = AnalyzeCommand.run_analyze_mine analyze_json in
+    Log.dump "%s" "Done";
 
     let errors = !Pyinder.Summarize.errors in
     let pyinder_model = Pyinder.Summarize.Summarize.create () in

@@ -4365,7 +4365,9 @@ let filter_type_error errors =
 
 let filter_single_errors ~resolution ~single_errors errors =
   List.filter errors ~f:(fun error ->
-    List.fold single_errors ~init:true ~f:(fun flag single_error -> 
+    let x = List.fold single_errors ~init:true ~f:(fun flag single_error -> 
       flag && (not (less_or_equal ~resolution error single_error))
     )
+    in
+    x
   )

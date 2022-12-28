@@ -386,7 +386,7 @@ module Node = struct
     | While statement -> Statement.While statement |> process_statement
 end
 
-type t = Node.t Int.Table.t
+type t = Node.t Int.Table.t [@@deriving sexp]
 
 type jumps = {
   break: Node.t;

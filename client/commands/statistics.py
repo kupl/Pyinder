@@ -52,6 +52,7 @@ def find_roots(
 
 def _is_excluded(path: Path, excludes: Sequence[str]) -> bool:
     try:
+        print("HERE")
         return any(
             [re.match(exclude_pattern, str(path)) for exclude_pattern in excludes]
         )

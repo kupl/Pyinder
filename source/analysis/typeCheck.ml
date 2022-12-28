@@ -13250,7 +13250,7 @@ let exit_state ~our_model ~resolution (module Context : Context) =
   *)
 
   let initial = PossibleState.initial ~resolution in
-  (*Log.dump "[[[ Possible Initial ]]] \n\n%a\n\n" PossibleState.pp initial;*)
+  (*Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;*)
   
   let global_resolution = Resolution.global_resolution resolution in
   if Define.is_stub define then
@@ -13348,26 +13348,30 @@ let exit_state ~our_model ~resolution (module Context : Context) =
          name
          (Cfg.to_dot ~precondition:(precondition fixpoint) ~single_line:true cfg));
 
-    let last_state = Hashtbl.find fixpoint.possibleconditions Cfg.exit_index in
-    (match parent with
-    | Some reference ->
-      (match last_state with
-        | Some state ->
-          (match state with
-          | Value v -> 
-            (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
-            (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
-            our_model := OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
-            our_model := OurTypeSet.OurSummary.set_class_summary !our_model (
-              OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
-                (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v)
-              );
-          | Unreachable -> ()
-          )
-        | None -> ()
+    (if !OurTypeSet.is_inference_mode then
+      let last_state = Hashtbl.find fixpoint.possibleconditions Cfg.exit_index in
+      (match parent with
+      | Some reference ->
+        (match last_state with
+          | Some state ->
+            (match state with
+            | Value v -> 
+              (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
+              (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
+              our_model := OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
+              our_model := OurTypeSet.OurSummary.set_class_summary !our_model (
+                OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
+                  (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v)
+                );
+            | Unreachable -> ()
+            )
+          | None -> ()
+        )
+      | None -> ()
       )
-    | None -> ()
-    );
+    else ()
+    )
+    ;
 
     
 
@@ -13588,13 +13592,14 @@ let search_define
 
   (*Format.printf "[[[ Search %a]]]\n" Reference.pp name;*)
   (*Log.dump "name : %a / parent : %a" Reference.pp name Reference.pp (Option.value parent ~default:Reference.empty);*)
-  
+
   let annotation_list = 
     match parent with
     | Some parent -> 
       OurTypeSet.OurSummary.search_suspicious_variable !our_model ~global_resolution:(Resolution.global_resolution resolution) parent
     | None -> []
   in
+
   
   (
   match parent with
@@ -13607,9 +13612,8 @@ let search_define
   let { CheckResult.errors; local_annotations; } = 
     List.fold annotation_list ~init:{ CheckResult.errors=None; local_annotations=None; } 
     ~f:(fun { CheckResult.errors; _ } annotation -> 
+      
       let update_resolution = Resolution.set_annotation_store resolution (Refinement.Store.set_temporary_annotations Refinement.Store.empty annotation) in
-
-      (**)
 
       let extract_type annotation =
         let rec extract_type_of_unit (data:Refinement.Unit.t) typ = 
@@ -13719,8 +13723,8 @@ let search_define
         Log.dump "%a" Error.pp error
       );
       *)
-      
 
+      (*
       let update_errors =
         match update_errors with
         | Some error_list ->
@@ -13728,7 +13732,8 @@ let search_define
           Some (AnalysisError.filter_single_errors ~resolution:global_resolution ~single_errors:(!OurTypeSet.single_errors) error_list)
         | None -> None
       in
-      
+      *)
+
       let update_errors =
         match update_errors with
         | Some error_list -> 
@@ -13748,12 +13753,9 @@ let search_define
 
       
 
-      
-
       { CheckResult.errors; local_annotations; }
     )
   in
-
 
   { CheckResult.errors; local_annotations; }
 
