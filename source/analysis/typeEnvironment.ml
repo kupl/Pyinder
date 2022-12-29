@@ -61,7 +61,7 @@ let produce_check_results global_environment define_name ~dependency =
     in
     let global_resolution = GlobalResolution.create global_environment ?dependency in
     OurTypeSet.global_resolution := Some global_resolution;
-    OurTypeSet.save_summary !OurTypeSet.our_model define_name;
+    (*OurTypeSet.save_summary !OurTypeSet.our_model define_name;*)
     x
   else
     TypeCheck.check_define_by_name

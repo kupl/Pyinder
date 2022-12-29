@@ -14,6 +14,7 @@ open Statement
 module OurSummary = OurTypeSet.OurSummary
 module StatementDefine = Define
 module Error = AnalysisError
+module Mutex = Error_checking_mutex
 
 type class_name_and_is_abstract_and_is_protocol = {
   class_name: string;
@@ -6607,7 +6608,6 @@ module PossibleState (Context : Context) = struct
           ~left:(Resolution.annotation_store left_resolution)
           ~right:(Resolution.annotation_store right_resolution)
 
-
   let widening_threshold = 3
 
   let add_fixpoint_threshold_reached_error () =
@@ -6669,7 +6669,9 @@ module PossibleState (Context : Context) = struct
       let current_annotation = Resolution.get_annotation_store current_resolution in
       let update_annotation = Refinement.Store.update_from_top_to_bottom current_annotation in
       let global_resolution = Resolution.global_resolution current_resolution in
+      Mutex.lock OurTypeSet.mutex;
       let current_possibleannotation = OurTypeSet.OurSummary.get_current_possiblecondition !OurTypeSet.our_model |> Option.value ~default:Refinement.Store.empty in
+      Mutex.unlock OurTypeSet.mutex;
       let update_annotation = Refinement.Store.join_with_merge ~global_resolution update_annotation current_possibleannotation in
 
       let update_resolution = Resolution.set_annotation_store current_resolution update_annotation in
@@ -6681,7 +6683,9 @@ module PossibleState (Context : Context) = struct
       let update_current_annotation = Refinement.Store.update_from_top_to_bottom current_annotation in
       let update_annotation = Refinement.Store.update_possible ~global_resolution:(Resolution.global_resolution current_resolution) prev_annotation update_current_annotation in
       let global_resolution = Resolution.global_resolution current_resolution in
+      Mutex.lock OurTypeSet.mutex;
       let current_possibleannotation = OurTypeSet.OurSummary.get_current_possiblecondition !OurTypeSet.our_model |> Option.value ~default:Refinement.Store.empty in
+      Mutex.unlock OurTypeSet.mutex;
       let update_annotation = Refinement.Store.join_with_merge ~global_resolution update_annotation current_possibleannotation in
       let update_resolution = Resolution.set_annotation_store current_resolution update_annotation in
       Value update_resolution
@@ -7555,7 +7559,9 @@ module PossibleState (Context : Context) = struct
             } ->
             (match callable.kind with
             | Named reference ->
+              Mutex.lock OurTypeSet.mutex;
               let observed_return_type = OurTypeSet.OurSummary.get_func_return_types !OurTypeSet.our_model reference in
+              Mutex.unlock OurTypeSet.mutex;
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type
               | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
@@ -7889,8 +7895,9 @@ module PossibleState (Context : Context) = struct
               );
               *)
               
-
-              OurTypeSet.our_model := OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list
+              Mutex.lock OurTypeSet.mutex;
+              OurTypeSet.our_model := OurTypeSet.OurSummary.add_arg_types !OurTypeSet.our_model reference param_type_list;
+              Mutex.unlock OurTypeSet.mutex
             | _ -> () (* Must Fix *)
             );
           | _ -> ()
@@ -8344,9 +8351,9 @@ module PossibleState (Context : Context) = struct
             let new_store = Resolution.get_annotation_store new_resolution in
             (*Format.printf "[[[ NEW RESOLUTION ]]] \n\n%a\n\n%a\n\n" Type.pp possible_type Resolution.pp new_resolution;*)
             
-            
+            Mutex.lock OurTypeSet.mutex;
             OurTypeSet.our_model := OurTypeSet.OurSummary.join_with_merge_current_possiblecondition ~global_resolution:(Resolution.global_resolution resolution) !OurTypeSet.our_model new_store;
-            
+            Mutex.unlock OurTypeSet.mutex;
             
           | _ -> ()
           );
@@ -11103,9 +11110,9 @@ module PossibleState (Context : Context) = struct
           else
             return_type
         in
-        
+        Mutex.lock OurTypeSet.mutex;
         OurTypeSet.our_model := OurTypeSet.OurSummary.add_return_info !OurTypeSet.our_model actual;
-
+        Mutex.unlock OurTypeSet.mutex;
         (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } ->
         let resolution =
@@ -13269,9 +13276,10 @@ let exit_state ~our_model ~resolution (module Context : Context) =
   else (
     Log.log ~section:`Check "Checking %a" Reference.pp name;
     Context.Builder.initialize ();
+    Mutex.lock OurTypeSet.mutex;
     our_model := (OurTypeSet.OurSummary.set_current_function !our_model name);
     our_model := (OurTypeSet.OurSummary.set_current_possiblecondition !our_model None);
-    
+    Mutex.unlock OurTypeSet.mutex;
     (*
     Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
     Log.dump "\n\n [[[ TEST ]]] \n%a" PossibleState.pp initial;
@@ -13280,9 +13288,11 @@ let exit_state ~our_model ~resolution (module Context : Context) =
     let cfg = Cfg.create define in
 
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
+    
+    Mutex.lock OurTypeSet.mutex;
     our_model := OurTypeSet.OurSummary.set_usedef_tables !our_model name (Some usedef_tables);
     our_model := OurTypeSet.OurSummary.set_cfg !our_model name (Some cfg);
-
+    Mutex.unlock OurTypeSet.mutex;
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial in
     let exit = PossibleFixpoint.exit fixpoint in
 
@@ -13358,11 +13368,13 @@ let exit_state ~our_model ~resolution (module Context : Context) =
             | Value v -> 
               (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
               (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
+              Mutex.lock OurTypeSet.mutex;
               our_model := OurTypeSet.OurSummary.set_possible_condition !our_model name (Resolution.get_annotation_store v);
               our_model := OurTypeSet.OurSummary.set_class_summary !our_model (
                 OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
                   (OurTypeSet.OurSummary.class_summary !our_model) reference (Resolution.annotation_store v)
                 );
+              Mutex.unlock OurTypeSet.mutex; 
             | Unreachable -> ()
             )
           | None -> ()
@@ -13463,7 +13475,9 @@ let check_define
       end
       in
       let type_errors, local_annotations, callees, our_model = exit_state ~our_model ~resolution (module Context) in
+      Mutex.lock OurTypeSet.mutex;
       OurTypeSet.our_model := !our_model;
+      Mutex.unlock OurTypeSet.mutex;
       let errors =
         if include_type_errors then
           let uninitialized_local_errors =

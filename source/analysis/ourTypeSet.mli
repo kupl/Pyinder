@@ -149,4 +149,6 @@ val global_resolution : GlobalResolution.t option ref
 
 val save_summary : OurSummary.t -> Reference.t -> unit
 
-val load_summary : unit -> unit
+val load_summary : GlobalResolution.t -> unit
+
+val mutex : Error_checking_mutex.t

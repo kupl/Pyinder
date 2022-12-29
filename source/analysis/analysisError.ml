@@ -2524,7 +2524,6 @@ let rec messages ~concise ~signature location kind =
           (Location.line (Node.location actual_mode));
       ]
 
-
 module T = struct
   type t = {
     location: Location.WithModule.t;
@@ -2533,6 +2532,9 @@ module T = struct
     cause: (Reference.t * Type.t) option;
   }
   [@@deriving compare, sexp, show, hash]
+
+  let compare_except_of_cause left right =
+    (compare {left with cause=None} {right with cause=None})
 end
 
 include T

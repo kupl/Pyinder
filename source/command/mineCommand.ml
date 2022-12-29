@@ -147,10 +147,12 @@
            in
            (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
-             Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment )))
+             Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment,
+             Analysis.ErrorsEnvironment.ReadOnly.type_environment environment )))
  
  
  let compute_errors ~configuration ~build_system () =
+    (*
    let rec fixpoint configuration n =
     let prev_model = !Analysis.OurTypeSet.our_model in
     let errors, ast_environment = do_check configuration in
@@ -160,14 +162,24 @@
     then errors, ast_environment
     else fixpoint configuration (n+1)
    in
-   let single_errors, ast_environment = do_check configuration in
-   Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
+   *)
+   
+   
    Log.dump "%s" "Type Inferecne...";
    Analysis.OurTypeSet.is_inference_mode := true;
-   let _, _ = fixpoint configuration 1 in
+   let single_errors, ast_environment, _ = do_check configuration in
+   Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
+   (*let _, _ = fixpoint configuration 1 in*)
    (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
    Analysis.OurTypeSet.is_inference_mode := false;
    Unix.sleep(1);
+
+   (*
+   let global_resolution =
+    Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
+   in
+   Analysis.OurTypeSet.load_summary global_resolution;
+   *)
 
   
    (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
@@ -175,7 +187,7 @@
    
    Analysis.OurTypeSet.is_search_mode := true;
    (*print_endline "[[[ Search Mode ]]]";*)
-   let errors, _ = do_check configuration in
+   let errors, _, _ = do_check configuration in
    Log.dump "END";
    Analysis.OurTypeSet.is_search_mode := false;
   (*
@@ -212,13 +224,16 @@
    | Some ast_environment ->
       Server.BuildSystem.with_build_system source_paths ~f:(fun build_system ->
           let errors =
+              let sort_errors = List.sort ~compare:(fun (e1, _) (e2, _) -> Analysis.AnalysisError.compare e1 e2) error_and_scenario_list in
+              (* cause 출력하고 싶으면 filter_errors를 지우자 *)
+              let filter_errors = List.dedup_and_sort ~compare:(fun (e1, _) (e2, _) -> Analysis.AnalysisError.compare_except_of_cause e1 e2) sort_errors in
               List.map
-              (List.sort ~compare:(fun (e1, _) (e2, _) -> Analysis.AnalysisError.compare e1 e2) error_and_scenario_list)
-              ~f:(fun (error, scenarios) ->
+              filter_errors
+              ~f:(fun (error, _) ->
                 Server.RequestHandler.instantiate_error 
                 ~build_system ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration) 
                 ~ast_environment
-                ?scenarios:(Some scenarios)
+                ?scenarios:None(*(Some scenarios)*)
                 error
               )
           in

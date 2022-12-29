@@ -463,6 +463,8 @@ type t = {
 }
 [@@deriving compare, show, sexp, hash]
 
+val compare_except_of_cause : t -> t -> int
+
 module Instantiated : sig
   type t [@@deriving sexp, compare, show, hash, yojson { strict = false }]
 

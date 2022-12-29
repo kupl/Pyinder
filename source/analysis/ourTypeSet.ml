@@ -363,13 +363,13 @@ module FunctionSummary = struct
       (match left.usedef_tables, right.usedef_tables with
       | None, None -> true
       | Some t1, Some t2 -> UsedefStruct.equal ~f:UsedefState.equal t1 t2
-      | _ -> false
+      | _ -> Log.dump "Not Equal UseDef Table"; false
       )
       &&
       (match left.cfg, right.cfg with
       | None, None -> true
       | Some c1, Some c2 -> Hashtbl.equal Cfg.Node.location_insensitive_equal c1 c2
-      | _ -> false
+      | _ -> Log.dump "Not Equal CFG"; false
       )
     in
 
@@ -739,13 +739,14 @@ let save_summary (summary: OurSummary.t) func_name =
   Marshal.to_channel data_out sexp [];
   close_out data_out
 
-let load_summary () =
+let load_summary global_resolution =
   let list_files = Sys.readdir data_path |> Array.to_list in 
   our_model := List.fold list_files ~init:(OurSummary.create ()) ~f:(fun summary file ->  
     let data_in = open_in (data_path ^ "/" ^ file) in
     let other_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
     close_in data_in;
-    OurSummary.join ~global_resolution:(Option.value_exn !global_resolution) summary other_summary
+    OurSummary.join ~global_resolution summary other_summary
   )
+let mutex = Error_checking_mutex.create ();;
 
 
