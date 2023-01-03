@@ -127,7 +127,7 @@ val check_define_by_name
   call_graph_builder:(module Callgraph.Builder) ->
   global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->
   dependency:SharedMemoryKeys.DependencyKey.registered option ->
-  Ast.Reference.t -> OurTypeSet.OurSummary.t ref ->
+  Ast.Reference.t ->
   CheckResult.t option
 
 val search_define_by_name
@@ -135,5 +135,5 @@ val search_define_by_name
   call_graph_builder:(module Callgraph.Builder) ->
   global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->
   dependency:SharedMemoryKeys.DependencyKey.registered option ->
-  Ast.Reference.t -> OurTypeSet.OurSummary.t ref ->
+  Ast.Reference.t ->
   CheckResult.t option

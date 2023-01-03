@@ -359,31 +359,32 @@ module FunctionSummary = struct
     (*
     * type 정보만 다를 뿐, usedef_tables와 cfg는 반드시 같아야 한다   
     *)
-    let correct_flag = 
+    let usedef_tables = 
       (match left.usedef_tables, right.usedef_tables with
-      | None, None -> true
-      | Some t1, Some t2 -> UsedefStruct.equal ~f:UsedefState.equal t1 t2
-      | _ -> Log.dump "Not Equal UseDef Table"; false
+      | None, None -> None
+      | Some t1, Some t2 -> 
+        if UsedefStruct.equal ~f:UsedefState.equal t1 t2 then Some t1 else raise NotEqualException
+      | Some t, None | None, Some t -> Some t
       )
-      &&
-      (match left.cfg, right.cfg with
-      | None, None -> true
-      | Some c1, Some c2 -> Hashtbl.equal Cfg.Node.location_insensitive_equal c1 c2
-      | _ -> Log.dump "Not Equal CFG"; false
-      )
+    in
+    let cfg =
+      match left.cfg, right.cfg with
+      | None, None -> None
+      | Some c1, Some c2 -> 
+        if Hashtbl.equal Cfg.Node.location_insensitive_equal c1 c2 then Some c1 else raise NotEqualException
+      | Some t, None | None, Some t -> Some t
+      
     in
 
     (*Log.dump "%a\n%a\n" Refinement.Store.pp left.possible_condition Refinement.Store.pp right.possible_condition;*)
 
-    if correct_flag then
-      {
-        arg_types = ArgTypes.join left.arg_types right.arg_types;
-        return_types = Type.union_join left.return_types right.return_types;
-        possible_condition = Refinement.Store.join_with_merge ~global_resolution left.possible_condition right.possible_condition;
-        usedef_tables = left.usedef_tables;
-        cfg = left.cfg;
-      }
-    else raise NotEqualException
+    {
+      arg_types = ArgTypes.join left.arg_types right.arg_types;
+      return_types = Type.union_join left.return_types right.return_types;
+      possible_condition = Refinement.Store.join_with_merge ~global_resolution left.possible_condition right.possible_condition;
+      usedef_tables;
+      cfg;
+    }
 
   let pp format {arg_types; return_types; possible_condition; _} =
     Format.fprintf format "%a \nreturn : %a \n\n%a\n" ArgTypes.pp arg_types Type.pp return_types Refinement.Store.pp possible_condition
@@ -535,16 +536,12 @@ module OurSummary = struct
   type t = {
     class_summary : ClassSummary.t;
     function_table : FunctionTable.t;
-    current_function : Reference.t option;
-    current_possiblecondition : Refinement.Store.t option;
   }
   [@@deriving equal, sexp]
 
   let create () = {
     class_summary = ClassSummary.create (); 
     function_table = FunctionTable.create (); 
-    current_function = None;
-    current_possiblecondition = None  
   }
 
   let class_summary {class_summary; _} = class_summary
@@ -552,28 +549,13 @@ module OurSummary = struct
   let set_class_summary t class_summary =
     { t with class_summary; }
 
-  let set_current_function {class_summary; function_table; current_possiblecondition; _} current_function = 
-    {class_summary; 
-    function_table; 
-    current_function=Some current_function;
-    current_possiblecondition
-    }
-
-  let set_current_possiblecondition {class_summary; function_table; current_function; _} current_possiblecondition = 
-    {
-      class_summary; 
-      function_table; 
-      current_function;
-      current_possiblecondition=current_possiblecondition
-    }
-
-  let join_with_merge_current_possiblecondition t ~global_resolution possiblecondition =
-    let update_possiblecondition =
-    match t.current_possiblecondition with
-    | Some current_possiblecondition -> Refinement.Store.join_with_merge ~global_resolution current_possiblecondition possiblecondition
-    | None -> possiblecondition
+  let join_with_merge_function_possiblecondition ~global_resolution ({function_table; _ } as t) func_name possiblecondition =
+    let update_function_table = 
+      FunctionTable.get_possible_condition function_table func_name 
+      |> Refinement.Store.join_with_merge ~global_resolution possiblecondition
+      |> FunctionTable.set_possible_condition function_table func_name
     in
-    set_current_possiblecondition t (Some update_possiblecondition)
+    { t with function_table=update_function_table }
 
     (*
   let copy {class_summary; function_table; current_function; current_possiblecondition } = 
@@ -592,8 +574,6 @@ module OurSummary = struct
     {
       class_summary = ClassSummary.join ~global_resolution left.class_summary right.class_summary;
       function_table = FunctionTable.join ~global_resolution left.function_table right.function_table;
-      current_function = None;
-      current_possiblecondition = None;
     }
 
   let pp_class format {class_summary; _} =
@@ -607,12 +587,8 @@ module OurSummary = struct
   let add_arg_types ({ function_table; _} as t) reference arg_typ_list =
     { t with function_table = FunctionTable.add_arg_types function_table reference arg_typ_list }
 
-  let add_return_info ({function_table; current_function; _} as t) return_type =
-    { t with function_table = match current_function with
-    | Some func ->
-      FunctionTable.add_return_info function_table func return_type
-    | None -> FunctionSummaryMap.empty
-    }
+  let add_return_info ({function_table; _} as t) func_name return_type =
+    { t with function_table = FunctionTable.add_return_info function_table func_name return_type }
 
   let set_possible_condition ({function_table; _} as t) func_name possible_condition =
     { t with function_table=FunctionTable.set_possible_condition function_table func_name possible_condition }
@@ -628,11 +604,6 @@ module OurSummary = struct
   let get_possible_condition {function_table; _} func_name = 
     FunctionTable.get_possible_condition function_table func_name
 
-  let get_current_usedef_tables ({current_function; _} as t) =
-    match current_function with
-    | Some func_name -> get_usedef_tables t func_name
-    | None -> None
-
   let get_func_arg_types {function_table; _} func_name =
     FunctionTable.get_func_arg_types function_table func_name
 
@@ -641,9 +612,6 @@ module OurSummary = struct
 
   let get_cfg {function_table; _} func_name =
     FunctionTable.get_cfg function_table func_name
-
-  let get_current_possiblecondition { current_possiblecondition; _ } = current_possiblecondition
-
 
   let make_map_function_of_types { function_table; _ } class_name =
     FunctionTable.make_map_function_of_types function_table class_name
@@ -703,50 +671,98 @@ module OurSummary = struct
       candidates
 end
 
-(* 
+
 let check_dir : string -> bool 
 = fun path ->
   match Sys.is_directory path with
   | `Yes -> true
   | _ -> false
-  *)
 
-  (*
+let check_and_make_dir : string -> unit
+= fun path ->
+  if check_dir path then ()
+  else Unix.mkdir path
+
+(*
 let check_file : string -> bool
 = fun path ->
 match Sys.file_exists path with
 | `Yes -> true
 | _ -> false
   *)
-let data_path = "/home/wonseok/test"
+  
+let data_path = ref ""
 
+let set_data_path (configuration: Configuration.Analysis.t) =
+  if String.equal !data_path "" then
+    data_path :=
+      (List.nth_exn configuration.source_paths 0 
+      |> SearchPath.get_root
+      |> PyrePath.show) ^ "/pyinder_analysis"
 
 
 let our_model = ref (OurSummary.create ());;
 
-let is_search_mode = ref false;;
+let cache = ref false;;
 
-let is_inference_mode = ref false;;
+let is_search_mode = String.equal "search"
+
+let is_inference_mode = String.equal "inference"
 
 let single_errors = ref [];;
 
 let global_resolution = ref None;;
 
+let save_mode (mode: string) =
+  check_and_make_dir !data_path;
+  let target_path = !data_path ^ "/mode" ^ ".marshalled" in
+  let data_out = open_out target_path in
+  let sexp = String.sexp_of_t mode in
+  Marshal.to_channel data_out sexp [];
+  close_out data_out
+
+let load_mode () =
+  let data_in = open_in (!data_path ^ "/mode" ^ ".marshalled") in
+  let mode = String.t_of_sexp (Marshal.from_channel data_in) in
+  close_in data_in;
+  mode
+
 let save_summary (summary: OurSummary.t) func_name =
-  let target_path = data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled" in
+  check_and_make_dir !data_path;
+  let target_path = !data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled" in
   let data_out = open_out target_path in
   let sexp = OurSummary.sexp_of_t summary in
   Marshal.to_channel data_out sexp [];
   close_out data_out
 
-let load_summary global_resolution =
-  let list_files = Sys.readdir data_path |> Array.to_list in 
-  our_model := List.fold list_files ~init:(OurSummary.create ()) ~f:(fun summary file ->  
-    let data_in = open_in (data_path ^ "/" ^ file) in
-    let other_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
-    close_in data_in;
-    OurSummary.join ~global_resolution summary other_summary
-  )
-let mutex = Error_checking_mutex.create ();;
+let load_summary func_name =
+  let data_in = open_in (!data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled") in
+  let our_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
+  close_in data_in;
+  our_summary
 
+let load_all_summary global_resolution =
+  if !cache then
+    ()
+  else
+  (
+    cache := true;
+    let list_files = Sys.readdir !data_path |> Array.to_list in 
+    our_model := List.fold list_files ~init:(OurSummary.create ()) ~f:(fun summary file -> 
+      if String.equal file "mode.marshalled" then summary
+      else
+      (
+        let data_in = open_in (!data_path ^ "/" ^ file) in
+        let other_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
+        close_in data_in;
+        OurSummary.join ~global_resolution summary other_summary
+      )
+    )
+  )
+
+let select_our_model func_name =
+  if is_inference_mode (load_mode ()) then
+    load_summary func_name
+  else 
+    !our_model
 

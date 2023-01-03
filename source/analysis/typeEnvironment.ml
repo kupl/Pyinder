@@ -26,6 +26,10 @@ end
 let produce_check_results global_environment define_name ~dependency =
   let type_check_controls, call_graph_builder, dependency =
     let controls = AnnotatedGlobalEnvironment.ReadOnly.controls global_environment in
+    
+    let configuration = EnvironmentControls.configuration controls in
+    OurTypeSet.set_data_path configuration;
+
     let type_check_controls = EnvironmentControls.type_check_controls controls in
     let call_graph_builder =
       if EnvironmentControls.populate_call_graph controls then
@@ -41,26 +45,24 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
+  let mode = OurTypeSet.load_mode () in
   let x = 
-  if !OurTypeSet.is_search_mode then
+  if OurTypeSet.is_search_mode mode then
     TypeCheck.search_define_by_name
       ~type_check_controls
       ~call_graph_builder
       ~global_environment
       ~dependency
       define_name
-      OurTypeSet.our_model
-  else if !OurTypeSet.is_inference_mode then
+  else if OurTypeSet.is_inference_mode mode then
+    let _ = OurTypeSet.save_summary (OurTypeSet.OurSummary.create ()) define_name in
     let x = TypeCheck.check_define_by_name
       ~type_check_controls
       ~call_graph_builder
       ~global_environment
       ~dependency
       define_name
-      OurTypeSet.our_model
     in
-    let global_resolution = GlobalResolution.create global_environment ?dependency in
-    OurTypeSet.global_resolution := Some global_resolution;
     (*OurTypeSet.save_summary !OurTypeSet.our_model define_name;*)
     x
   else
@@ -70,7 +72,6 @@ let produce_check_results global_environment define_name ~dependency =
           ~global_environment
           ~dependency
           define_name
-          OurTypeSet.our_model
 
   in
   x

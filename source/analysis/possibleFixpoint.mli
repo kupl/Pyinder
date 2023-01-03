@@ -13,7 +13,7 @@ module type PossibleState = sig
 
   val set_possibleconditions : t -> t -> t
 
-  val update_possible : t -> t -> t
+  val update_possible : t -> t -> Reference.t -> t
 
   val bottom : t
 
@@ -50,7 +50,7 @@ module type PossibleFixpoint = sig
 
   val exit_possible : t -> state option
 
-  val forward : cfg:Cfg.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> initial:state -> Reference.t -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 

@@ -71,66 +71,69 @@ module Summarize = struct
       Reference.empty
     *)
 
-  let rec analyze_scenario ?(check_defined=false) type_summary call_graph callee_name error_reference =
-    let callee_define = reference_to_target callee_name in
-    if is_inner_method callee_define && (not (is_init_method callee_define))
-    then (* inner method *)
-      let caller_defines = ReverseCallGraph.find call_graph callee_define |> Option.value ~default:[] in
+  let rec analyze_scenario ?(check_defined=false) type_summary call_graph callee_name error_reference prev_callee =
+    match List.find prev_callee ~f:(fun n -> Reference.equal n callee_name) with
+    | Some _ -> []
+    | None ->
+      let callee_define = reference_to_target callee_name in
+      if is_inner_method callee_define && (not (is_init_method callee_define))
+      then (* inner method *)
+        let caller_defines = ReverseCallGraph.find call_graph callee_define |> Option.value ~default:[] in
 
-      (*List.iter filtered_caller_defines ~f:(fun target -> Log.dump "caller > %a" Target.pp target);*)
+        (*List.iter filtered_caller_defines ~f:(fun target -> Log.dump "caller > %a" Target.pp target);*)
 
-      let candidate_scenarios = List.map caller_defines ~f:(fun caller -> 
-        let caller_reference = target_to_reference caller in
-        let usedef_tables = TypeSummarize.get_usedef_tables type_summary caller_reference |> Option.value ~default:UsedefStruct.empty in
-        let cfg = TypeSummarize.get_cfg type_summary caller_reference |> Option.value ~default:Cfg.empty in
-        let locations  = ReverseCallGraph.find_callee_locations call_graph caller callee_define in
-        (*Log.dump "Locations of %a" Target.pp callee_define;*)
-        let candidate_scenarios_of_caller = List.fold locations ~init:[] ~f:(fun sofar callee_location -> 
-          if List.is_empty sofar 
-          then
-            let usedef_table = find_usedef_table_of_location usedef_tables cfg callee_location in
-            (*
-            Log.dump "Callee Location > %a %a" Reference.pp caller_reference Location.pp callee_location;
-            Log.dump "%a" UsedefState.pp usedef_table;
-            *)
-            (
-            if check_defined && (not (is_inner_method callee_define && (not (is_init_method callee_define))))
+        let candidate_scenarios = List.map caller_defines ~f:(fun caller -> 
+          let caller_reference = target_to_reference caller in
+          let usedef_tables = TypeSummarize.get_usedef_tables type_summary caller_reference |> Option.value ~default:UsedefStruct.empty in
+          let cfg = TypeSummarize.get_cfg type_summary caller_reference |> Option.value ~default:Cfg.empty in
+          let locations  = ReverseCallGraph.find_callee_locations call_graph caller callee_define in
+          (*Log.dump "Locations of %a" Target.pp callee_define;*)
+          let candidate_scenarios_of_caller = List.fold locations ~init:[] ~f:(fun sofar callee_location -> 
+            if List.is_empty sofar 
             then
-              if (not (Reference.is_empty error_reference)) && UsedefState.is_defined usedef_table error_reference 
+              let usedef_table = find_usedef_table_of_location usedef_tables cfg callee_location in
+              (*
+              Log.dump "Callee Location > %a %a" Reference.pp caller_reference Location.pp callee_location;
+              Log.dump "%a" UsedefState.pp usedef_table;
+              *)
+              (
+              if check_defined && (not (is_inner_method callee_define && (not (is_init_method callee_define))))
               then
-                (* 아마 kind도 바뀌어야 할 것 *)
-                let candidate_scenarios = (analyze_scenario type_summary call_graph caller_reference error_reference) in
-                List.map candidate_scenarios ~f:(fun candidate -> if List.is_empty candidate then candidate else callee_name::candidate)
-                |> remove_empty_list_of_list
-              else 
-                []
-            else  
-              if (not (Reference.is_empty error_reference)) && UsedefState.is_undefined usedef_table error_reference 
-              then
-                (* 아마 kind도 바뀌어야 할 것 *)
-                let candidate_scenarios = (analyze_scenario type_summary call_graph caller_reference error_reference) in
-                List.map candidate_scenarios ~f:(fun candidate -> if List.is_empty candidate then candidate else callee_name::candidate)
-                |> remove_empty_list_of_list
-              else 
-                []
-              )
-          else
-            sofar
-        )
-        in
-        if List.is_empty candidate_scenarios_of_caller then [] else (List.nth_exn candidate_scenarios_of_caller 0)
-      ) in
+                if (not (Reference.is_empty error_reference)) && UsedefState.is_defined usedef_table error_reference 
+                then
+                  (* 아마 kind도 바뀌어야 할 것 *)
+                  let candidate_scenarios = (analyze_scenario type_summary call_graph caller_reference error_reference (callee_name::prev_callee)) in
+                  List.map candidate_scenarios ~f:(fun candidate -> if List.is_empty candidate then candidate else callee_name::candidate)
+                  |> remove_empty_list_of_list
+                else 
+                  []
+              else  
+                if (not (Reference.is_empty error_reference)) && UsedefState.is_undefined usedef_table error_reference 
+                then
+                  (* 아마 kind도 바뀌어야 할 것 *)
+                  let candidate_scenarios = (analyze_scenario type_summary call_graph caller_reference error_reference (callee_name::prev_callee)) in
+                  List.map candidate_scenarios ~f:(fun candidate -> if List.is_empty candidate then candidate else callee_name::candidate)
+                  |> remove_empty_list_of_list
+                else 
+                  []
+                )
+            else
+              sofar
+          )
+          in
+          if List.is_empty candidate_scenarios_of_caller then [] else (List.nth_exn candidate_scenarios_of_caller 0)
+        ) in
 
-      (*
-      List.iter candidate_scenarios ~f:(fun cand ->
-        Log.dump "%s" (List.fold cand ~init:"" ~f:(fun sofar ref -> sofar ^ ", " ^ Reference.show ref))
-      );
+        (*
+        List.iter candidate_scenarios ~f:(fun cand ->
+          Log.dump "%s" (List.fold cand ~init:"" ~f:(fun sofar ref -> sofar ^ ", " ^ Reference.show ref))
+        );
 
-      if List.is_empty candidate_scenarios then Log.dump "Empty List";
-      *)
-      candidate_scenarios
-    else (* public method *)
-        [[callee_name]]
+        if List.is_empty candidate_scenarios then Log.dump "Empty List";
+        *)
+        candidate_scenarios
+      else (* public method *)
+          [[callee_name]]
     
     
     (*
@@ -210,7 +213,7 @@ module Summarize = struct
         (*Log.dump "Suspicious Variable >>> %a : %a" Reference.pp error_reference Type.pp error_type;*)
         let { Signature.name; _ } = Node.value signature in
         let candidate_scenarios = 
-          analyze_scenario type_summary call_graph name error_reference |> remove_empty_list_of_list 
+          analyze_scenario type_summary call_graph name error_reference [] |> remove_empty_list_of_list 
           |> List.map ~f:List.rev  
         in
 
@@ -230,7 +233,7 @@ module Summarize = struct
             let function_set = find_origin_function_set type_summary class_name error_reference error_type in
             FunctionSet.fold ~f:(fun sofar prev_func_name -> 
               let prev_func_paths = 
-                analyze_scenario ~check_defined:true type_summary call_graph prev_func_name error_reference |> remove_empty_list_of_list |> List.map ~f:List.rev 
+                analyze_scenario ~check_defined:true type_summary call_graph prev_func_name error_reference [] |> remove_empty_list_of_list |> List.map ~f:List.rev 
               in
               (*
               List.iter prev_func_paths ~f:(fun cand ->

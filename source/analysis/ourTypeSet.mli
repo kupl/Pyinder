@@ -81,8 +81,6 @@ module OurSummary : sig
   type t = {
     class_summary : ClassSummary.t;
     function_table : FunctionTable.t;
-    current_function : Ast.Reference.t option;
-    current_possiblecondition : Refinement.Store.t option;
   }
   [@@deriving equal]
 
@@ -92,11 +90,7 @@ module OurSummary : sig
 
   val set_class_summary : t -> ClassSummary.t -> t
 
-  val set_current_function : t -> Reference.t -> t
-
-  val set_current_possiblecondition : t -> Refinement.Store.t option -> t
-
-  val join_with_merge_current_possiblecondition : t -> global_resolution:GlobalResolution.t -> Refinement.Store.t -> t
+  val join_with_merge_function_possiblecondition : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
   val pp_class : Format.formatter -> t -> unit
 
@@ -108,7 +102,7 @@ module OurSummary : sig
 
   val add_arg_types : t -> Reference.t -> (Identifier.t * Type.t) list -> t
 
-  val add_return_info : t -> Type.t -> t
+  val add_return_info : t -> Reference.t -> Type.t -> t
 
   val set_possible_condition : t -> Reference.t -> Refinement.Store.t -> t
 
@@ -120,15 +114,11 @@ module OurSummary : sig
 
   val get_possible_condition : t -> Reference.t -> Refinement.Store.t
 
-  val get_current_usedef_tables : t -> UsedefStruct.t option
-
   val get_func_arg_types : t -> Reference.t -> ArgTypes.t
 
   val get_func_return_types : t -> Reference.t -> Type.t
 
   val get_cfg : t -> Reference.t -> Cfg.t option
-
-  val get_current_possiblecondition : t -> Refinement.Store.t option
 
   val make_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t
 
@@ -137,18 +127,26 @@ module OurSummary : sig
   val search_suspicious_variable : t -> global_resolution:GlobalResolution.t -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 end
  
+val set_data_path : Configuration.Analysis.t -> unit
+
 val our_model : OurSummary.t ref
 
-val is_search_mode : bool ref
+val is_search_mode : string -> bool
 
-val is_inference_mode : bool ref
+val is_inference_mode : string -> bool
 
 val single_errors : AnalysisError.t list ref
 
 val global_resolution : GlobalResolution.t option ref
 
+val save_mode : string -> unit
+
+val load_mode : unit -> string
+
 val save_summary : OurSummary.t -> Reference.t -> unit
 
-val load_summary : GlobalResolution.t -> unit
+val load_summary : Reference.t -> OurSummary.t
 
-val mutex : Error_checking_mutex.t
+val load_all_summary : GlobalResolution.t -> unit
+
+val select_our_model : Reference.t -> OurSummary.t

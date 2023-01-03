@@ -18,7 +18,7 @@ module type PossibleState = sig
 
   val set_possibleconditions : t -> t -> t
 
-  val update_possible : t -> t -> t
+  val update_possible : t -> t -> Reference.t -> t
 
   val bottom : t
 
@@ -55,7 +55,7 @@ module type PossibleFixpoint = sig
 
   val exit_possible : t -> state option
 
-  val forward : cfg:Cfg.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> initial:state -> Reference.t -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 
@@ -97,7 +97,7 @@ module Make (State : PossibleState) = struct
 
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
 
-  let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
+  let our_compute_fixpoint cfg func_name ~initial_index ~initial ~predecessors ~successors ~transition =
     (*
      * This is the implementation of a monotonically increasing chaotic fixpoint
      * iteration sequence with widening over a control-flow graph (CFG) using the
@@ -157,7 +157,6 @@ module Make (State : PossibleState) = struct
       in
 
       (*Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);*)
-      OurTypeSet.our_model := (OurTypeSet.OurSummary.set_current_possiblecondition !OurTypeSet.our_model None);
       
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
@@ -170,7 +169,7 @@ module Make (State : PossibleState) = struct
 
       
 
-      let possiblecondition = State.update_possible prepossible possiblecondition in
+      let possiblecondition = State.update_possible prepossible possiblecondition func_name in
       (*Log.dump "%s" (Format.asprintf "[ Node Update Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
       Hashtbl.set possibleconditions ~key:node_id ~data:possiblecondition
 
@@ -336,7 +335,7 @@ module Make (State : PossibleState) = struct
     { preconditions; postconditions; possibleconditions }
 
 
-  let forward ~cfg ~initial =
+  let forward ~cfg ~initial func_name =
     let transition node_id init statements =
       let forward statement_index before statement =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
@@ -362,6 +361,7 @@ module Make (State : PossibleState) = struct
     in
     our_compute_fixpoint
       cfg
+      func_name
       ~initial_index:Cfg.entry_index
       ~initial
       ~predecessors:Cfg.Node.predecessors

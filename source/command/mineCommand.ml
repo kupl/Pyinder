@@ -145,7 +145,6 @@
              in
              Analysis.ErrorsEnvironment.read_only read_write_environment
            in
-           (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
              Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment,
              Analysis.ErrorsEnvironment.ReadOnly.type_environment environment )))
@@ -163,33 +162,28 @@
     else fixpoint configuration (n+1)
    in
    *)
+   Analysis.OurTypeSet.set_data_path configuration;
    
    
    Log.dump "%s" "Type Inferecne...";
-   Analysis.OurTypeSet.is_inference_mode := true;
-   let single_errors, ast_environment, _ = do_check configuration in
+   Analysis.OurTypeSet.save_mode "inference";
+   let single_errors, ast_environment, type_environment = do_check configuration in
    Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
    (*let _, _ = fixpoint configuration 1 in*)
-   (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
-   Analysis.OurTypeSet.is_inference_mode := false;
    Unix.sleep(1);
 
-   (*
+   
    let global_resolution =
     Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
    in
-   Analysis.OurTypeSet.load_summary global_resolution;
-   *)
+   Analysis.OurTypeSet.load_all_summary global_resolution;
 
-  
-   (*Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;*)
    Log.dump "%s" "Type Error Searching...";
    
-   Analysis.OurTypeSet.is_search_mode := true;
+   Analysis.OurTypeSet.save_mode "search";
    (*print_endline "[[[ Search Mode ]]]";*)
    let errors, _, _ = do_check configuration in
    Log.dump "END";
-   Analysis.OurTypeSet.is_search_mode := false;
   (*
    Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
   *)
@@ -343,6 +337,7 @@
     );
 
     Log.dump "%s" "Analyze Call Graph...";
+    Analysis.OurTypeSet.save_mode "cfg";
     Unix.sleep(1);
     let _ = AnalyzeCommand.run_analyze_mine analyze_json in
     Log.dump "%s" "Done";
