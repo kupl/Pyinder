@@ -8,6 +8,7 @@
 open Core
 open Pyre
 open Ast
+open Ast.Util
 open Expression
 open Statement
 
@@ -1524,6 +1525,9 @@ module State (Context : Context) = struct
               errors
           | _ -> emit_error ~errors ~location ~kind:(Error.NotCallable resolved_callee)
         in
+
+        
+
         {
           Resolved.resolution;
           errors;
@@ -2296,7 +2300,6 @@ module State (Context : Context) = struct
               resolved_annotation = None;
             })
     | Call call ->
-      (* 이게 일반적인 Call *)
         let { Call.callee; arguments } = AnnotatedCall.redirect_special_calls ~resolution call in
         let {
           Resolved.errors = callee_errors;
@@ -2391,7 +2394,7 @@ module State (Context : Context) = struct
         { ComparisonOperator.left; right; operator = ComparisonOperator.In as operator }
     | ComparisonOperator
         { ComparisonOperator.left; right; operator = ComparisonOperator.NotIn as operator } ->
-        (*print_endline "ComparisonOperator2";*)
+        (*Log.dump "ComparisonOperator2";*)
         let resolve_in_call
             (resolution, errors, joined_annotation)
             { Type.instantiated; class_name; accessed_through_class }
@@ -2624,6 +2627,7 @@ module State (Context : Context) = struct
           in
           resolution, errors, GlobalResolution.join global_resolution joined_annotation resolved
         in
+
         let { Resolved.resolution; resolved; errors; _ } = forward_expression ~resolution right in
         let resolution, errors, resolved =
           (* We should really error here if resolve_class fails *)
@@ -3762,7 +3766,6 @@ module State (Context : Context) = struct
         let parsed =
           GlobalResolution.parse_annotation ~validation:NoValidation global_resolution value
         in
-
         (* TODO(T35601774): We need to suppress subscript related errors on generic classes. *)
         let add_annotation_errors errors =
           add_invalid_type_parameters_errors ~resolution:global_resolution ~location ~errors parsed
@@ -4845,6 +4848,7 @@ module State (Context : Context) = struct
 
   let forward_statement ~resolution ~statement:{ Node.location; value } =
     let global_resolution = Resolution.global_resolution resolution in
+    
     let validate_return = validate_return ~location in
     match value with
     | Statement.Assign { Assign.target; annotation; value } ->
@@ -6307,6 +6311,10 @@ module PossibleState (Context : Context) = struct
     | Unreachable
     | Value of Resolution.t
 
+  let top_to_bottom t =
+    match t with
+    | Value resolution -> Value (Resolution.top_to_bottom resolution)
+    | _ -> t
   let set_possibleconditions pre post =
     match pre, post with
     | Value preresolution, Value postresolution ->
@@ -6570,11 +6578,18 @@ module PossibleState (Context : Context) = struct
         if iteration + 1 >= widening_threshold then
           add_fixpoint_threshold_reached_error ();
         Value
+        (Resolution.outer_widen_refinements
+             ~iteration
+             ~widening_threshold
+             previous_resolution
+             next_resolution)
+        (*
           (Resolution.outer_widen_refinements
              ~iteration
              ~widening_threshold
              previous_resolution
              next_resolution)
+        *)
 
 
   let join left right = widen ~previous:left ~next:right ~iteration:0
@@ -6612,8 +6627,12 @@ module PossibleState (Context : Context) = struct
     | Value prev_resolution, Value current_resolution ->
       let prev_annotation = Resolution.get_annotation_store prev_resolution in
       let current_annotation = Resolution.get_annotation_store current_resolution in
+      let update_prev_annotation = Refinement.Store.update_from_top_to_bottom prev_annotation in
+
+      (*Log.dump ">>> Anno >>> \n%a \n%a" Refinement.Store.pp prev_annotation Refinement.Store.pp update_prev_annotation;*)
+
       let update_current_annotation = Refinement.Store.update_from_top_to_bottom current_annotation in
-      let update_annotation = Refinement.Store.update_possible ~global_resolution:(Resolution.global_resolution current_resolution) prev_annotation update_current_annotation in
+      let update_annotation = Refinement.Store.update_possible ~global_resolution:(Resolution.global_resolution current_resolution) update_prev_annotation update_current_annotation in
       let global_resolution = Resolution.global_resolution current_resolution in
       let our_model = OurTypeSet.select_our_model func_name in
       let current_possibleannotation = OurTypeSet.OurSummary.get_possible_condition our_model func_name in
@@ -6858,7 +6877,8 @@ module PossibleState (Context : Context) = struct
     | { typed_dictionary_errors; _ } -> emit_typed_dictionary_errors ~errors typed_dictionary_errors
 
 
-  and forward_expression ~resolution { Node.location; value } =
+  and forward_expression ~resolution ({ Node.location; value } as expression) =
+    let _ = expression in
     let global_resolution = Resolution.global_resolution resolution in
     let forward_entry ~resolution ~errors ~entry:{ Dictionary.Entry.key; value } =
       let { Resolved.resolution; resolved = key_resolved; errors = key_errors; _ } =
@@ -7055,9 +7075,9 @@ module PossibleState (Context : Context) = struct
                       errors
                 | _ -> errors
               in
-              { resolution; errors; resolved = Type.Top; resolved_annotation = None; base = None }
+              { resolution; errors; resolved = Type.Bottom; resolved_annotation = None; base = None }
           | _ ->
-              { resolution; errors; resolved = Type.Top; resolved_annotation = None; base = None })
+              { resolution; errors; resolved = Type.Bottom; resolved_annotation = None; base = None })
     in
     let resolve_attribute_access
         ~base_resolved:
@@ -7069,6 +7089,7 @@ module PossibleState (Context : Context) = struct
       =
       let name = Name.Attribute { base; special; attribute } in
       let reference = name_to_reference name in
+      (*Log.dump "Name >>> %a" Name.pp name;*)
       let access_as_attribute () =
         let find_attribute ({ Type.instantiated; accessed_through_class; class_name } as class_data)
           =
@@ -7157,6 +7178,7 @@ module PossibleState (Context : Context) = struct
               let annotations = attributes |> List.map ~f:Annotated.Attribute.annotation in
               List.hd_exn annotations, List.tl_exn annotations
             in
+
             begin
               let attributes_with_instantiated =
                 List.zip_exn
@@ -7246,6 +7268,9 @@ module PossibleState (Context : Context) = struct
               in
               List.fold ~init:head_annotation ~f:join tail_annotations |> apply_local_override
             in
+            (*
+            Log.dump "Result >>> %a" Annotation.pp resolved_annotation;
+            *)
             {
               resolution;
               errors;
@@ -7314,6 +7339,248 @@ module PossibleState (Context : Context) = struct
       { resolved with base }
     in
     let forward_callable ~resolution ~errors ~target ~dynamic ~callee ~arguments =
+      (*Log.dump "[Forward Callable] %a / %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
+    
+      
+      let dump_arguments arguments = 
+        List.iter arguments ~f:(fun arg ->
+         Log.dump "Arg : %a" Call.Argument.pp arg; 
+        )
+      in
+      
+      dump_arguments arguments;
+      *)
+      (*
+      Log.dump "Callee %a Type %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
+      *)
+      let resolved_dict_getitem callee_resolved t =
+        match callee_resolved with
+        | Type.Parametric (* dict.__getitem__ 처리 *)
+          { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); Single origin] } 
+          when String.equal (Reference.show name) "dict.__getitem__"
+          -> 
+            if List.length arguments = 1
+            then
+              (
+              let annotation_type = origin in
+              let reversed_arguments =
+                let forward_argument reversed_arguments argument =
+                  let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                  forward_expression ~resolution expression
+                  |> fun { resolved; _ } ->
+                    { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                    :: reversed_arguments
+                in
+                List.fold arguments ~f:forward_argument ~init:[]
+              in
+              let arguments = List.rev reversed_arguments in
+
+              (* value 원소는 literal이어야 한다 *)
+              let value_arg = List.nth_exn arguments 0 in
+              let result = 
+                if Type.contains_literal value_arg.resolved
+                then Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
+                else Type.get_dict_value_type annotation_type 
+              in
+
+              result
+              )
+              (*
+              match (Callee.expression callee) with
+              | { Node.value = Name name; _ } ->
+                Log.dump "TEST %a" Expression.pp (Callee.expression callee);
+                let t1, t2, annotation_opt = Resolution.partition_name resolution ~name in
+                Log.dump "Partition %a , %a" Reference.pp t1 Reference.pp t2;
+                (match annotation_opt with
+                  | Some annotation ->
+                    let annotation_type = annotation |> Annotation.annotation in
+                    Log.dump "TESTTEST : %a" Type.pp annotation_type;
+                    let reversed_arguments =
+                      let forward_argument reversed_arguments argument =
+                        let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                        forward_expression ~resolution expression
+                        |> fun { resolved; _ } ->
+                          { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                          :: reversed_arguments
+                      in
+                      List.fold arguments ~f:forward_argument ~init:[]
+                    in
+                    let arguments = List.rev reversed_arguments in
+      
+                    (* value 원소는 literal이어야 한다 *)
+                    let value_arg = List.nth_exn arguments 0 in
+                    let result = 
+                      if Type.contains_literal value_arg.resolved
+                      then Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
+                      else Type.get_dict_value_type annotation_type 
+                    in
+                    Log.dump "OK %a" Type.pp result;
+                    result
+
+                  | None -> t
+                  )
+
+              | _ -> t
+              *)
+              (*
+              let reversed_arguments =
+                let forward_argument reversed_arguments argument =
+                  let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                  forward_expression ~resolution expression
+                  |> fun { resolved; _ } ->
+                    { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                    :: reversed_arguments
+                in
+                List.fold arguments ~f:forward_argument ~init:[]
+              in
+              let arguments = List.rev reversed_arguments in
+
+              (* value 원소는 literal이어야 한다 *)
+              let value_arg = List.nth_exn arguments 1 in
+
+              if Type.contains_literal value_arg.resolved
+                then
+
+                else
+                  let value = Option.value_exn value_arg.expression |> Expression.show in
+                  Type.OurTypedDictionary.get_field_type value
+            *)
+            else (
+              failwith "GetItem Callee Length is not 1"
+            )
+            
+
+        | _ -> t
+      in
+
+      let update_dict_setitem callee_resolved =
+        match callee_resolved with
+        | Type.Parametric (* dict.__setitem__ 처리 *)
+            { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); Single _] } 
+            when String.equal (Reference.show name) "dict.__setitem__"
+            ->
+              if List.length arguments = 2
+              then
+                let reversed_arguments =
+                  let forward_argument reversed_arguments argument =
+                    let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                    forward_expression ~resolution expression
+                    |> fun { resolved; _ } ->
+                      { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                      :: reversed_arguments
+                  in
+                  List.fold arguments ~f:forward_argument ~init:[]
+                in
+                let arguments = List.rev reversed_arguments in
+                
+                let key_arg = List.nth_exn arguments 0 in
+                let value_arg = List.nth_exn arguments 1 in
+                let _ = value_arg in
+
+                
+                match (Callee.expression callee) with
+                | { Node.value = Name (Attribute { base; _ }); _ } ->
+                  (match base with
+                  | { Node.value = Name name; _} ->
+                    (*
+                    Log.dump "Expression : %a / %a -> %a" Expression.pp e Type.pp key_arg.resolved Type.pp value_arg.resolved;
+                    *)
+                    let annotation_type = Resolution.resolve_expression_to_type resolution base in
+                    let name = name_to_reference name |> Option.value ~default:Reference.empty in
+
+                    let type_t =
+                      (* key 원소가 literal이면 OurTypedDictionary *)
+                      if Type.contains_literal key_arg.resolved
+                      then
+                        Type.OurTypedDictionary.update_dict_field annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg.resolved
+                      else (* key 원소가 literal이 아니면 Dictionary *)
+                        Type.Parametric { 
+                          name = "dict";
+                          parameters = [
+                            Type.Record.Parameter.Single key_arg.resolved;
+                            Type.Record.Parameter.Single value_arg.resolved;
+                          ];
+                        }
+                    in
+
+                    let annotation = type_t |> Annotation.create_mutable in
+                    let prefix_name = Reference.prefix name |> Option.value ~default:Reference.empty in
+                    let attributes = Reference.drop_prefix ~prefix:prefix_name name in
+
+                    let annotation_store = Resolution.get_annotation_store resolution in
+                    let update_annotation_store = Refinement.Store.set_annotation ~name:prefix_name ~attribute_path:attributes ~base:None ~annotation annotation_store in
+                    
+                    let x = Resolution.set_annotation_store resolution update_annotation_store in
+
+                    x
+                  | _ -> resolution
+                  )
+                  
+
+                | _ -> resolution
+                
+
+                (*
+                match key_arg.resolved with
+                | Literal (Integer literal) ->
+                  let new_field = 
+                    Type.OurTypedDictionary.create_field ~annotation:(Annotation.create_mutable value_arg.resolved) literal 
+                  in
+                | Literal (String (LiteralValue literal)) ->
+                  let new_field = 
+                    Type.OurTypedDictionary.create_field ~annotation:(Annotation.create_mutable value_arg.resolved) literal 
+                  in
+                | Literal (Bytes literal)  ->
+                  let new_field = 
+                    Type.OurTypedDictionary.create_field ~annotation:(Annotation.create_mutable value_arg.resolved) literal 
+                  in
+                | _ -> ()
+                  *)
+              else
+                failwith "Callee Length is not 2"
+
+        | _ -> resolution
+      in
+
+      let resolution = update_dict_setitem (Callee.resolved callee) in
+      (*Log.dump "Resolution >>> %a" Resolution.pp resolution;*)
+
+      let rec update_resolved_type t =
+        match t with
+        (* possible infinite loop *)
+        | Type.Variable _ -> update_resolved_type (t |> Type.Variable.convert_all_escaped_free_variables_to_bottom)
+        | Type.Any
+        | Type.Bottom 
+          ->
+          let resolved_arguments =
+            let forward_argument reversed_arguments argument =
+              let expression, _ = Ast.Expression.Call.Argument.unpack argument in
+              forward_expression ~resolution expression
+              |> fun { resolved; _ } ->
+                resolved :: reversed_arguments
+            in
+            List.fold arguments ~f:forward_argument ~init:[]
+          in
+
+          (* default typecasting 처리 *)
+          let resolved = 
+            match Node.value (Callee.expression callee) with
+            | Name (Name.Attribute { attribute = "__str__"; _}) -> Type.string
+            | Name (Name.Attribute { attribute = "__bytes__"; _}) -> Type.bytes
+            | Name (Name.Attribute { attribute = "__int__"; _}) -> Type.integer
+            | Name (Name.Attribute { attribute = "__bool__"; _}) -> Type.bool
+            | Name (Name.Attribute { attribute = "__float__"; _}) -> Type.float
+            | Name (Name.Attribute { attribute = "__list__"; _}) -> Type.list (Type.union resolved_arguments)
+            | Name (Name.Attribute { attribute = "__set__"; _}) -> Type.set (Type.union resolved_arguments)
+            | Name (Name.Attribute { attribute = "__tuple__"; _}) -> Type.tuple resolved_arguments
+            | Name (Name.Attribute { attribute = "__dict__"; _}) -> Type.dictionary ~key:Type.Any ~value:Type.Any
+            | _ -> resolved_dict_getitem (Callee.resolved callee) t
+          in
+
+          resolved
+        | _ -> t
+      in
+
       let open CallableApplicationData in
       let unpack_callable_and_self_argument =
         unpack_callable_and_self_argument
@@ -7323,6 +7590,15 @@ module PossibleState (Context : Context) = struct
                ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution))
           ~global_resolution
       in
+
+      (*
+      if String.equal (Expression.show (Callee.expression callee)) "sorted"
+      then
+        match unpack_callable_and_self_argument with
+        | Some c -> Log.dump "WOW : %a" TypeOperation.pp c;
+        | None -> Log.dump "UU";
+      *)
+      
       let find_method ~parent ~name ~special_method =
         GlobalResolution.attribute_from_annotation global_resolution ~parent ~name ~special_method
         >>| Annotated.Attribute.annotation
@@ -7553,10 +7829,13 @@ module PossibleState (Context : Context) = struct
               errors
           | _ -> emit_error ~errors ~location ~kind:(Error.NotCallable resolved_callee)
         in
+
+        
+
         {
           Resolved.resolution;
           errors;
-          resolved = Type.Any;
+          resolved=update_resolved_type Type.Any;
           resolved_annotation = None;
           base = None;
         }
@@ -7739,6 +8018,7 @@ module PossibleState (Context : Context) = struct
                 let expression, kind = Ast.Expression.Call.Argument.unpack argument in
                 forward_expression ~resolution expression
                 |> fun { resolution; errors = new_errors; resolved; _ } ->
+                  (*Log.dump "HERE? %a %a" Expression.pp expression Type.pp resolved;*)
                 ( resolution,
                   List.append new_errors errors,
                   { AttributeResolution.Argument.kind; expression = Some expression; resolved }
@@ -7778,64 +8058,151 @@ module PossibleState (Context : Context) = struct
             List.map callable_data_list ~f:select_annotation_for_known_callable, resolution, errors
       in
 
-      List.iter callables_with_selected_return_annotations ~f:(function
-          | KnownCallable { callable = { TypeOperation.callable; self_argument }; arguments; _ } ->
-            (*Format.printf "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable;*)
-            (match callable.kind with
-            | Named reference ->
-              (* ToDo
-              * Overload 구현
-              *)
-              let params = callable.implementation.parameters in
-              let param_list = 
-              (match params with
-              | Defined defined_param_list ->
-                List.fold defined_param_list ~init:[] ~f:(fun acc param ->
-                  (match param with
-                  | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
-                  | Named n -> n.name::acc
-                  | _ -> (*print_endline "Other Param";*) acc
-                  )
-                )
-              | _ -> (*print_endline "No defined";*) []
-              )
-              in
-              let param_list = List.rev param_list in
-              let param_type_init = 
-              (match self_argument with
-              | Some t -> if List.length param_list == 0 then [] else [(List.nth_exn param_list 0,t)]
-              | None -> (*print_endline "No Self";*) []
-              )
-              in
-              let param_type_list = List.foldi arguments ~init:param_type_init ~f:(fun idx acc arg ->
-                if List.length param_list <= (idx+1) then acc
-                else
-                (match arg.kind with
-                | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc
-                | Named s -> (s.value, arg.resolved)::acc
-                | Positional -> (List.nth_exn param_list (idx+1), arg.resolved)::acc
-                )
-              )
-              in
+      let resolution =
+        List.fold callables_with_selected_return_annotations ~init:resolution ~f:(fun resolution callable ->
+            match callable with
+            | KnownCallable { callable = { TypeOperation.callable; self_argument }; arguments; _ } ->
+              (*Log.dump "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable;*)
 
-              (*
-              print_endline "TEST HERE";
-              let param_type_list = List.rev param_type_list in
-              List.iter param_type_list ~f:(fun (param, typ) ->
-                Format.printf "%s -> %a\n" param Type.pp typ; 
-              );
-              *)
+              let update_arg_type arg_type ret_cond_type =
+                let handle_top arg_type ret_cond_type =
+                  match arg_type, ret_cond_type with
+                  | _, Type.Bottom -> arg_type
+                  | Type.Top, _ -> ret_cond_type
+                  | _, Type.Top -> arg_type
+                  | Union t, _ ->
+                    Union (List.map t ~f:(fun typ -> if Type.is_unbound typ then ret_cond_type else typ))
+                  | _ -> ret_cond_type
+                in
+                (*
+                compatible 한데 order가 아닌 경우는 List, Dict, Tuple에 새로운 타입이 추가 되었을 때   
+                *)
+
+                (* order 인데 top 이면 update x *)
+
+                (*
+                Log.dump "Update Arg Type %a %a %b" Type.pp arg_type Type.pp ret_cond_type (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type);
+                *)
+                (*
+                Log.dump "%b %b" (GlobalResolution.is_compatible_with global_resolution ~left:arg_type ~right:ret_cond_type) (not (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type));
+                *)
+                if (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type)
+                then
+                  if (GlobalResolution.less_or_equal global_resolution ~left:arg_type ~right:ret_cond_type)
+                  then arg_type
+                  else ret_cond_type 
+                else
+                  if (GlobalResolution.is_compatible_with global_resolution ~left:arg_type ~right:ret_cond_type)
+                  then
+                      (
+                        let x = GlobalResolution.join global_resolution arg_type ret_cond_type in
+                        (*Log.dump "HELP %a + %a = %a" Type.pp arg_type Type.pp ret_cond_type Type.pp x;*)
+                        x
+                      )
+                  else
+                    handle_top arg_type ret_cond_type
+              in 
               
-              if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
-                let { StatementDefine.Signature.name; _ } = define_signature in
-                let our_model = OurTypeSet.load_summary name in
-                let our_model = OurTypeSet.OurSummary.add_arg_types our_model reference param_type_list in
-                OurTypeSet.save_summary our_model name
-              else ()
-            | _ -> () (* Must Fix *)
-            );
-          | _ -> ()
-      );
+              let allowed_list =
+                [
+                  "dict.__getitem__";
+                  "dict.__setitem__";
+                  "hasattr";
+                  "getattr";
+                ]
+              in
+              
+              let resolution =
+                (match callable.kind with
+                | Named reference when List.exists allowed_list ~f:(fun allowed -> String.equal allowed (Reference.show reference)) ->
+                  resolution
+                | Named reference ->
+                  (* ToDo
+                  * Overload 구현
+                  *)
+                  let params = callable.implementation.parameters in
+                  let param_list = 
+                  (match params with
+                  | Defined defined_param_list ->
+                    List.fold defined_param_list ~init:[] ~f:(fun acc param ->
+                      (match param with
+                      | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
+                      | Named n -> n.name::acc
+                      | _ -> (*print_endline "Other Param";*) acc
+                      )
+                    )
+                  | _ -> (*print_endline "No defined";*) []
+                  )
+                  in
+                  let param_list = List.rev param_list in
+                  let param_type_init, revise_index = 
+                  (match self_argument with
+                  | Some t -> if List.length param_list == 0 then [], 1 else [(List.nth_exn param_list 0,t)], 1
+                  | None -> (*Log.dump "No Self";*) [], 0
+                  )
+                  in
+                  let param_type_list, resolution = List.foldi arguments ~init:(param_type_init, resolution) ~f:(fun idx (acc, resolution) arg ->
+                    if List.length param_list <= (idx+revise_index) then acc, resolution
+                    else
+                    (match arg.kind with
+                    | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc, resolution
+                    | Named s ->  
+                      (s.value, arg.resolved)::acc, resolution
+                    | Positional -> 
+                      let update_resolution =
+                        (match arg.expression with
+                        | Some exp -> (
+                          match Node.value exp with
+                          | Name _ ->
+                            let arg_reference = Expression.show exp |> Reference.create in
+                            let callee_name = reference in
+                            let our_model = OurTypeSet.load_summary callee_name in
+                            let ret_cond = OurTypeSet.OurSummary.get_return_condition our_model callee_name in
+                            let tmp_resolution = Resolution.set_annotation_store resolution ret_cond in
+                            let param_reference = Reference.create (List.nth_exn param_list (idx+revise_index)) in
+                            let arg_type = Resolution.resolve_expression_to_type resolution exp in
+                            let ret_cond_type = Resolution.resolve_reference tmp_resolution param_reference in
+                            let new_arg_type = update_arg_type arg_type ret_cond_type in
+                            (*
+                            Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Reference.pp arg_reference Type.pp new_arg_type;
+                            *)
+                            let update_resolution = Resolution.refine_local resolution ~reference:arg_reference ~annotation:(Annotation.create_mutable new_arg_type) in
+                            update_resolution
+                          | _ -> resolution
+                        )
+                          
+                        | None -> resolution
+                        )
+                      in
+                      (List.nth_exn param_list (idx+revise_index), arg.resolved)::acc, update_resolution
+                    )
+                  )
+                  in
+
+                  (*
+                  Log.dump "TEST HERE";
+                  let param_type_list = List.rev param_type_list in
+                  List.iter param_type_list ~f:(fun (param, typ) ->
+                    Log.dump "%s -> %a\n" param Type.pp typ; 
+                  );
+                  *)
+                  
+                  
+                  if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+                    let { StatementDefine.Signature.name; _ } = define_signature in
+                    let our_model = OurTypeSet.load_summary name in
+                    let our_model = OurTypeSet.OurSummary.add_arg_types our_model reference param_type_list in
+                    OurTypeSet.save_summary our_model name
+                  else ();
+
+                  resolution
+                | _ -> resolution (* Must Fix *)
+                )
+              in
+              resolution
+            | _ -> resolution
+        )
+      in
 
       (*
       Format.printf "[[[ Callee ]]]\n\n%a\n\n" Expression.pp (Callee.expression callee);
@@ -7902,7 +8269,7 @@ module PossibleState (Context : Context) = struct
         ~errors
         (found_return_annotations, not_found_return_annotations)
       |> (function
-           | Some resolved -> resolved
+           | Some resolved -> { resolved with resolved=update_resolved_type resolved.resolved}
            | None -> resolved_for_bad_callable ~resolution ~errors undefined_attributes)
       |> check_for_error
     in
@@ -8437,7 +8804,9 @@ module PossibleState (Context : Context) = struct
           =
           forward_expression ~resolution callee
         in
-
+        (*
+        Log.dump "Call : %a => %a" Expression.pp callee Type.pp resolved_callee;
+        *)
         let { Resolved.resolution = updated_resolution; resolved; errors = updated_errors; _ } =
           let target_and_dynamic resolved_callee =
             if Type.is_meta resolved_callee then
@@ -8498,6 +8867,7 @@ module PossibleState (Context : Context) = struct
                 resolved_annotation = None;
                 base = None;
               }
+
           | _ ->
               let target, dynamic = target_and_dynamic resolved_callee in
               forward_callable
@@ -8509,6 +8879,40 @@ module PossibleState (Context : Context) = struct
                 ~arguments
         in
 
+        
+
+
+        (*
+        let our_model = OurTypeSet.load_summary name in
+        List.iteri arguments ~f:(fun i arg ->
+          let unpacked_argument = Call.Argument.unpack arg in
+          match unpacked_argument with
+          | _, Named arg ->
+            let callee_arguments = OurTypeSet.OurSummary.get_func_arg_types our_model name in
+
+        );
+        (* return condition으로 현재 resolution update 해야함 *)
+        *)
+
+
+        (*
+          왜 Temporary Annotation을 지우는거지?   
+        *)
+
+        (*
+        Log.dump "Resolution >>> \n%a" Resolution.pp resolution;
+        
+        Log.dump "Update resolution >>> \n%a" Resolution.pp updated_resolution;
+        *)
+        let _ = updated_resolution in
+        {
+          resolution = updated_resolution;
+          errors = updated_errors;
+          resolved;
+          resolved_annotation = None;
+          base = None;
+        }
+        (*
         {
           resolution = Resolution.clear_temporary_annotations updated_resolution;
           errors = updated_errors;
@@ -8516,11 +8920,11 @@ module PossibleState (Context : Context) = struct
           resolved_annotation = None;
           base = None;
         }
+        *)
     | ComparisonOperator
         { ComparisonOperator.left; right; operator = ComparisonOperator.In as operator }
     | ComparisonOperator
         { ComparisonOperator.left; right; operator = ComparisonOperator.NotIn as operator } ->
-        (*print_endline "ComparisonOperator2";*)
         let resolve_in_call
             (resolution, errors, joined_annotation)
             { Type.instantiated; class_name; accessed_through_class }
@@ -8574,6 +8978,8 @@ module PossibleState (Context : Context) = struct
                         };
                     }
                 in
+                
+                let x =
                 forward_callable
                   ~resolution
                   ~errors
@@ -8581,6 +8987,8 @@ module PossibleState (Context : Context) = struct
                   ~dynamic:true
                   ~callee
                   ~arguments:[{ Call.Argument.name = None; value = left }]
+                in
+                x
             | None -> (
                 match
                   resolve_method
@@ -8751,6 +9159,7 @@ module PossibleState (Context : Context) = struct
                         in
                         { getitem_resolution with Resolved.resolved = Type.Any; errors }))
           in
+
           resolution, errors, GlobalResolution.join global_resolution joined_annotation resolved
         in
         let { Resolved.resolution; resolved; errors; _ } = forward_expression ~resolution right in
@@ -8760,7 +9169,8 @@ module PossibleState (Context : Context) = struct
           >>| List.fold ~f:resolve_in_call ~init:(resolution, errors, Type.Bottom)
           |> Option.value ~default:(resolution, errors, Type.Bottom)
         in
-        let resolved = if Type.equal resolved Type.Bottom then Type.Top else resolved in
+
+        let resolved = if Type.equal resolved Type.Bottom then Type.Bottom else resolved in
         { resolution; errors; resolved; resolved_annotation = None; base = None }
     | ComparisonOperator ({ ComparisonOperator.left; right; _ } as operator) -> (
         let operator = { operator with left } in
@@ -8802,16 +9212,20 @@ module PossibleState (Context : Context) = struct
           resolved_annotation = None;
           base = None;
         }
-    | Dictionary { Dictionary.entries; keywords } ->
-        let key, value, resolution, errors =
-          let forward_entry (key, value, resolution, errors) entry =
+    | Dictionary { Dictionary.entries; keywords } (* e.g. { "a" : 1 } *) ->
+        let key, value, fields, resolution, errors =
+          let forward_entry (key, value, fields, resolution, errors) entry =
             let new_key, new_value, resolution, errors = forward_entry ~resolution ~errors ~entry in
+
+            let new_field = Type.OurTypedDictionary.create_field ~annotation:new_value (Expression.show entry.key) in
+
             ( GlobalResolution.join global_resolution key new_key,
               GlobalResolution.join global_resolution value new_value,
+              new_field::fields,
               resolution,
               errors )
           in
-          List.fold entries ~f:forward_entry ~init:(Type.Bottom, Type.Bottom, resolution, [])
+          List.fold entries ~f:forward_entry ~init:(Type.Bottom, Type.Bottom, [], resolution, [])
         in
         let key =
           if List.is_empty keywords && Type.is_unbound key then
@@ -8825,56 +9239,85 @@ module PossibleState (Context : Context) = struct
           else
             value
         in
-        let resolved_key_and_value, resolution, errors =
-          let forward_keyword (resolved, resolution, errors) keyword =
+        let resolved_key_and_value, resolved_fields, resolution, errors =
+          let forward_keyword (resolved, fields, resolution, errors) keyword =
             match resolved with
-            | None -> resolved, resolution, errors
+            | None -> resolved, fields, resolution, errors
             | Some (key, value) -> (
+                
                 let { Resolved.resolution; resolved = source; errors = new_errors; _ } =
                   forward_expression ~resolution keyword
                 in
+
                 let errors = List.append new_errors errors in
-                match source with
-                | Top
-                | Bottom
-                | Any ->
-                    None, resolution, errors
-                | _ -> (
-                    match
-                      GlobalResolution.extract_type_parameters
-                        global_resolution
-                        ~source
-                        ~target:"typing.Mapping"
-                    with
-                    | Some [new_key; new_value] ->
-                        ( Some
-                            ( GlobalResolution.join global_resolution key new_key,
-                              GlobalResolution.join global_resolution value new_value ),
-                          resolution,
-                          errors )
+                let rec dict_extract_type source =
+                  (match source with
+                  | Type.Top
+                  | Bottom
+                  | Any ->
+                      (None, fields, resolution, errors)
+                  | OurTypedDictionary  { general; typed_dict; } ->
+                    let result_of_general = dict_extract_type general in
+                    (match result_of_general with
+                    | Some (key, value), general_fields, resolution, errors ->
+                      let new_field = Type.OurTypedDictionary.join ~join:Type.union_join typed_dict general_fields in
+                      Some (key, value), new_field, resolution, errors
                     | _ ->
-                        let errors =
-                          emit_error
-                            ~errors
-                            ~location
-                            ~kind:
-                              (Error.InvalidArgument
-                                 (Error.Keyword
-                                    {
-                                      expression = Some keyword;
-                                      annotation = source;
-                                      require_string_keys = false;
-                                    }))
-                        in
-                        None, resolution, errors))
+                      result_of_general
+                    )
+                  | _ -> (
+                      match
+                        GlobalResolution.extract_type_parameters
+                          global_resolution
+                          ~source
+                          ~target:"typing.Mapping"
+                      with
+                      | Some [new_key; new_value] ->
+                          ( Some
+                              ( GlobalResolution.join global_resolution key new_key,
+                                GlobalResolution.join global_resolution value new_value ),
+                            fields,
+                            resolution,
+                            errors )
+                      | _ ->
+                          let errors =
+                            emit_error
+                              ~errors
+                              ~location
+                              ~kind:
+                                (Error.InvalidArgument
+                                  (Error.Keyword
+                                      {
+                                        expression = Some keyword;
+                                        annotation = source;
+                                        require_string_keys = false;
+                                      })
+                                )
+                          in
+                          None, fields, resolution, errors)
+                  )
+                in 
+                dict_extract_type source
+             )
+                
           in
-          List.fold keywords ~f:forward_keyword ~init:(Some (key, value), resolution, errors)
+          List.fold keywords ~f:forward_keyword ~init:(Some (key, value), fields, resolution, errors)
         in
+        let typed_dict = Type.OurTypedDictionary.anonymous resolved_fields in
+        let _ = typed_dict in
+
+        (*Log.dump "typed_dict >>> %a" (Type.pp_our_typed_dictionary ~pp_type:Type.pp) typed_dict;*)
         let resolved =
-          resolved_key_and_value
-          >>| (fun (key, value) -> Type.dictionary ~key ~value)
-          |> Option.value ~default:Type.Top
+          if List.length typed_dict = 0 then
+            resolved_key_and_value
+            >>| (fun (key, value) -> Type.dictionary ~key ~value)
+            |> Option.value ~default:Type.Bottom
+          else
+            resolved_key_and_value
+            >>| (fun (key, value) -> Type.our_typed_dictionary ~key ~value ~typed_dict)
+            |> Option.value ~default:Type.Bottom
         in
+        
         { resolution; errors; resolved; resolved_annotation = None; base = None }
     | DictionaryComprehension { Comprehension.element; generators } ->
         let key, value, _, errors =
@@ -9079,7 +9522,7 @@ module PossibleState (Context : Context) = struct
                            attempted_action = Error.AttributeAccess attribute;
                          })
                 in
-                errors, Type.Variable.convert_all_escaped_free_variables_to_anys resolved_base
+                errors, Type.Variable.convert_all_escaped_free_variables_to_bottom resolved_base
               else
                 errors, resolved_base
             in
@@ -9716,6 +10159,7 @@ module PossibleState (Context : Context) = struct
         } ->
         refine_resolution_for_assert ~resolution left
     | Name name when is_simple_name name -> (
+      (*Log.dump "IS_HERE >>> %a" Name.pp name;*)
         match existing_annotation name with
         | Some { Annotation.annotation = Type.NoneType; _ } -> Unreachable
         | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
@@ -9833,12 +10277,13 @@ module PossibleState (Context : Context) = struct
 
   and forward_assert ?(origin = Assert.Origin.Assertion) ~resolution test =
     let { Resolved.resolution; errors; _ } = forward_expression ~resolution test in
-    (*Log.print "%s" (Format.asprintf "[ Before Refined Resolution ]\n%a\n\n" Resolution.pp resolution);*)
+    (*Log.dump "%s" (Format.asprintf "[ Before Refined Resolution ]\n%a\n\n" Resolution.pp resolution);*)
     let resolution = refine_resolution_for_assert ~resolution test in
 
+    
     (*
     (match resolution with
-    | Value resolution -> Log.print "%s" (Format.asprintf "[ Refined Resolution ]\n%a\n\n" Resolution.pp resolution);
+    | Value resolution -> Log.dump "%s" (Format.asprintf "[ Refined Resolution ]\n%a\n\n" Resolution.pp resolution);
     | Unreachable -> print_endline "Unreachable";
     );
     *)
@@ -9860,6 +10305,7 @@ module PossibleState (Context : Context) = struct
 
 
   and forward_assignment ~resolution ~location ~target ~annotation ~value =
+    (*Log.dump "[Forward Assignment] Target %a" Expression.pp target;*)
     let { Node.value = { Define.signature = { parent; _ }; _ } as define; _ } = Context.define in
     let global_resolution = Resolution.global_resolution resolution in
     let errors, is_final, original_annotation =
@@ -9956,6 +10402,7 @@ module PossibleState (Context : Context) = struct
           in
           resolution, List.append new_errors errors, resolved
         in
+
         let guide =
           (* This is the annotation determining how we recursively break up the assignment. *)
           match original_annotation with
@@ -9963,6 +10410,9 @@ module PossibleState (Context : Context) = struct
           | _ -> resolved_value
         in
         let explicit = Option.is_some annotation in
+
+        (* __init__ method인 경우 attribute 기억하기 *)
+
         let rec forward_assign
             ~resolution
             ~errors
@@ -10060,12 +10510,46 @@ module PossibleState (Context : Context) = struct
                      (GlobalResolution.type_of_iteration_value ~global_resolution annotation)
           in
 
+          (*
+          (* for get class attrs *)
+          let rec get_class_attribute (attribute: Name.Attribute.t) =
+            match attribute.base.value with
+            | Expression.Name name ->
+              (match name with
+              | Name.Identifier identifier ->
+                let self_identifier = Define.Signature.self_identifier define.signature in
+                if String.equal identifier self_identifier 
+                then (Some attribute.attribute)
+                else None 
+              | Name.Attribute attribute -> 
+                get_class_attribute attribute 
+              )
+            | _ -> None
+          in
+          *)
+
           match target_value with
           | Expression.Name name -> (
               let resolved_base =
                 match name with
-                | Name.Identifier identifier -> `Identifier identifier
+                | Name.Identifier identifier -> 
+                  `Identifier identifier
                 | Name.Attribute attribute ->
+                  (*
+                    if (OurTypeSet.is_inference_mode (OurTypeSet.load_mode ())) && 
+                      (Define.Signature.is_method define.signature) &&
+                      (Reference.is_suffix ~suffix:(Reference.create_from_list ["__init__";]) define_name) then
+                      let attr_opt = get_class_attribute attribute in
+                      (match attr_opt with
+                        | Some attr ->
+                          let our_model = OurTypeSet.load_summary define_name in
+                          let our_model = OurTypeSet.OurSummary.add_class_attribute our_model (Option.value_exn parent) attr in
+                          OurTypeSet.save_summary our_model define_name
+                        | _ -> ()
+                      );
+                    else
+                      ();
+                  *)
                     let resolved = resolve_expression_type ~resolution attribute.base in
                     `Attribute (attribute, resolved)
               in
@@ -10074,7 +10558,6 @@ module PossibleState (Context : Context) = struct
                   match resolved_base with
                   | `Identifier identifier ->
                       let reference = Reference.create identifier in
-
                       ( Some reference,
                         None,
                         from_reference ~location:Location.any reference
@@ -10678,6 +11161,7 @@ module PossibleState (Context : Context) = struct
                   (* 1. annotation을 만들고 : pyre_extensions or Int??
                     => resolve_value (Type.t) 따라간다
                   *)
+
                   let annotation =
                     (* Do not refine targets explicitly annotated as 'Any' to allow for escape hatch *)
                     (* Do not refine targets with invariance mismatch as we cannot keep the inferred
@@ -10688,6 +11172,7 @@ module PossibleState (Context : Context) = struct
                         ~right:expected
                         ~left:resolved_value
                     in
+
                     if explicit && is_valid_annotation then
                       let guide_annotation = Annotation.create_immutable ~final:is_final guide in
                       if
@@ -10702,11 +11187,13 @@ module PossibleState (Context : Context) = struct
                       if Type.is_any (Annotation.original target_annotation) || invariance_mismatch
                       then
                         target_annotation
-                      else
+                      else(
                         refine_annotation target_annotation guide
+                      )
                     else
                       Annotation.create_mutable guide
                   in
+
                   (* 2. 또 업데이트??? *)
                   let errors, annotation =
                     if
@@ -10723,17 +11210,20 @@ module PossibleState (Context : Context) = struct
                           }
                       in
                       let converted =
-                        Type.Variable.convert_all_escaped_free_variables_to_anys
+                        Type.Variable.convert_all_escaped_free_variables_to_bottom
                           (Annotation.annotation annotation)
+                        |> Type.top_to_bottom
                       in
                       emit_error ~errors ~location ~kind, { annotation with annotation = converted }
                     else
                       errors, annotation
                   in
+
                   (* 
                    * Annotation을 Update 한 후 Resolution 업데이트
                    * 그래서 Annotation을 잘 만들어야 한다!
                   *)
+
                   let resolution =
                     match name with
                     | Identifier identifier ->
@@ -10755,40 +11245,41 @@ module PossibleState (Context : Context) = struct
                               ~annotation
                         | _ -> resolution)
                     | _ -> resolution
-                  in
-                  resolution, errors
                 in
-                let resolved_value_weakened =
-                  GlobalResolution.resolve_mutable_literals
-                    global_resolution
-                    ~resolve:(resolve_expression_type ~resolution)
-                    ~expression
-                    ~resolved:resolved_value
-                    ~expected
-                in
-                match resolved_value_weakened with
-                | { resolved = resolved_value_weakened; typed_dictionary_errors = [] } ->
-                    let errors = check_errors errors resolved_value_weakened in
-                    let errors, is_valid_annotation =
-                      check_for_missing_annotations errors resolved_value_weakened
-                    in
-                    propagate_annotations ~errors ~is_valid_annotation ~resolved_value_weakened
-                | { typed_dictionary_errors; _ } ->
-                    propagate_annotations
-                      ~errors:(emit_typed_dictionary_errors ~errors typed_dictionary_errors)
-                      ~is_valid_annotation:false
-                      ~resolved_value_weakened:Type.Top
+                resolution, errors
               in
-              match resolved_base with
-              | `Attribute (attribute, Type.Union types) ->
-                  (* Union[A,B].attr is valid iff A.attr and B.attr is valid *)
-                  let propagate (resolution, errors) t =
-                    inner_assignment resolution errors (`Attribute (attribute, t))
+              let resolved_value_weakened =
+                GlobalResolution.resolve_mutable_literals
+                  global_resolution
+                  ~resolve:(resolve_expression_type ~resolution)
+                  ~expression
+                  ~resolved:resolved_value
+                  ~expected
+              in
+
+              match resolved_value_weakened with
+              | { resolved = resolved_value_weakened; typed_dictionary_errors = [] } ->
+                  let errors = check_errors errors resolved_value_weakened in
+                  let errors, is_valid_annotation =
+                    check_for_missing_annotations errors resolved_value_weakened
                   in
-                  let _, errors = List.fold types ~init:(resolution, errors) ~f:propagate in
-                  (* We process type as union again to populate resolution *)
-                  propagate (resolution, errors) (Union types)
-              | resolved -> inner_assignment resolution errors resolved)
+                  propagate_annotations ~errors ~is_valid_annotation ~resolved_value_weakened
+              | { typed_dictionary_errors; _ } ->
+                  propagate_annotations
+                    ~errors:(emit_typed_dictionary_errors ~errors typed_dictionary_errors)
+                    ~is_valid_annotation:false
+                    ~resolved_value_weakened:Type.Top
+            in
+            match resolved_base with
+            | `Attribute (attribute, Type.Union types) ->
+                (* Union[A,B].attr is valid iff A.attr and B.attr is valid *)
+                let propagate (resolution, errors) t =
+                  inner_assignment resolution errors (`Attribute (attribute, t))
+                in
+                let _, errors = List.fold types ~init:(resolution, errors) ~f:propagate in
+                (* We process type as union again to populate resolution *)
+                propagate (resolution, errors) (Union types)
+            | resolved -> inner_assignment resolution errors resolved)
           | List elements
           | Tuple elements
             when is_uniform_sequence guide ->
@@ -10904,6 +11395,9 @@ module PossibleState (Context : Context) = struct
         let resolution, errors =
           forward_assign ~resolution ~errors ~target ~guide ~resolved_value (Some value)
         in
+
+        
+
         Value resolution, errors
 
 
@@ -10973,8 +11467,10 @@ module PossibleState (Context : Context) = struct
           ~kind:(Error.InvalidType (InvalidType { annotation; expected = "an Enum member" })))
 
 
-  let forward_statement ~resolution ~statement:{ Node.location; value } =
+  let forward_statement ~resolution ~statement:({ Node.location; value } as statement) =
+    let _ = statement in
     let global_resolution = Resolution.global_resolution resolution in
+    (*Log.dump "Statement : %a \n %a" Statement.pp { location; value } Resolution.pp resolution;*)
     let validate_return = validate_return ~location in
     match value with
     | Statement.Assign { Assign.target; annotation; value } ->
@@ -11057,7 +11553,7 @@ module PossibleState (Context : Context) = struct
           OurTypeSet.save_summary our_model name;
         else ();
         (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
-    | Define { signature = { Define.Signature.name; _ } as signature; _ } ->
+    | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
         let resolution =
           if Reference.is_local name then (* 내장 함수 *)
             type_of_signature ~resolution signature
@@ -11065,8 +11561,12 @@ module PossibleState (Context : Context) = struct
                  ~specific:(Resolution.all_type_variables_in_scope resolution)
             |> Annotation.create_mutable
             |> fun annotation -> Resolution.new_local resolution ~reference:name ~annotation
+            
           else (* class method는 여기로 *)
+          (
+            
             resolution
+          )
         in
         (Value resolution, [])
     | Import { Import.from; imports } ->
@@ -11128,6 +11628,30 @@ module PossibleState (Context : Context) = struct
     | Class class_statement ->
         (* Check that variance isn't widened on inheritence. Don't check for other errors. Nested
            classes and functions are analyzed separately. *)
+
+        (* Class 에 모든 define body가 담겨 있음 *)
+        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+          let { StatementDefine.Signature.name; _ } = define_signature in
+          List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
+            match value with
+            | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; _ }; _ } ->
+              let our_model = OurTypeSet.load_summary name in
+              let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
+              let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
+              let our_model =
+                match parent, List.nth parameters 0 with
+                | Some class_name, Some { Node.value={ Parameter.name=class_var; _ }; _ } -> (* class 함수 *)
+                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage ~class_name ~class_var
+                | _ -> 
+                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage
+              in
+              OurTypeSet.save_summary our_model name;
+              ()
+            | _ -> ()
+          )
+        else ();
+          
+          
         let check_base errors base =
           let check_pair errors extended actual =
             match extended, actual with
@@ -11188,6 +11712,41 @@ module PossibleState (Context : Context) = struct
               |> Option.value ~default:errors
           | _ -> errors
         in
+
+        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+          let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+          let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_statement.name)) in
+          (match class_summary with
+          | Some { Node.value = class_summary; _ } ->
+            let our_model = OurTypeSet.load_summary define_name in
+            let class_attrs = ClassSummary.attributes class_summary in
+            let our_model =
+              Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } our_model -> 
+                match kind with
+                | Simple _ ->
+                  OurTypeSet.OurSummary.add_class_attribute our_model class_statement.name name
+                | Property _ ->
+                  OurTypeSet.OurSummary.add_class_property our_model class_statement.name name
+                | Method _ ->
+                  OurTypeSet.OurSummary.add_class_method our_model class_statement.name name
+              ) class_attrs our_model
+            in
+            OurTypeSet.save_summary our_model define_name
+          | _ -> ()
+          );
+            (*
+            let our_model = OurTypeSet.load_summary saved_name in
+            let our_model = 
+              if StatementDefine.Signature.is_class_property signature
+              then
+                OurTypeSet.OurSummary.add_class_property our_model parent (Reference.last name)
+              else
+                our_model
+            in
+            OurTypeSet.save_summary our_model saved_name;
+            *)
+          
+        else ();
         (Value resolution, List.fold (Class.base_classes class_statement) ~f:check_base ~init:[])
     | For _
     | If _
@@ -11310,7 +11869,7 @@ module PossibleState (Context : Context) = struct
     in
     
     (*
-    Format.printf "\n\n[[[ Initial Resolution ]]] \n%a\n\n" Resolution.pp resolution;
+    Log.dump "\n\n[[[ Initial Resolution ]]] \n%a\n\n" Resolution.pp resolution;
     *)
 
     let check_decorators resolution errors =
@@ -11764,10 +12323,10 @@ module PossibleState (Context : Context) = struct
                         ~errors
                         ~given_annotation:None
                         (Some value_annotation),
-                      Annotation.create_mutable Type.Any )
+                      Annotation.create_mutable Type.Top )
                 | None, None ->
                     ( add_missing_parameter_annotation_error ~errors ~given_annotation:None None,
-                      Annotation.create_mutable Type.Any ))
+                      Annotation.create_mutable Type.Top ))
           in
           let apply_starred_annotations annotation =
             if String.is_prefix ~prefix:"**" name then
@@ -12391,10 +12950,10 @@ module PossibleState (Context : Context) = struct
     | Value resolution ->
         
       (*
-        print_endline ("\n \n \n [[[ Forward ]]]] \n \n \n");
-        Format.printf "%a \n\n" Resolution.pp resolution;
-        Format.printf "%a \n\n" Statement.pp statement;
-      *)  
+        Log.dump "%s" ("[[[ Forward ]]]]");
+        Log.dump "%a" Resolution.pp resolution;
+        Log.dump "%a" Statement.pp statement;
+      *)
         
         (*Format.printf "[ Statement ] \n\n%a \n\n" Statement.pp statement;*)
         let post_resolution, errors = forward_statement ~resolution ~statement in
@@ -12403,7 +12962,7 @@ module PossibleState (Context : Context) = struct
           match post_resolution with
           | Unreachable -> Unreachable
           | Value post_resolution ->
-            (*Log.print "%s" (Format.asprintf "[ Post Resolution ] \n\n%a \n\n" Resolution.pp post_resolution);*)
+            (*Log.dump "%s" (Format.asprintf "[ Post Resolution ] \n\n%a \n\n" Resolution.pp post_resolution);*)
             Value post_resolution
             (*
             let current_possiblecondition = OurTypeSet.OurSummary.get_current_possiblecondition !OurTypeSet.our_model |> Option.value ~default:Refinement.Store.empty in
@@ -13169,12 +13728,81 @@ let filter_errors (module Context : Context) ~global_resolution errors =
   else
     Error.filter ~resolution:global_resolution errors
 
+let exit_state_origin ~resolution (module Context : Context) =
+  let module State = State (Context) in
+  let module Fixpoint = Fixpoint.Make (State) in
+  let initial = State.initial ~resolution in
+  let { Node.value = { Define.signature = { Define.Signature.name; _ }; _ } as define; _ } =
+    Context.define
+  in
+  let global_resolution = Resolution.global_resolution resolution in
+  if Define.is_stub define then
+    let resolution = Option.value_exn (State.resolution initial) in
+    let errors_sofar =
+      Option.value_exn
+        ~message:"analysis context has no error map"
+        (Context.error_map >>| LocalErrorMap.all_errors >>| Error.deduplicate)
+    in
+    ( emit_errors_on_exit (module Context) ~errors_sofar ~resolution ()
+      |> filter_errors (module Context) ~global_resolution,
+      None,
+      None
+      )
+  else (
+    Log.log ~section:`Check "Checking %a" Reference.pp name;
+    Context.Builder.initialize ();
+    let cfg = Cfg.create define in
+    let fixpoint = Fixpoint.forward ~cfg ~initial in
+    let exit = Fixpoint.exit fixpoint in
+    (* debugging logic for pyre_dump / pyre_dump_locations / pyre_dump_cfg *)
+    if Define.dump_locations define then
+      Log.dump
+        "AST of %a with Locations:\n----\n%s\n----"
+        Reference.pp
+        name
+        (Define.show_json define);
+    if Define.dump define then (
+      Log.dump "AST of %a:\n----%a\n----" Reference.pp name Define.pp define;
+      Option.iter exit ~f:(Log.dump "Exit state:\n%a" State.pp));
+    (if Define.dump_cfg define then
+        let precondition { Fixpoint.preconditions; _ } id =
+          match Hashtbl.find preconditions id with
+          | Some (State.Value exit_resolution) ->
+              Resolution.annotation_store exit_resolution |> Refinement.Store.show
+          | _ -> ""
+        in
+        Log.dump
+          "CFG for %a in dot syntax for graphviz:\n----\n%s\n----"
+          Reference.pp
+          name
+          (Cfg.to_dot ~precondition:(precondition fixpoint) ~single_line:true cfg));
+
+    let callees = Context.Builder.get_all_callees () in
+    let local_annotations =
+      Option.value_exn
+        ~message:"analysis context has no resolution fixpoint"
+        Context.resolution_fixpoint
+    in
+    let errors =
+      Option.value_exn
+        ~message:"analysis context has no error map"
+        (Context.error_map >>| LocalErrorMap.all_errors >>| Error.deduplicate)
+    in
+    let errors =
+      match exit with
+      | None -> errors
+      | Some post_state ->
+          let resolution = State.resolution_or_default post_state ~default:resolution in
+          emit_errors_on_exit (module Context) ~errors_sofar:errors ~resolution ()
+          |> filter_errors (module Context) ~global_resolution
+    in
+    errors, Some local_annotations, Some callees)
 
 let exit_state ~resolution (module Context : Context) =
   let module PossibleState = PossibleState (Context) in
   let module PossibleFixpoint = PossibleFixpoint.Make (PossibleState) in
   
-  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; _ }; _ } as define; _ } =
+  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; _ } as define; _ } =
     Context.define
   in
   (*
@@ -13193,15 +13821,84 @@ let exit_state ~resolution (module Context : Context) =
     | None -> resolution
     )
   in
-  
 
   let our_arg_types = OurTypeSet.OurSummary.get_func_arg_types !OurTypeSet.our_model name in
   let resolution = OurTypeSet.ArgTypes.export_to_resolution our_arg_types resolution in
   *)
+  
 
   let initial = PossibleState.initial ~resolution in
-  (*Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;*)
-  
+  let initial = 
+    if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) 
+    then (
+      match initial with
+      | Unreachable -> initial
+      | Value resolution ->
+        let final_model = OurTypeSet.load_summary (Reference.create OurTypeSet.final_summary) in
+        (*Log.dump ">>> %a" OurTypeSet.OurSummary.pp final_model;*)
+
+        (* self 변수 업데이트 하기 *)
+        let update_resolution_of_self ~final_model resolution =
+          match parent, List.nth parameters 0 with
+          | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+            let self_attributes_tree = OurTypeSet.OurSummary.get_self_attributes_tree final_model class_name in
+            (*Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data -> Log.dump "HMM %s : %a" key Refinement.Unit.pp data);*)
+            let resolution = Resolution.update_self_attributes_tree resolution self_attributes_tree (Reference.create class_param) in
+            (*Log.dump "FINAL %a" Resolution.pp resolution;*)
+            resolution
+          | _ -> resolution
+        in
+
+        (* attribute 보고 update하기 *)
+        let update_resolution_from_attributes ~final_model resolution =
+          let func_attrs = 
+            (match parent, List.nth parameters 0 with
+            | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+              OurTypeSet.OurSummary.find_class_of_attributes ~class_name ~class_param final_model name
+            | _ -> OurTypeSet.OurSummary.find_class_of_attributes final_model name
+            )
+          in  
+          LocInsensitiveExpMap.fold func_attrs ~init:resolution ~f:(fun ~key:{ Node.value; _ } ~data resolution ->
+            match value with
+            | Name name -> 
+              let annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
+              let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
+              (*
+              Log.dump "%a => %a\n\n[[[ Before ]]]\n%a\n\n[[[ After ]]]\n%a\n\n" Name.pp name Annotation.pp annotation  Resolution.pp resolution Resolution.pp last_resolution;
+              *)
+              last_resolution
+            | _ -> resolution
+          )
+        in
+
+        let _ = update_resolution_of_self in
+
+        let resolution_updated_attributes = 
+          resolution 
+          |> update_resolution_from_attributes ~final_model
+        in
+
+        (* Arg Annotation 저장 *)
+        let our_model = OurTypeSet.load_summary name in
+        let our_model = OurTypeSet.OurSummary.set_arg_annotation our_model name (Resolution.get_annotation_store resolution_updated_attributes) in 
+        OurTypeSet.save_summary our_model name;
+
+        
+        let resolution =
+          resolution_updated_attributes 
+          |> update_resolution_of_self ~final_model
+          |> Resolution.top_to_bottom (* Top은 모두 Bottom으로 *)
+          
+        in
+
+        Value resolution
+
+    ) (*PossibleState.top_to_bottom initial*)
+    else initial
+  in
+  (*
+  Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
+  *)
   let global_resolution = Resolution.global_resolution resolution in
   if Define.is_stub define then
     let resolution = Option.value_exn (PossibleState.resolution initial) in
@@ -13227,14 +13924,18 @@ let exit_state ~resolution (module Context : Context) =
 
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
     
+    
+
     if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
       let our_model = OurTypeSet.load_summary name in
       let our_model = OurTypeSet.OurSummary.set_usedef_tables our_model name (Some usedef_tables) in 
       let our_model = OurTypeSet.OurSummary.set_cfg our_model name (Some cfg) in
+      let our_model = OurTypeSet.OurSummary.set_return_annotation our_model name (PossibleState.return_annotation ~global_resolution) in
       OurTypeSet.save_summary our_model name;
     else ();
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
     let exit = PossibleFixpoint.exit fixpoint in
+
 
     (*
     (match PossibleFixpoint.exit_possible fixpoint with
@@ -13246,10 +13947,11 @@ let exit_state ~resolution (module Context : Context) =
 
     (*
     (match exit with
-    | Some e -> Format.printf "[ Exit Fixpoint ] \n\n%a\n\n" State.pp e
+    | Some e -> Log.dump "[ Exit Fixpoint ] \n\n%a\n\n" PossibleState.pp e
     | None -> ()
     );
     *)
+    
 
     (*Format.printf "[ Normal Fixpoint ] \n\n%a\n\n" Fixpoint.pp fixpoint;*)
     
@@ -13298,30 +14000,64 @@ let exit_state ~resolution (module Context : Context) =
          name
          (Cfg.to_dot ~precondition:(precondition fixpoint) ~single_line:true cfg));
 
+      
     (if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
-      let last_state = Hashtbl.find fixpoint.possibleconditions Cfg.exit_index in
-      (match parent with
-      | Some reference ->
-        (match last_state with
-          | Some state ->
-            (match state with
-            | Value v -> 
-              (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
-              (*Format.printf "\n\n [[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
-              let our_model = OurTypeSet.load_summary name in
-              let our_model = OurTypeSet.OurSummary.set_possible_condition our_model name (Resolution.get_annotation_store v) in
-              let our_model = OurTypeSet.OurSummary.set_class_summary our_model (
-                OurTypeSet.ClassSummary.join_with_merge ~global_resolution 
-                  (OurTypeSet.OurSummary.class_summary our_model) reference (Resolution.annotation_store v)
-                )
-              in
-              OurTypeSet.save_summary our_model name
-            | Unreachable -> ()
-            )
-          | None -> ()
+      let our_model = OurTypeSet.load_summary name in
+      (*
+      let last_possible_state = Hashtbl.find fixpoint.possibleconditions Cfg.exit_index in
+      (* Possible Condition 등록 *)
+      let our_model = 
+        (match parent with
+        | Some reference ->
+          (match last_possible_state with
+            | Some state ->
+              (match state with
+              | Value v -> 
+                (*Log.dump "Class : %a >>> Func : %a \n %a" Reference.pp reference Reference.pp name Resolution.pp v;*)
+                (*Log.dump "[[[ TEST ]]] \n\n%a \n\n" Resolution.pp v;*)
+                let our_model = OurTypeSet.OurSummary.set_possible_condition our_model name (Resolution.get_annotation_store v) in
+                let our_model = OurTypeSet.OurSummary.set_class_summary our_model (
+                  OurTypeSet.ClassSummary.join_with_merge_class_variable_type ~global_resolution 
+                    (OurTypeSet.OurSummary.class_summary our_model) reference (Resolution.annotation_store v)
+                  )
+                in
+                our_model
+              | Unreachable -> our_model
+              )
+            | None -> our_model
+          )
+        | None -> our_model
         )
-      | None -> ()
-      )
+      in
+      *)
+
+      (* Arg Return Types 등록 *)
+      let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
+      let our_model = 
+        (match last_state with
+        | Some state ->
+          (match state with
+          | Value v ->
+            let our_model = OurTypeSet.OurSummary.set_return_condition our_model name (Resolution.get_annotation_store v) in
+            let our_model = 
+              (match parent with
+              | Some reference ->
+                OurTypeSet.OurSummary.set_class_summary our_model (
+                  OurTypeSet.ClassSummary.join_with_merge_class_variable_type ~global_resolution 
+                    (OurTypeSet.OurSummary.class_summary our_model) reference (Resolution.annotation_store v)
+                )
+              | _ -> our_model
+              )
+            in
+            our_model
+
+          | Unreachable -> our_model
+          )
+        | None -> our_model
+        )
+      in
+      
+      OurTypeSet.save_summary our_model name
     else ()
     )
     ;
@@ -13381,6 +14117,86 @@ let compute_local_annotations ~global_environment name =
   >>= (fun (_, local_annotations, _) -> local_annotations)
   >>| LocalAnnotationMap.read_only
 
+let check_define_origin
+    ~type_check_controls:
+      {
+        EnvironmentControls.TypeCheckControls.constraint_solving_style;
+        include_type_errors;
+        include_local_annotations;
+        debug;
+      }
+    ~call_graph_builder:(module Builder : Callgraph.Builder)
+    ~resolution
+    ~qualifier
+    ({ Node.location; value = { Define.signature = { name; _ }; _ } as define } as define_node)
+  =
+  let errors, local_annotations, callees =
+    try
+      let module Context = struct
+        let qualifier = qualifier
+
+        let debug = debug
+
+        let constraint_solving_style = constraint_solving_style
+
+        let define = define_node
+
+        let resolution_fixpoint = Some (LocalAnnotationMap.empty ())
+
+        let error_map = Some (LocalErrorMap.empty ())
+
+        module Builder = Builder
+      end
+      in
+      let type_errors, local_annotations, callees = exit_state_origin ~resolution (module Context) in
+      let errors =
+        if include_type_errors then
+          let uninitialized_local_errors =
+            if Define.is_toplevel define then
+              []
+            else
+              UninitializedLocalCheck.check_define ~qualifier define_node
+          in
+          Some (List.append uninitialized_local_errors type_errors)
+        else
+          None
+      in
+      errors, local_annotations, callees
+    with
+    | ClassHierarchy.Untracked annotation ->
+        Statistics.event
+          ~name:"undefined type"
+          ~integers:[]
+          ~normals:
+            ["module", Reference.show qualifier; "define", Reference.show name; "type", annotation]
+          ();
+        if Define.dump define then
+          Log.dump "Analysis crashed because of untracked type `%s`." (Log.Color.red annotation);
+        let undefined_error =
+          Error.create
+            ~location:(Location.with_module ~module_reference:qualifier location)
+            ~kind:(Error.AnalysisFailure (UnexpectedUndefinedType annotation))
+            ~define:define_node
+        in
+        Some [undefined_error], None, None
+  in
+  (if not (Define.is_overloaded_function define) then
+     let caller =
+       if Define.is_property_setter define then
+         Callgraph.PropertySetterCaller name
+       else
+         Callgraph.FunctionCaller name
+     in
+     Option.iter callees ~f:(fun callees -> Callgraph.set ~caller ~callees));
+  let local_annotations =
+    if include_local_annotations then
+      Some
+        (Option.value local_annotations ~default:(LocalAnnotationMap.empty ())
+        |> LocalAnnotationMap.read_only)
+    else
+      None
+  in
+  { CheckResult.errors; local_annotations; }
 
 let check_define
     ~type_check_controls:
@@ -13463,6 +14279,49 @@ let check_define
   in
   { CheckResult.errors; local_annotations; }
 
+let check_function_definition_origin
+    ~type_check_controls
+    ~call_graph_builder
+    ~resolution
+    ~name
+    { FunctionDefinition.body; siblings; qualifier }
+  =
+  let timer = Timer.start () in
+
+  let check_define = check_define_origin ~type_check_controls ~resolution ~qualifier ~call_graph_builder in
+  let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
+  let sibling_results = List.map sibling_bodies ~f:(fun define_node -> check_define define_node) in
+  let result =
+    let aggregate_errors results =
+      List.map results ~f:CheckResult.errors
+      |> List.fold ~init:(Some []) ~f:(Option.map2 ~f:List.append)
+    in
+    match body with
+    | None -> { CheckResult.errors = aggregate_errors sibling_results; local_annotations = None }
+    | Some define_node ->
+        let ({ CheckResult.local_annotations; _ } as body_result) = check_define define_node in
+        { errors = aggregate_errors (body_result :: sibling_results); local_annotations }
+  in
+
+  let number_of_lines =
+    let bodies =
+      match body with
+      | None -> sibling_bodies
+      | Some body -> body :: sibling_bodies
+    in
+    List.fold bodies ~init:0 ~f:(fun sofar body -> sofar + Node.number_of_lines body)
+  in
+  Statistics.performance
+    ~flush:false
+    ~randomly_log_every:1000
+    ~always_log_time_threshold:1.0 (* Seconds *)
+    ~section:`Check
+    ~name:"SingleDefineTypeCheck"
+    ~timer
+    ~normals:["name", Reference.show name; "request kind", "SingleDefineTypeCheck"]
+    ~integers:["number of lines", number_of_lines]
+    ();
+  result
 
 let check_function_definition
     ~type_check_controls
@@ -13507,6 +14366,18 @@ let check_function_definition
     ();
   result
 
+let check_define_by_name_origin
+    ~type_check_controls
+    ~call_graph_builder
+    ~global_environment
+    ~dependency
+    name
+  =
+  let global_resolution = GlobalResolution.create global_environment ?dependency in
+  (* TODO(T65923817): Eliminate the need of creating a dummy context here *)
+  let resolution = resolution global_resolution (module DummyContext) in
+  GlobalResolution.function_definition global_resolution name
+  >>| check_function_definition_origin ~type_check_controls ~call_graph_builder ~resolution ~name
 
 let check_define_by_name
     ~type_check_controls
@@ -13588,7 +14459,9 @@ let search_define
       in
 
       let target_name, target_type = extract_type annotation in
-
+      (*
+      Log.dump "Check %a (%a)" Reference.pp target_name Type.pp target_type;
+      *)
       
 
       let update_errors, local_annotations, callees =

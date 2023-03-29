@@ -298,7 +298,7 @@ let run_taint_analysis
       |> Analysis.ModuleTracker.read_only
       |> Analysis.ModuleTracker.ReadOnly.tracked_explicit_modules
     in
-
+    
     let read_only_environment = Analysis.TypeEnvironment.read_only environment in
 
     let class_hierarchy_graph =

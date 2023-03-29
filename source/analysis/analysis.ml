@@ -68,3 +68,4 @@ module WeakTopologicalOrder = WeakTopologicalOrder
 module OurTypeSet = OurTypeSet
 module PossibleFixpoint = PossibleFixpoint
 module Usedef = Usedef
+module AttributeAnalysis = AttributeAnalysis

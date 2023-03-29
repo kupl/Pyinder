@@ -61,6 +61,8 @@ module Store : sig
 
   val get_base : name:Reference.t -> t -> Annotation.t option
 
+  val get_attributes : name:Reference.t -> t -> Unit.t Identifier.Map.Tree.t
+
   val get_annotation : name:Reference.t -> attribute_path:Reference.t -> t -> Annotation.t option
 
   val set_base : ?temporary:bool -> name:Reference.t -> base:Annotation.t -> t -> t
@@ -124,4 +126,8 @@ module Store : sig
   val combine_join_with_merge : global_resolution:GlobalResolution.t -> t -> Unit.t Reference.Map.t
 
   val make_map_function_of_types : t -> (Annotation.t option -> 'a list option) -> (string list * 'a option) list
+
+  val top_to_bottom : t -> t
+
+  val update_self_attributes_tree : t -> Unit.t Identifier.Map.Tree.t -> Reference.t -> t
 end

@@ -2309,6 +2309,16 @@ let name_to_reference_exn name =
 
 let is_simple_name name = Option.is_some (name_to_identifiers name)
 
+let rec change_identifier_base ~data expression =
+  let value =
+    match Node.value expression with
+    | Call ({ callee; _ } as t) -> Call { t with callee = change_identifier_base callee ~data }
+    | Name (Name.Attribute ({ base; _ } as t)) -> Name ( Name.Attribute { t with base = change_identifier_base base ~data })
+    | Name (Name.Identifier _) -> Name (Name.Identifier data)
+    | _ -> failwith (Format.sprintf "Cannot change base of expression cause of %s" (Expression.show expression))
+  in
+  { expression with Node.value=value }
+
 let rec get_identifier_base expression =
   match Node.value expression with
   | Call { callee; _ } -> get_identifier_base callee
@@ -2556,3 +2566,4 @@ let operator_name_to_symbol = function
   | "__xor__" -> Some "^"
   | "__or__" -> Some "|"
   | _ -> None
+

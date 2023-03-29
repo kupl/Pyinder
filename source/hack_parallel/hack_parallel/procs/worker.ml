@@ -220,7 +220,7 @@ let unix_worker_main restore state (ic, oc) =
               Pervasives.exit code
           | Unix.WSIGNALED x ->
               let sig_str = PrintSignal.string_of_signal x in
-              Printf.printf "Worker interrupted with signal: %s\n" sig_str;
+              Printf.printf "Worker interrupted with signal: %s %i\n" sig_str x;
               exit 2
           | Unix.WSTOPPED x ->
               Printf.printf "Worker stopped with signal: %d\n" x;

@@ -557,6 +557,14 @@ let rec collect_non_generic_type_names { Node.value; _ } =
   | _ -> []
 
 
+let rec collect_constant_string { Node.value; _ } =
+  match value with
+  | Expression.Tuple elements
+  | List elements ->
+      List.concat_map ~f:collect_constant_string elements
+  | Constant (String literal) -> [literal.value]
+  | _ -> []
+
 let collect_format_strings_with_ignores ~ignore_line_map source =
   let module CollectIgnoredFormatStrings = ExpressionCollector (struct
     type t = Expression.t * Ignore.t list

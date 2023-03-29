@@ -35,6 +35,7 @@ module OrderImplementation = struct
     type t = order
 
     let rec always_less_or_equal order ~left ~right =
+      let x = 
       OrderedConstraintsSet.add
         ConstraintsSet.empty
         ~new_constraint:
@@ -46,7 +47,8 @@ module OrderImplementation = struct
         ~order
       (* This potential is not just potential in this case, since this will always be accurate when
          there are no free type variables, as in this case *)
-      |> ConstraintsSet.potentially_satisfiable
+      in 
+      x |> ConstraintsSet.potentially_satisfiable 
 
 
     and join_implementations ~parameter_join ~return_join order left right =
@@ -136,6 +138,26 @@ module OrderImplementation = struct
         union
       else
         match left, right with
+        | Type.OurTypedDictionary { general=left_general; typed_dict=left_typed_dict; }, 
+          Type.OurTypedDictionary { general=right_general; typed_dict=right_typed_dict; } ->
+            let x = Type.OurTypedDictionary {
+              general=join order left_general right_general;
+              typed_dict=Type.OurTypedDictionary.join ~join:Type.union_join left_typed_dict right_typed_dict;
+            }
+            in
+            x
+        | Type.OurTypedDictionary { general; typed_dict }, other ->
+          let new_general = join order general other in
+          if Type.is_dictionary_or_mapping new_general then
+            OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
+          else 
+            new_general
+        | other, Type.OurTypedDictionary { general; typed_dict } ->
+          let new_general = join order other general in
+          if Type.is_dictionary_or_mapping new_general then
+            OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
+          else 
+            new_general
         | Type.Bottom, other
         | other, Type.Bottom ->
             other
@@ -661,6 +683,14 @@ let rec is_compatible_with order ~left ~right =
           List.for_all2_exn left_parameters right_parameters ~f:(fun left right ->
               is_compatible_with order ~left ~right)
       | _ -> fallback ())
+  | Type.OurTypedDictionary { general=left_general; _ }, 
+    Type.OurTypedDictionary { general=right_general; _; } ->
+      is_compatible_with order ~left:left_general ~right:right_general
+  | Type.OurTypedDictionary { general; _ }, _ ->
+    is_compatible_with order ~left:general ~right
+  | _, Type.OurTypedDictionary { general; _ } ->
+    is_compatible_with order ~left ~right:general
+      
   | _, _ -> fallback ()
 
 

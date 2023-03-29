@@ -156,6 +156,7 @@ let refine ~type_less_or_equal ~solve_less_or_equal ~refined_type { annotation; 
   let accept_refinement_of_immutable original =
     (not (Type.is_unbound refined_type)) && type_less_or_equal ~left:refined_type ~right:original
   in
+
   match mutability with
   | Mutable -> { annotation = refined_type; mutability }
   | Immutable { original; _ } -> (

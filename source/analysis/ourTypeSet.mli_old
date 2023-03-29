@@ -12,22 +12,16 @@ open Usedef
 open Core
 open AttributeAnalysis
 
-module Store = Refinement.Store
-module Unit = Refinement.Unit
-
 module VarType : sig
   type t = Reference.t * Type.t [@@deriving compare]
 end
 
 module VarTypeMap : Map.S with type Key.t = VarType.t
-module ReferenceSet : Set.S with type Elt.t = Reference.t
-module ReferenceMap : Map.S with type Key.t = Reference.t
-
-module FunctionSet = ReferenceSet
-module StoreMap = ReferenceMap
-module ClassMap = ReferenceMap
-
+module FunctionSet : Set.S with type Elt.t = Reference.t
 module AttrsSet : Set.S with type Elt.t = string
+
+module StoreMap : Map.S with type Key.t = Reference.t
+module ClassMap : Map.S with type Key.t = Reference.t
 
 module ClassAttributes : sig
   type t = {
@@ -37,27 +31,28 @@ module ClassAttributes : sig
   }
 end
 
-module ClassInfo : sig
-  type t = {
-    class_variable_type : Store.t; (* 객체 변수들의 타입 정보 *)
-    class_attributes : ClassAttributes.t; (* 클래스에서 사용 가능한 attribute의 Set *)
-    class_vartype : FunctionSet.t VarTypeMap.t; (* ?? *)
-    usage_attributes : AttributeStorage.t; (* 객체 변수가 사용한 attributes *)
-  }
-end
-
 module ClassSummary : sig
-  type t = ClassInfo.t ClassMap.t
+  type t = { 
+    store_info : Refinement.Store.t StoreMap.t;
+    class_vartype : (FunctionSet.t VarTypeMap.t) ClassMap.t;
+    class_info : ClassAttributes.t ClassMap.t;
+    usage_attributes : AttributeStorage.t ClassMap.t;
+  }
   [@@deriving equal]
 
-  val empty : t
+  val create : unit -> t
 
-  val outer_join_class_variable_type : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
+  val get : t -> key:Reference.t -> Refinement.Store.t option
 
-  (*
+  val meet : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
+
+  val outer_join : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
+
   val outer_widen : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
-  *)
-  val join_with_merge_class_variable_type : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
+
+  val join_with_merge : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
+
+  val pp_class_vartype : Format.formatter -> t -> unit
 
   val pp : Format.formatter -> t -> unit
 
@@ -80,10 +75,8 @@ end
 
 module FunctionSummary : sig
   type t = {
-    arg_annotation : Refinement.Store.t;
     arg_types : ArgTypes.t;
     return_condition : Refinement.Store.t;
-    return_annotation : Type.t;
     return_types : Type.t;
     usage_attributes : AttributeStorage.t;
     possible_condition : Refinement.Store.t;
@@ -127,11 +120,7 @@ module OurSummary : sig
 
   val add_usage_attributes : ?class_name:Reference.t -> ?class_var:string -> t -> Reference.t -> AttributeStorage.t -> t
 
-  val set_arg_annotation : t -> Reference.t -> Refinement.Store.t -> t
-
   val set_return_condition : t -> Reference.t -> Refinement.Store.t -> t
-
-  val set_return_annotation : t -> Reference.t -> Type.t -> t
 
   val set_possible_condition : t -> Reference.t -> Refinement.Store.t -> t
 
@@ -141,11 +130,7 @@ module OurSummary : sig
 
   val get_usedef_tables : t -> Reference.t -> UsedefStruct.t option
 
-  val get_arg_annotation : t -> Reference.t -> Refinement.Store.t
-
   val get_return_condition : t -> Reference.t -> Refinement.Store.t
-
-  val get_return_annotation : t -> Reference.t -> Type.t
 
   val get_usage_attributes_from_func : t -> Reference.t -> AttributeStorage.t
 

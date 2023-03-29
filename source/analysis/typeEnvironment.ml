@@ -66,13 +66,14 @@ let produce_check_results global_environment define_name ~dependency =
     (*OurTypeSet.save_summary !OurTypeSet.our_model define_name;*)
     x
   else
-    TypeCheck.check_define_by_name
+    (
+    TypeCheck.check_define_by_name_origin
           ~type_check_controls
           ~call_graph_builder
           ~global_environment
           ~dependency
           define_name
-
+    )
   in
   x
 

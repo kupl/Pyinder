@@ -156,6 +156,8 @@ def parse_type_error_response(response: str) -> List[error.Error]:
     try:
         # split_json = response.split('\n')
         # response_json = json.loads(split_json[-2])
+        #print(response)
+        #print(response[32309:32311])
         response_json = json.loads(response)
         with open('result.json', 'w') as f :
             json.dump(response_json, f, indent=4)

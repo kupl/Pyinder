@@ -148,7 +148,16 @@
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
              Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment,
              Analysis.ErrorsEnvironment.ReadOnly.type_environment environment )))
- 
+  let print_errors errors =
+    Yojson.Safe.to_string
+      (`Assoc
+        [
+          ( "errors",
+            `List
+              (List.map ~f:(fun error -> Analysis.AnalysisError.Instantiated.to_yojson error) errors)
+          );
+        ])
+    |> Log.print "%s" 
  
  let compute_errors ~configuration ~build_system () =
     (*
@@ -167,16 +176,31 @@
    
    Log.dump "%s" "Type Inferecne...";
    Analysis.OurTypeSet.save_mode "inference";
-   let single_errors, ast_environment, type_environment = do_check configuration in
-   Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
+
+   
+
+   let rec fixpoint n prev_model =
+    let single_errors, ast_environment, type_environment = do_check configuration in
+    Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
+    let global_resolution =
+      Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
+    in
+    Analysis.OurTypeSet.load_all_summary global_resolution;
+    let our_model = !Analysis.OurTypeSet.our_model in
+    Analysis.OurTypeSet.save_summary our_model (Ast.Reference.create Analysis.OurTypeSet.final_summary);
+    if (Analysis.OurTypeSet.OurSummary.equal prev_model our_model)
+    then single_errors, ast_environment, type_environment
+    else fixpoint (n+1) our_model
+   in
+   
    (*let _, _ = fixpoint configuration 1 in*)
    Unix.sleep(1);
 
    
-   let global_resolution =
-    Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
-   in
-   Analysis.OurTypeSet.load_all_summary global_resolution;
+  let _, ast_environment, _ = fixpoint 0 !Analysis.OurTypeSet.our_model in
+   
+
+   Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;
 
    Log.dump "%s" "Type Error Searching...";
    
@@ -184,6 +208,7 @@
    (*print_endline "[[[ Search Mode ]]]";*)
    let errors, _, _ = do_check configuration in
    Log.dump "END";
+   
   (*
    Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
   *)
@@ -191,22 +216,17 @@
    let errors = Analysis.AnalysisError.filter_type_error errors in
    Pyinder.Summarize.ast_environment := Some ast_environment;
    Pyinder.Summarize.errors := errors;
-   
-   List.map
-     (List.sort ~compare:Analysis.AnalysisError.compare errors)
-     ~f:(Server.RequestHandler.instantiate_error ~build_system ~configuration ~ast_environment)
+
+   let x =
+    List.map
+      (List.sort ~compare:Analysis.AnalysisError.compare errors)
+      ~f:(Server.RequestHandler.instantiate_error ~build_system ~configuration ~ast_environment)
+   in
+
+   (*print_errors x;*)
+   x
  
- 
- let print_errors errors =
-   Yojson.Safe.to_string
-     (`Assoc
-       [
-         ( "errors",
-           `List
-             (List.map ~f:(fun error -> Analysis.AnalysisError.Instantiated.to_yojson error) errors)
-         );
-       ])
-   |> Log.print "%s"
+
  
  
  let print_error_and_scenario check_configuration error_and_scenario_list =
@@ -232,7 +252,7 @@
               )
           in
 
-          (*
+          
           let single_errors =
             List.map
             !Analysis.OurTypeSet.single_errors
@@ -243,7 +263,6 @@
               error
             )
           in
-          *)
 
           (* ADD ERRORS *)
           
@@ -251,7 +270,7 @@
           print_endline "";
           Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
           *)
-          print_errors (errors);
+          print_errors (single_errors@errors);
           Lwt.return ExitStatus.Ok)
     | None -> raise NoAstEnvironment
  
@@ -336,6 +355,8 @@
     | _ -> ()
     );
 
+    let _ = analyze_json in
+    
     Log.dump "%s" "Analyze Call Graph...";
     Analysis.OurTypeSet.save_mode "cfg";
     Unix.sleep(1);
@@ -357,6 +378,7 @@
       let _ = print_error_and_scenario check_configuration error_and_scenario_list in ()
     | List.Or_unequal_lengths.Unequal_lengths -> raise UnequalErrorScenario
     );
+    
     
     Unix.sleep(1);
     x

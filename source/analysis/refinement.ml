@@ -170,6 +170,8 @@ module Unit = struct
 
   let set_base refinement_unit ~base = { refinement_unit with base = Some base }
 
+  let set_attributes refinement_unit ~attributes = { refinement_unit with attributes }
+
   let set_base_if_none refinement_unit ~base =
     { refinement_unit with base = Option.first_some refinement_unit.base base }
 
@@ -236,6 +238,7 @@ module Unit = struct
     if equal left top || equal right top then
       top
     else
+      (
       let should_recurse, base =
         match left.base, right.base with
         | Some left, Some right ->
@@ -254,6 +257,7 @@ module Unit = struct
           IdentifierMap.empty
       in
       { base; attributes }
+      )
 
   let rec join_with_merge ~global_resolution left right =
     if equal left top || equal right top then
@@ -355,6 +359,18 @@ module Unit = struct
       in
       candidates
 
+  let rec top_to_bottom { base; attributes; } =
+    let new_base =
+      match base with
+      | Some anno -> Some (transform_types ~f:Type.top_to_bottom anno)
+      | _ -> base
+    in
+
+    {
+      base = new_base;
+      attributes = Identifier.Map.Tree.map attributes ~f:top_to_bottom
+    }
+
 end
 
 module Store = struct
@@ -445,6 +461,8 @@ module Store = struct
 
 
   let get_base ~name store = get_unit ~name store |> Unit.base
+
+  let get_attributes ~name store = get_unit ~name store |> Unit.attributes
 
   let get_annotation ~name ~attribute_path store =
     get_unit ~name store |> Unit.get_annotation ~attribute_path
@@ -694,5 +712,22 @@ module Store = struct
     in
     
     result_of_anno@result_of_temp
+
+
+  let top_to_bottom { annotations; temporary_annotations; } =
+    {
+      annotations = Reference.Map.map annotations ~f:Unit.top_to_bottom;
+      temporary_annotations = Reference.Map.map temporary_annotations ~f:Unit.top_to_bottom;
+    }
+
+  let update_self_attributes_tree ({ annotations; _ } as t) self_attributes_tree class_param =
+    let annotations =
+      match (Reference.Map.find annotations class_param) with
+      | Some u ->
+        Reference.Map.set annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree)
+      | _ ->
+        Reference.Map.set annotations ~key:class_param ~data:(Unit.empty |> Unit.set_attributes ~attributes:self_attributes_tree)
+    in
+    { t with annotations; }
 
 end

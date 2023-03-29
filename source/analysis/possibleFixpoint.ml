@@ -16,6 +16,8 @@ module Define = Statement.Define
 module type PossibleState = sig
   type t [@@deriving show]
 
+  val top_to_bottom : t -> t
+
   val set_possibleconditions : t -> t -> t
 
   val update_possible : t -> t -> Reference.t -> t
@@ -123,9 +125,10 @@ module Make (State : PossibleState) = struct
         State.join state initial
       else
         predecessors node
-        |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
+        |> Set.fold ~init:(state |> State.top_to_bottom) ~f:(fun sofar predecessor_index ->
                Hashtbl.find postconditions predecessor_index
                |> Option.value ~default:State.bottom
+               (*|> State.top_to_bottom*)
                |> State.join sofar)
     in
 
@@ -143,29 +146,47 @@ module Make (State : PossibleState) = struct
 
     let analyze_node node =
       let node_id = Cfg.Node.id node in
+      
       let precondition =
-        (*Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);*)
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
       in
+
+      
 
       let prepossible = 
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predcessors_possibleconditions node
       in
-
-      (*Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);*)
-      
+      (*
+      Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+      Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+      *)
+      (*
+      if Int.equal 3 (Cfg.Node.id node)
+      then
+        Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+      *)
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
-      (*Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);*)
+
+      
+      
+      (*
+      if Int.equal 3 (Cfg.Node.id node)
+        then
+      Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+      *)
+      (*
+      Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+      *)
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       
       (*Log.dump "%s" (Format.asprintf "[ Node Pre Possiblecondition ]\n%a\n" State.pp prepossible);*)
       let possiblecondition = State.set_possibleconditions precondition postcondition in
-      (*Log.print "%s" (Format.asprintf "[ Node Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
+      (*Log.dump "%s" (Format.asprintf "[ Node Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
 
       
 

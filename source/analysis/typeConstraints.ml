@@ -193,6 +193,7 @@ module Solution = struct
 
 
   let instantiate { unaries; callable_parameters; tuple_variadics } annotation =
+
     let annotation =
       if UnaryVariable.Map.is_empty unaries then
         annotation
@@ -201,6 +202,7 @@ module Solution = struct
           (fun variable -> UnaryVariable.Map.find unaries variable)
           annotation
     in
+
     let annotation =
       if ParameterVariable.Map.is_empty callable_parameters then
         annotation
@@ -209,6 +211,7 @@ module Solution = struct
           (fun variable -> ParameterVariable.Map.find callable_parameters variable)
           annotation
     in
+
     let annotation =
       if TupleVariable.Map.is_empty tuple_variadics then
         annotation
@@ -217,6 +220,7 @@ module Solution = struct
           (fun variable -> TupleVariable.Map.find tuple_variadics variable)
           annotation
     in
+
     annotation
 
 

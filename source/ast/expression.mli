@@ -4,7 +4,6 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
-
 module StringLiteral : sig
   type kind =
     | String
@@ -518,6 +517,8 @@ val name_to_reference : Name.t -> Reference.t option
 val name_to_reference_exn : Name.t -> Reference.t
 
 val is_simple_name : Name.t -> bool
+
+val change_identifier_base : data:string -> t -> t
 
 val get_identifier_base : t -> Identifier.t option
 

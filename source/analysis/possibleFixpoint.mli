@@ -11,6 +11,8 @@ open Ast
 module type PossibleState = sig
   type t [@@deriving show]
 
+  val top_to_bottom : t -> t
+
   val set_possibleconditions : t -> t -> t
 
   val update_possible : t -> t -> Reference.t -> t

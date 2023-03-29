@@ -394,6 +394,7 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
       ~left
       ~right
     =
+    (*Log.dump "Compare %a vs %a" Type.pp left Type.pp right;*)
     let open Type.Record.TypedDictionary in
     let add_fallbacks other =
       Type.Variable.all_free_variables other
@@ -413,6 +414,12 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
         impossible
     in
     match left, right with
+    | OurTypedDictionary left, OurTypedDictionary right -> 
+      Type.OurTypedDictionary.solve_less_or_equal ~left:left.typed_dict ~right:right.typed_dict ~solve:solve_less_or_equal ~order ~constraints ~impossible
+    | OurTypedDictionary our, _ ->
+      solve_less_or_equal order ~constraints ~left:our.general ~right
+    | _, OurTypedDictionary our ->
+      solve_less_or_equal order ~constraints ~left ~right:our.general
     | _, _ when Type.equal left right -> [constraints]
     | _, Type.Primitive "object" -> [constraints]
     | other, Type.Any -> [add_fallbacks other]

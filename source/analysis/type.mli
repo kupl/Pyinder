@@ -235,6 +235,18 @@ module Record : sig
       | Unpacked of 'annotation OrderedTypes.Concatenation.record_unpackable
   end
 
+  module OurTypedDictionary : sig
+    
+    type 'annotation typed_dictionary_field = {
+      name: string;
+      annotation: 'annotation;
+    }
+    [@@deriving compare, eq, sexp, show, hash]
+    
+    type 'annotation record = 'annotation typed_dictionary_field list
+    [@@deriving compare, eq, sexp, show, hash]
+  end
+
   module TypedDictionary : sig
     type 'annotation typed_dictionary_field = {
       name: string;
@@ -368,6 +380,10 @@ and t =
   | RecursiveType of t Record.RecursiveType.record
   | Top
   | Tuple of t Record.OrderedTypes.record
+  | OurTypedDictionary of {
+        general: t;
+        typed_dict: t Record.OurTypedDictionary.record;
+    }
   | TypeOperation of t Record.TypeOperation.record
   | Union of t list
   | Variable of t Record.Variable.RecordUnary.record
@@ -408,6 +424,12 @@ val pp_typed_dictionary_field
   :  pp_type:(Format.formatter -> type_t -> unit) ->
   Format.formatter ->
   t Record.TypedDictionary.typed_dictionary_field ->
+  unit
+
+val pp_our_typed_dictionary
+  : pp_type:(Format.formatter -> type_t -> unit) ->
+  Format.formatter ->
+  t Record.OurTypedDictionary.record ->
   unit
 
 val polynomial_show_variable : type_t Record.Variable.RecordUnary.record -> string
@@ -453,6 +475,8 @@ val bytes : t
 val complex : t
 
 val dictionary : key:t -> value:t -> t
+
+val our_typed_dictionary : key:t -> value:t -> typed_dict:t Record.OurTypedDictionary.record -> t
 
 val enumeration : t
 
@@ -976,6 +1000,8 @@ module Variable : sig
 
       val replace_all : (t -> domain option) -> type_t -> type_t
 
+      val replace_all_bottom : (t -> domain option) -> type_t -> type_t
+
       val collect_all : type_t -> t list
     end
 
@@ -1028,6 +1054,9 @@ module Variable : sig
 
   val convert_all_escaped_free_variables_to_anys : type_t -> type_t
 
+  val convert_all_escaped_free_variables_to_bottom : type_t -> type_t
+
+
   val zip_variables_with_parameters : parameters:Parameter.t list -> t list -> pair list option
 
   val zip_variables_with_parameters_including_mismatches
@@ -1055,6 +1084,41 @@ val variable
   t
 
 val is_concrete : t -> bool
+
+val union_join : t -> t -> t
+
+module OurTypedDictionary : sig
+  open Record.OurTypedDictionary
+
+  val anonymous : t typed_dictionary_field list -> t record
+
+  val create_field
+    :  annotation:t ->
+    string ->
+    t typed_dictionary_field
+
+  val get_field_annotation : type_t typed_dictionary_field list -> string -> type_t
+
+  val add_bottom_in_fields : type_t typed_dictionary_field list -> type_t typed_dictionary_field list 
+
+  val update_dict_field : type_t -> string -> type_t -> type_t
+
+  val join 
+    : join:(type_t -> type_t -> type_t) ->
+      type_t Record.OurTypedDictionary.record ->
+      type_t Record.OurTypedDictionary.record ->
+      type_t Record.OurTypedDictionary.record
+
+  val solve_less_or_equal
+    : left:'annotation Record.OurTypedDictionary.record ->
+      right:'annotation Record.OurTypedDictionary.record ->
+      solve:('b -> constraints:'a -> left:'annotation -> right:'annotation -> 'a list) ->
+      order:'b ->
+      constraints:'a ->
+      impossible:'a list ->
+      'a list
+
+end
 
 module TypedDictionary : sig
   open Record.TypedDictionary
@@ -1118,4 +1182,6 @@ val resolve_class : t -> class_data list option
 (* Gives the name of either a Callable or BoundMethod[Callable, X] type *)
 val callable_name : t -> Reference.t option
 
-val union_join : t -> t -> t
+val top_to_bottom : t -> t
+
+val get_dict_value_type : ?with_key:string option -> type_t -> type_t

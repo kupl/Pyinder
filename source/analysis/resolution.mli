@@ -134,3 +134,7 @@ val fallback_attribute
   name:Identifier.t ->
   Type.Primitive.t ->
   AnnotatedAttribute.instantiated option
+
+val top_to_bottom : t -> t
+
+val update_self_attributes_tree : t -> Refinement.Unit.t Identifier.Map.Tree.t -> Reference.t -> t

@@ -82,7 +82,6 @@ let is_parameter reference =
   | head :: _ when String.is_prefix ~prefix:"$parameter$" head -> true
   | _ -> false
 
-
 let sanitized reference = List.map ~f:Identifier.sanitized reference
 
 let sanitize_qualified reference =

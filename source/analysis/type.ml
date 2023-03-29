@@ -868,6 +868,18 @@ module Record = struct
           None
   end
 
+  module OurTypedDictionary = struct
+    
+    type 'annotation typed_dictionary_field = {
+      name: string;
+      annotation: 'annotation;
+    }
+    [@@deriving compare, eq, sexp, show, hash]
+    
+    type 'annotation record = 'annotation typed_dictionary_field list
+    [@@deriving compare, eq, sexp, show, hash]
+  end
+
   module TypedDictionary = struct
     type 'annotation typed_dictionary_field = {
       name: string;
@@ -1477,6 +1489,10 @@ module T = struct
     | RecursiveType of t Record.RecursiveType.record
     | Top
     | Tuple of t Record.OrderedTypes.record
+    | OurTypedDictionary of {
+        general: t;
+        typed_dict: t Record.OurTypedDictionary.record;
+      }
     | TypeOperation of t Record.TypeOperation.record
     | Union of t list
     | Variable of t Record.Variable.RecordUnary.record
@@ -2041,6 +2057,16 @@ let pp_parameters ~pp_type format = function
 let pp_typed_dictionary_field ~pp_type format { Record.TypedDictionary.name; annotation; required } =
   Format.fprintf format "%s%s: %a" name (if required then "" else "?") pp_type annotation
 
+let pp_our_typed_dictionary_field ~pp_type format { Record.OurTypedDictionary.name; annotation; } =
+  Format.fprintf format "%s: %a" name pp_type annotation
+
+let pp_our_typed_dictionary ~pp_type format (typed_dictionary: t Record.OurTypedDictionary.record) =
+  let field = List.fold typed_dictionary ~init:"" ~f:(fun acc field -> 
+    acc ^ ", " ^ Format.asprintf "%a" (pp_our_typed_dictionary_field ~pp_type) field  
+  ) 
+  in
+  Format.fprintf format "{%s}"field
+
 
 let rec pp format annotation =
   let pp_ordered_type ordered_type =
@@ -2052,7 +2078,7 @@ let rec pp format annotation =
   in
   match annotation with
   | Annotated annotation -> Format.fprintf format "typing.Annotated[%a]" pp annotation
-  | Bottom -> Format.fprintf format "undefined"
+  | Bottom -> Format.fprintf format "bottom"
   | Callable { kind; implementation; overloads; _ } ->
       let kind =
         match kind with
@@ -2089,8 +2115,10 @@ let rec pp format annotation =
       Record.Variable.RecordVariadic.RecordParameters.RecordComponents.pp_concise format component
   | Primitive name -> Format.fprintf format "%a" String.pp name
   | RecursiveType { name; body } -> Format.fprintf format "%s (resolves to %a)" name pp body
-  | Top -> Format.fprintf format "unknown"
+  | Top -> Format.fprintf format "top"
   | Tuple ordered_type -> Format.fprintf format "typing.Tuple[%s]" (pp_ordered_type ordered_type)
+  | OurTypedDictionary { general; typed_dict; } ->
+      Format.fprintf format "%a (%a)" pp general (pp_our_typed_dictionary ~pp_type:pp) typed_dict
   | TypeOperation (Compose ordered_type) ->
       Format.fprintf format "pyre_extensions.Compose[%s]" (pp_ordered_type ordered_type)
   | Union [NoneType; parameter]
@@ -2184,6 +2212,8 @@ and pp_concise format annotation =
         "Tuple[%a]"
         (Record.OrderedTypes.pp_concise ~pp_type:pp_concise)
         ordered_type
+  | OurTypedDictionary { general; typed_dict; } ->
+          Format.fprintf format "%a (%a)" pp general (pp_our_typed_dictionary ~pp_type:pp) typed_dict
   | TypeOperation (Compose ordered_type) ->
       Format.fprintf
         format
@@ -2242,7 +2272,9 @@ let bytes = Primitive "bytes"
 
 let complex = Primitive "complex"
 
-let dictionary ~key ~value = Parametric { name = "dict"; parameters = [Single key; Single value] }
+let dictionary ~key ~value = Parametric { name = "dict"; parameters = [Single key; Single value;]}
+
+let our_typed_dictionary ~key ~value ~typed_dict = OurTypedDictionary { general=dictionary ~key ~value; typed_dict; }
 
 let mapping_primitive = "typing.Mapping"
 
@@ -2442,6 +2474,7 @@ let rec expression annotation =
       | Concrete parameters -> List.map ~f:expression parameters
     in
     match annotation with
+    | OurTypedDictionary { general; _ } -> Log.dump "What is covert?"; convert_annotation general
     | Annotated annotation -> get_item_call "typing.Annotated" [expression annotation]
     | Bottom -> create_name "$bottom"
     | Callable { implementation; overloads; _ } -> (
@@ -2756,7 +2789,10 @@ module Transform = struct
         | RecursiveType { name; body } ->
             RecursiveType { name; body = visit_annotation ~state body }
         | Tuple ordered_type -> Tuple (visit_ordered_types ordered_type)
-        | TypeOperation (Compose ordered_type) ->
+        | OurTypedDictionary { general; typed_dict; } -> 
+          (*Log.dump "What is this?"; *)
+          OurTypedDictionary { general=visit_annotation general ~state; typed_dict; } 
+        | TypeOperation (Compose ordered_type) -> 
             TypeOperation (Compose (visit_ordered_types ordered_type))
         | Union annotations -> union (List.map annotations ~f:(visit_annotation ~state))
         | Variable ({ constraints; _ } as variable) ->
@@ -2844,6 +2880,27 @@ let instantiate ?(widen = false) ?(visit_children_before = false) annotation ~co
   in
   snd (InstantiateTransform.visit () annotation)
 
+let instantiate_bottom ?(widen = false) ?(visit_children_before = false) annotation ~constraints =
+    let module InstantiateTransform = Transform.Make (struct
+      type state = unit
+  
+      let visit_children_before _ annotation =
+        visit_children_before || constraints annotation |> Option.is_none
+  
+  
+      let visit_children_after = false
+  
+      let visit _ annotation =
+        let transformed_annotation =
+          match constraints annotation with
+          | Some Bottom when widen -> Bottom
+          | Some replacement -> replacement
+          | None -> annotation
+        in
+        { Transform.transformed_annotation; new_state = () }
+    end)
+    in
+    snd (InstantiateTransform.visit () annotation)
 
 let contains_callable annotation = exists annotation ~predicate:is_callable
 
@@ -4425,6 +4482,7 @@ let elements annotation =
         | Parametric { name; _ } -> name :: sofar, recursive_type_names
         | Primitive annotation -> annotation :: sofar, recursive_type_names
         | Tuple _ -> "tuple" :: sofar, recursive_type_names
+        | OurTypedDictionary _ -> "our_typed_dict" :: sofar, recursive_type_names
         | TypeOperation (Compose _) -> "pyre_extensions.Compose" :: sofar, recursive_type_names
         | Union _ -> "typing.Union" :: sofar, recursive_type_names
         | RecursiveType { name; _ } -> sofar, name :: recursive_type_names
@@ -4538,7 +4596,7 @@ let weaken_to_arbitrary_literal_if_possible = function
   | annotation -> annotation
 
 
-let split annotation =
+let rec split annotation =
   let open Record.Parameter in
   match annotation with
   | Union [NoneType; parameter]
@@ -4558,6 +4616,7 @@ let split annotation =
   | Literal _ as literal -> weaken_literals literal, []
   | IntExpression _ -> integer, []
   | Callable _ -> Primitive "typing.Callable", []
+  | OurTypedDictionary { general; _ } -> split general
   | annotation -> annotation, []
 
 
@@ -4765,6 +4824,8 @@ module Variable : sig
 
       val replace_all : (t -> domain option) -> type_t -> type_t
 
+      val replace_all_bottom : (t -> domain option) -> type_t -> type_t
+
       val collect_all : type_t -> t list
     end
 
@@ -4816,6 +4877,8 @@ module Variable : sig
   val contains_escaped_free_variable : type_t -> bool
 
   val convert_all_escaped_free_variables_to_anys : type_t -> type_t
+
+  val convert_all_escaped_free_variables_to_bottom : type_t -> type_t
 
   val converge_all_variable_namespaces : type_t -> type_t
 
@@ -5500,6 +5563,11 @@ end = struct
           ~constraints:(Variable.local_replace operation)
           ~widen:false
 
+      let replace_all_bottom operation =
+        instantiate_bottom
+          ~visit_children_before:true
+          ~constraints:(Variable.local_replace operation)
+          ~widen:false
 
       let map operation =
         replace_all (fun variable -> operation variable |> Variable.self_reference |> Option.some)
@@ -5567,7 +5635,15 @@ end = struct
             Some (Variable.self_reference variable)
         in
         replace_all convert_if_escaped
-
+  
+      let convert_all_escaped_free_variables_to_bottom =
+        let convert_if_escaped variable =
+          if Variable.is_escaped_and_free variable then
+            Some Variable.any
+          else
+            Some (Variable.self_reference variable)
+        in
+        replace_all_bottom convert_if_escaped
 
       let collect_all annotation =
         let module CollectorTransform = Transform.Make (struct
@@ -5597,6 +5673,8 @@ end = struct
       type domain
 
       val replace_all : (t -> domain option) -> type_t -> type_t
+
+      val replace_all_bottom : (t -> domain option) -> type_t -> type_t
 
       val collect_all : type_t -> t list
     end
@@ -5776,6 +5854,10 @@ end = struct
     |> GlobalTransforms.ParameterVariadic.convert_all_escaped_free_variables_to_anys
     |> GlobalTransforms.TupleVariadic.convert_all_escaped_free_variables_to_anys
 
+  let convert_all_escaped_free_variables_to_bottom annotation =
+    GlobalTransforms.Unary.convert_all_escaped_free_variables_to_bottom annotation
+    |> GlobalTransforms.ParameterVariadic.convert_all_escaped_free_variables_to_bottom
+    |> GlobalTransforms.TupleVariadic.convert_all_escaped_free_variables_to_bottom
 
   let converge_all_variable_namespaces annotation =
     GlobalTransforms.Unary.converge_all_variable_namespaces annotation
@@ -6088,7 +6170,7 @@ let dequalify map annotation =
             Parametric
               { name = dequalify_string "typing.Optional"; parameters = [Single parameter] }
         | Parametric { name; parameters } ->
-            Parametric { name = dequalify_identifier map (reverse_substitute name); parameters }
+            Parametric { name = dequalify_identifier map (reverse_substitute name); parameters } 
         | Union parameters ->
             Parametric
               {
@@ -6125,6 +6207,97 @@ let dequalify map annotation =
   in
   snd (DequalifyTransform.visit () annotation)
 
+let union_join left right =
+  let dedup =
+    List.dedup_and_sort ~compare:compare
+  in
+
+  let single_union_check t =
+    match t with
+    | Union t_list -> if List.length t_list == 1 then List.nth_exn t_list 0 else t
+    | _ -> t
+  in
+
+  let union_result =
+    match left, right with
+    | Union t1, Union t2 -> single_union_check (Union (dedup (t1@t2)))
+    | Union t_list, t | t, Union t_list -> single_union_check (Union (dedup (t::t_list)))
+    | _ -> single_union_check (Union (dedup [left; right]))
+  in
+
+  
+  (* union할 때 top은 제외 시키자 (top이 single인 경우 빼고) *)
+  match (single_union_check union_result) with
+  | Union t -> Union (List.map t ~f:(fun t -> if (is_top t) then Bottom else t)) |> single_union_check
+  | _ -> union_result
+
+  
+
+module OurTypedDictionary = struct
+  open Record.OurTypedDictionary
+
+  let anonymous fields = fields
+
+  let create_field ~annotation name = { name; annotation; }
+
+  let get_field_annotation t name =
+    match List.find t ~f:(fun record -> String.equal record.name name) with
+    | Some record ->
+        record.annotation
+    | _ -> Any
+
+  let add_bottom_in_fields t =
+    List.map t ~f:(fun record -> {record with annotation=union_join record.annotation Bottom})
+
+  let update_dict_field target_type name annotation =
+    match target_type with
+    | Parametric { name = "typing.Dict" | "dict"; _ } ->
+      OurTypedDictionary
+      { 
+        general=target_type;
+        typed_dict = [create_field ~annotation name];
+      }
+    | OurTypedDictionary ({ typed_dict; _ } as our_typed_dict) ->
+      let map_typed_dict { name=dict_name; annotation=dict_annotation; } =
+        if String.equal name dict_name
+        then { name; annotation; }
+        else { name=dict_name; annotation=dict_annotation; }
+      in
+      OurTypedDictionary { our_typed_dict with typed_dict = List.map typed_dict ~f:map_typed_dict }
+    | _ -> target_type
+
+  let join ~join (left: 'annotation record) (right: 'annotation record) =
+    List.fold right ~init:left ~f:(fun acc field ->
+      match List.find acc ~f:(fun other -> (String.equal other.name field.name) && (not (equal other.annotation field.annotation))) with
+      | Some f -> 
+        let new_field = { name=f.name; annotation=join f.annotation field.annotation; } in
+        let new_acc = new_field::acc in
+        List.remove_consecutive_duplicates ~which_to_keep:`First new_acc ~equal:(fun left right -> String.equal left.name right.name)
+      | None -> field::acc
+    )
+
+  let solve_less_or_equal ~left ~right ~solve ~order ~constraints ~impossible =
+    let find name field =
+      String.equal name field.name
+    in
+
+    let constraints_opt =
+      List.fold ~init:(Some []) left ~f:(fun constraints_opt { Record.OurTypedDictionary.name; annotation;} ->
+        match constraints_opt with
+        | Some constraints_list ->
+          (
+          match (List.find right ~f:(find name)) with
+          | Some { Record.OurTypedDictionary.annotation=right_annotation; _ } -> Some (constraints_list @ (solve order ~constraints ~left:annotation ~right:right_annotation))
+          | None -> None
+          )
+        | None -> None
+      )
+    in
+
+    match constraints_opt with
+    | Some constraints -> constraints
+    | None -> impossible
+end
 
 module TypedDictionary = struct
   open Record.TypedDictionary
@@ -6643,18 +6816,143 @@ let callable_name = function
       Some name
   | _ -> None
 
-let union_join left right =
-  let dedup =
-    List.dedup_and_sort ~compare:compare
+
+
+let rec top_to_bottom t =
+  let rec top_to_bottom_of_unpackable unpackable =
+    match unpackable with
+    | OrderedTypes.Concatenation.Variadic t -> OrderedTypes.Concatenation.Variadic t
+    | UnboundedElements t -> UnboundedElements (top_to_bottom t)
+    | Broadcast (ConcreteAgainstConcrete { left; right; }) ->
+      Broadcast (ConcreteAgainstConcrete { left=List.map left ~f:top_to_bottom; right=List.map right ~f:top_to_bottom; })
+    | Broadcast (ConcreteAgainstConcatenation {concrete; concatenation;}) ->
+      Broadcast (ConcreteAgainstConcatenation {concrete=List.map concrete ~f:top_to_bottom; concatenation=top_to_bottom_of_concat concatenation;})
+    | Broadcast (ConcatenationAgainstConcatenation {left_concatenation; right_concatenation;}) ->
+      Broadcast (ConcatenationAgainstConcatenation {left_concatenation=top_to_bottom_of_concat left_concatenation; right_concatenation=top_to_bottom_of_concat right_concatenation;})
+
+  and top_to_bottom_of_concat ({ prefix; middle; suffix; } : type_t OrderedTypes.Concatenation.t) =
+    
+    {
+      prefix = List.map prefix ~f:top_to_bottom;
+      middle = top_to_bottom_of_unpackable middle;
+      suffix = List.map suffix ~f:top_to_bottom;
+    }
   in
 
-  let single_union_check t =
-    match t with
-    | Union t_list -> if List.length t_list == 1 then List.nth_exn t_list 0 else t
-    | _ -> t
+  let top_to_bottom_of_ordered_types ordered_types =
+    match ordered_types with
+    | OrderedTypes.Concrete t -> OrderedTypes.Concrete (List.map t ~f:top_to_bottom)
+    | Concatenation t -> Concatenation (top_to_bottom_of_concat t)
   in
 
-  match left, right with
-  | Union t1, Union t2 -> single_union_check (Union (dedup (t1@t2)))
-  | Union t_list, t | t, Union t_list -> single_union_check (Union (dedup (t::t_list)))
-  | _ -> single_union_check (Union (dedup [left; right]))
+  let top_to_bottom_of_record_parameter record_parameter =
+    match record_parameter with
+    | CallableParameter.PositionalOnly ({ annotation; _ } as t) -> CallableParameter.PositionalOnly ({ t with annotation = top_to_bottom annotation })
+    | Named ({ annotation; _ } as t) -> Named { t with annotation = top_to_bottom annotation }
+    | KeywordOnly ({ annotation; _ } as t) -> KeywordOnly { t with annotation = top_to_bottom annotation }
+    | Variable (Concrete t) -> Variable (Concrete (top_to_bottom t))
+    | Variable (Concatenation t) -> Variable (Concatenation (top_to_bottom_of_concat t))
+    | Keywords t -> Keywords (top_to_bottom t)
+  in
+
+  let top_to_bottom_of_parameters parameters =
+    match parameters with
+    | Defined t -> Defined (List.map t ~f:top_to_bottom_of_record_parameter)
+    | Undefined -> Undefined
+    | ParameterVariadicTypeVariable { head; variable; } -> ParameterVariadicTypeVariable { head=List.map head ~f:top_to_bottom; variable; }
+  in
+  
+
+  let top_to_bottom_of_overload { annotation; parameters } =
+    {
+      annotation = top_to_bottom annotation;
+      parameters = top_to_bottom_of_parameters parameters;
+    }
+  in
+  let top_to_bottom_of_callable ({implementation; overloads; _ } as callable) =
+    { callable with 
+      implementation = top_to_bottom_of_overload implementation;
+      overloads = List.map overloads ~f:top_to_bottom_of_overload;   
+    }
+  in
+
+  let top_to_bottom_of_parameter parameter =
+    match parameter with
+    | Parameter.Single t -> Parameter.Single (top_to_bottom t)
+    | CallableParameters t -> CallableParameters (top_to_bottom_of_parameters t)
+    | Unpacked t -> Unpacked (top_to_bottom_of_unpackable t)
+  in 
+
+  let top_to_bottom_of_our_typed_dict (our_typed_dict : type_t Record.OurTypedDictionary.record )  =
+    List.map our_typed_dict ~f:(fun { Record.OurTypedDictionary.name; annotation; } -> { Record.OurTypedDictionary.name; annotation=top_to_bottom annotation; })
+  in
+
+  (*
+  let rec top_to_bottom_of_monomial { Monomial.constant_factor; variables; } =
+    {
+      Monomial.constant_factor;
+      variables=List.map variables ~f:(fun { Monomial.variable; degree; } ->
+        {
+          Monomial.variable =
+            (match variable with
+            | Variable _ -> variable
+            | Operation (Product t) -> Operation (Product (top_to_bottom_of_unpackable t))
+            | Operation (Divide (t1, t2)) -> Operation (Divide ((top_to_bottom_of_polynomial t1), (top_to_bottom_of_polynomial t2)))
+            )
+            ;
+          degree;
+        }  
+      )
+    }
+
+  and top_to_bottom_of_polynomial polynomial =
+    List.map polynomial ~f:top_to_bottom_of_monomial
+  in
+  *)
+
+  (* 모든 top을 bottom으로 내린다 *)
+  match t with
+  | Annotated t -> Annotated (top_to_bottom t)
+  | Bottom -> t
+  | Callable t -> Callable (top_to_bottom_of_callable t)
+  | Any -> Bottom
+  | Literal (EnumerationMember { enumeration_type; member_name }) ->
+    Literal (EnumerationMember { enumeration_type = top_to_bottom enumeration_type; member_name; })
+  | Literal _ -> t
+  | NoneType -> t
+  | Parametric { name; parameters; } ->
+    Parametric
+      {
+        name;
+        parameters=List.map parameters ~f:top_to_bottom_of_parameter;
+      }
+  | ParameterVariadicComponent _ -> t
+  | Primitive _ -> t
+  | RecursiveType { name; body; } -> RecursiveType { name; body=top_to_bottom body; }
+  | Top -> Bottom
+  | Tuple t -> Tuple (top_to_bottom_of_ordered_types t)
+  | OurTypedDictionary { general; typed_dict; } ->
+    OurTypedDictionary
+      {
+        general = top_to_bottom general;
+        typed_dict = top_to_bottom_of_our_typed_dict typed_dict;
+      }
+  | TypeOperation (Compose t) -> TypeOperation (Compose (top_to_bottom_of_ordered_types t))
+  | Union t -> Union (List.map t ~f:top_to_bottom)
+  | Variable _ -> t
+  | IntExpression _ -> t 
+
+
+let rec get_dict_value_type ?(with_key = None) t =
+  match t with
+  | Parametric { name = "dict"; parameters } -> (
+      match parameters with
+      | [_; Single value_parameter] -> value_parameter
+      | _ -> Log.dump "HMM??"; Any
+  )
+  | OurTypedDictionary { general; typed_dict } -> (
+      match with_key with
+      | Some key -> OurTypedDictionary.get_field_annotation typed_dict key
+      | _ -> get_dict_value_type general
+  )
+  | _ -> Any  
