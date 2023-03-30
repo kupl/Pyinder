@@ -11,11 +11,11 @@ open Ast
 open Ast.Util
 open Expression
 open Statement
+open TypeCheckUtil
 
 module OurSummary = OurTypeSet.OurSummary
 module StatementDefine = Define
 module Error = AnalysisError
-module Mutex = Error_checking_mutex
 
 type class_name_and_is_abstract_and_is_protocol = {
   class_name: string;
@@ -23,6 +23,7 @@ type class_name_and_is_abstract_and_is_protocol = {
   is_protocol: bool;
 }
 
+(*
 module LocalErrorMap = struct
   type t = Error.t list Int.Table.t
 
@@ -54,6 +55,7 @@ module type Context = sig
 
   module Builder : Callgraph.Builder
 end
+*)
 
 module type Signature = sig
   type t [@@deriving eq]
@@ -75,7 +77,7 @@ module type Signature = sig
   include Fixpoint.State with type t := t
 end
 
-module type PossibleSignature = sig
+module type OurSignature = sig
   type t [@@deriving eq]
 
   val create : resolution:Resolution.t -> t
@@ -6265,7 +6267,6 @@ module State (Context : Context) = struct
         
         (*Format.printf "[ Statement ] \n\n%a \n\n" Statement.pp statement;*)
         let post_resolution, errors = forward_statement ~resolution ~statement in
-        
         let post_resolution = 
           match post_resolution with
           | Unreachable -> Unreachable
@@ -6301,6 +6302,9 @@ end
 
 
 module PossibleState (Context : Context) = struct
+  module TypeCheckAT = TypeCheckAT.TypeCheckAT (Context)
+  module TypeCheckRT = TypeCheckRT.TypeCheckRT (Context)
+
   type partitioned = {
     consistent_with_boundary: Type.t;
     not_consistent_with_boundary: Type.t option;
@@ -6380,6 +6384,7 @@ module PossibleState (Context : Context) = struct
 
   let bottom = Unreachable
 
+  
   let emit_error ~errors ~location ~kind =
     Error.create
       ~location:(Location.with_module ~module_reference:Context.qualifier location)
@@ -6641,7 +6646,7 @@ module PossibleState (Context : Context) = struct
       Value update_resolution
       
 
-
+  
   module Resolved = struct
     type base =
       | Class of Type.t
@@ -6763,7 +6768,7 @@ module PossibleState (Context : Context) = struct
     let { Node.value = { Define.signature; _ }; _ } = Context.define in
     signature
 
-
+  (*
   let return_annotation ~global_resolution =
     let signature = define_signature in
     let annotation : Type.t =
@@ -6876,7 +6881,7 @@ module PossibleState (Context : Context) = struct
         check_incompatible_return actual errors |> check_missing_return actual
     | { typed_dictionary_errors; _ } -> emit_typed_dictionary_errors ~errors typed_dictionary_errors
 
-
+  
   and forward_expression ~resolution ({ Node.location; value } as expression) =
     let _ = expression in
     let global_resolution = Resolution.global_resolution resolution in
@@ -11762,7 +11767,7 @@ module PossibleState (Context : Context) = struct
     | Nonlocal _
     | Pass ->
         (Value resolution, [])
-
+      
 
   let initial ~resolution =
     let global_resolution = Resolution.global_resolution resolution in
@@ -12943,20 +12948,32 @@ module PossibleState (Context : Context) = struct
     in
     state
 
+    *)
+
+  let initial ~resolution =
+    (TypeCheckRT.initial ~resolution, TypeCheckAT.initial ~resolution)
 
   let forward ~statement_key state ~statement =
     match state with
     | Unreachable -> state
     | Value resolution ->
-        
       (*
         Log.dump "%s" ("[[[ Forward ]]]]");
         Log.dump "%a" Resolution.pp resolution;
         Log.dump "%a" Statement.pp statement;
       *)
+        let at_resolution, at_errors = TypeCheckAT.forward_statement ~resolution ~statement in
+        let at_resolution =
+          match at_resolution with
+          | Unreachable -> None
+          | Value at_resolution -> Some at_resolution
+        in
+        let rt_resolution, rt_errors = TypeCheckRT.forward_statement ~resolution ~at_resolution ~statement in
         
+        let _ = at_resolution, at_errors in
+        let post_resolution, errors = rt_resolution, rt_errors in
         (*Format.printf "[ Statement ] \n\n%a \n\n" Statement.pp statement;*)
-        let post_resolution, errors = forward_statement ~resolution ~statement in
+        
         
         let post_resolution = 
           match post_resolution with
@@ -13827,7 +13844,7 @@ let exit_state ~resolution (module Context : Context) =
   *)
   
 
-  let initial = PossibleState.initial ~resolution in
+  let initial, _ = PossibleState.initial ~resolution in
   let initial = 
     if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) 
     then (

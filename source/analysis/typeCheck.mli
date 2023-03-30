@@ -6,9 +6,12 @@
  *)
 
 open Ast
-open Statement
+
+open TypeCheckUtil
+
 module Error = AnalysisError
 
+(*
 module LocalErrorMap : sig
   type t
 
@@ -34,6 +37,7 @@ module type Context = sig
 
   module Builder : Callgraph.Builder
 end
+*)
 
 module type Signature = sig
   type t [@@deriving eq]
@@ -55,7 +59,7 @@ module type Signature = sig
   include Fixpoint.State with type t := t
 end
 
-module type PossibleSignature = sig
+module type OurSignature = sig
   type t [@@deriving eq]
 
   val create : resolution:Resolution.t -> t
@@ -87,7 +91,7 @@ val unpack_callable_and_self_argument
 
 module State (Context : Context) : Signature
 
-module PossibleState (Context : Context) : PossibleSignature
+module PossibleState (Context : Context) : OurSignature
 
 module DummyContext : Context
 

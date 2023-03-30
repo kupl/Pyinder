@@ -14,7 +14,7 @@ module type Context = sig
 
   val resolution_fixpoint : Analysis.LocalAnnotationMap.t option
 
-  val error_map : Analysis.TypeCheck.LocalErrorMap.t option
+  val error_map : Analysis.TypeCheckUtil.LocalErrorMap.t option
 end
 
 module type Signature = sig

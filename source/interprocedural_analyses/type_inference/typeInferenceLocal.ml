@@ -51,7 +51,7 @@ module type Context = sig
 
   val resolution_fixpoint : LocalAnnotationMap.t option
 
-  val error_map : TypeCheck.LocalErrorMap.t option
+  val error_map : TypeCheckUtil.LocalErrorMap.t option
 end
 
 module type Signature = sig
@@ -333,7 +333,7 @@ module State (Context : Context) = struct
     let resolution = TypeCheckState.resolution state |> Option.value ~default:resolution in
     let errors =
       Context.error_map
-      >>| TypeCheck.LocalErrorMap.all_errors
+      >>| TypeCheckUtil.LocalErrorMap.all_errors
       |> Option.value ~default:[]
       |> List.fold ~init:ErrorMap.Map.empty ~f:(fun errors error -> ErrorMap.add ~errors error)
     in
@@ -949,7 +949,7 @@ let infer_local
 
     let resolution_fixpoint = Some (LocalAnnotationMap.empty ())
 
-    let error_map = Some (TypeCheck.LocalErrorMap.empty ())
+    let error_map = Some (TypeCheckUtil.LocalErrorMap.empty ())
   end)
   in
   let resolution = TypeCheck.resolution global_resolution (module State.TypeCheckContext) in

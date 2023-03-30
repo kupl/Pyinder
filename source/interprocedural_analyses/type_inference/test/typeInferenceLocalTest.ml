@@ -25,7 +25,7 @@ let assert_backward ~resolution precondition statement postcondition =
 
     let resolution_fixpoint = Some (LocalAnnotationMap.empty ())
 
-    let error_map = Some (TypeCheck.LocalErrorMap.empty ())
+    let error_map = Some (TypeCheckUtil.LocalErrorMap.empty ())
   end)
   in
   let create annotations =
