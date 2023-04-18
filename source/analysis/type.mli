@@ -365,6 +365,7 @@ and literal =
     }
 
 and t =
+  | Unknown of t
   | Annotated of t
   | Bottom
   | Callable of t Record.Callable.record
@@ -463,6 +464,8 @@ val serialize : t -> string
 val parametric : string -> Parameter.t list -> t
 
 val annotated : t -> t
+
+val unknown : t -> t
 
 val awaitable : t -> t
 
@@ -794,6 +797,8 @@ val instantiate
   t ->
   constraints:(t -> t option) ->
   t
+
+val add_unknown : t -> t
 
 val weaken_literals : t -> t
 

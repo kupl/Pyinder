@@ -129,5 +129,7 @@ module Store : sig
 
   val top_to_bottom : t -> t
 
+  val add_unknown : t -> t
+
   val update_self_attributes_tree : t -> Unit.t Identifier.Map.Tree.t -> Reference.t -> t
 end

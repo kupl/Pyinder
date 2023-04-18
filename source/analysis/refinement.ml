@@ -371,6 +371,18 @@ module Unit = struct
       attributes = Identifier.Map.Tree.map attributes ~f:top_to_bottom
     }
 
+  let rec add_unknown { base; attributes; } =
+    let new_base =
+      match base with
+      | Some anno -> Some (transform_types ~f:Type.add_unknown anno)
+      | _ -> base
+    in
+
+    {
+      base = new_base;
+      attributes = Identifier.Map.Tree.map attributes ~f:add_unknown
+    }
+
 end
 
 module Store = struct
@@ -718,6 +730,12 @@ module Store = struct
     {
       annotations = Reference.Map.map annotations ~f:Unit.top_to_bottom;
       temporary_annotations = Reference.Map.map temporary_annotations ~f:Unit.top_to_bottom;
+    }
+
+  let add_unknown { annotations; temporary_annotations; } =
+    {
+      annotations = Reference.Map.mapi annotations ~f:(fun ~key ~data -> if Reference.is_self key then data else Unit.add_unknown data);
+      temporary_annotations = Reference.Map.mapi temporary_annotations ~f:(fun ~key ~data -> if Reference.is_self key then data else Unit.add_unknown data);
     }
 
   let update_self_attributes_tree ({ annotations; _ } as t) self_attributes_tree class_param =

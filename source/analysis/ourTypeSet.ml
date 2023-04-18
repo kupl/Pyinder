@@ -204,7 +204,6 @@ module ClassInfo = struct
       else
         Refinement.Store.outer_join ~global_resolution class_variable_type method_postcondition
   )
-
     
   let join_with_merge_class_variable_type ~global_resolution ({ class_variable_type; _ } as t) method_postcondition =
     (*
@@ -273,9 +272,14 @@ module ClassSummary = struct
 
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassInfo.add_usage_attributes
 
+  let set_class_info t class_name class_info =
+    ClassMap.set t ~key:class_name ~data:class_info
+
   let get t ~class_name ~f = 
     let class_info = find_default t class_name in
     f class_info
+
+  let get_class_info t class_name = get t ~class_name ~f:(fun x -> x)
 
   let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassInfo.get_self_attributes_tree
 
@@ -327,7 +331,7 @@ end
 module ArgTypeMap = Map.Make (Identifier)
 
 module ArgTypes = struct
-  type t = Type.t ArgTypeMap.t [@@deriving sexp]
+  type t = Type.t ArgTypeMap.t [@@deriving sexp, equal]
 
   let create () = ArgTypeMap.empty
 
@@ -343,9 +347,10 @@ module ArgTypes = struct
     Hashtbl.set t ~key:ident ~data:typ
 *)
 
+(*
   let equal t1 t2 =
     ArgTypeMap.equal (fun typ1 typ2 -> Type.equal typ1 typ2) t1 t2
-
+*)
   let join left right =
     ArgTypeMap.merge left right ~f:(fun ~key:_ data ->
       match data with
@@ -412,11 +417,17 @@ module FunctionSummary = struct
       return_types = meet_type left_return_types right_return_types;
     }
     *)
-  let equal {arg_types=ref1; return_types=typ1; usage_attributes=use1; _ } {arg_types=ref2; return_types=typ2; usage_attributes=use2; _} =
-      (ArgTypes.equal ref1 ref2) 
+
+    
+  let equal 
+    {arg_annotation=arg_anno1; arg_types=ref1; return_condition=cond1; return_types=typ1; usage_attributes=use1; _ } 
+    {arg_annotation=arg_anno2; arg_types=ref2; return_condition=cond2; return_types=typ2; usage_attributes=use2; _ } =
+      (Refinement.Store.equal arg_anno1 arg_anno2)
+      && (ArgTypes.equal ref1 ref2) 
+      && (Refinement.Store.equal cond1 cond2)
       && (Type.equal typ1 typ2) 
       && (AttributeStorage.equal use1 use2)
-
+  
   let update ~global_resolution left right =
     (*
     * type 정보만 다를 뿐, usedef_tables와 cfg는 반드시 같아야 한다   
@@ -425,7 +436,7 @@ module FunctionSummary = struct
       (match left.usedef_tables, right.usedef_tables with
       | None, None -> None
       | Some t1, Some t2 -> 
-        if UsedefStruct.equal ~f:UsedefState.equal t1 t2 then Some t1 else raise NotEqualException
+        if UsedefStruct.equal t1 t2 then Some t1 else raise NotEqualException
       | Some t, None | None, Some t -> Some t
       )
     in
@@ -437,9 +448,10 @@ module FunctionSummary = struct
       | Some t, None | None, Some t -> Some t
       
     in
-
-    (*Log.dump "%a\n%a\n" Refinement.Store.pp left.possible_condition Refinement.Store.pp right.possible_condition;*)
-
+    (*
+    Log.dump "  [ 1 ]\n%a\n  [ 2 ]\n%a\n" Refinement.Store.pp left.arg_annotation Refinement.Store.pp right.arg_annotation;
+    Log.dump "  [ Result ]\n%a" Refinement.Store.pp (Refinement.Store.meet ~global_resolution left.arg_annotation right.arg_annotation);
+  *)
     {
       arg_annotation = Refinement.Store.meet ~global_resolution left.arg_annotation right.arg_annotation; (* annotation은 meet으로 줄여야 됨 *)
       arg_types = ArgTypes.join left.arg_types right.arg_types;
@@ -547,16 +559,17 @@ end
 module FunctionSummaryMap = Map.Make (Reference)
 
 module FunctionTable = struct
-  type t = FunctionSummary.t FunctionSummaryMap.t [@@deriving sexp]
+  type t = FunctionSummary.t FunctionSummaryMap.t [@@deriving sexp, equal]
   let create () = FunctionSummaryMap.empty
 
   (*let copy t = Hashtbl.copy t*)
 
+  (*
   let equal t1 t2 =
     FunctionSummaryMap.equal (fun fs1 fs2 -> 
       FunctionSummary.equal fs1 fs2
     ) t1 t2
-
+  *)
   let update ~global_resolution left right = 
     FunctionSummaryMap.merge left right ~f:(fun ~key:_ data ->
       match data with
@@ -799,6 +812,12 @@ module OurSummary = struct
   let add_class_method ({class_summary; _} as t) parent meth =
     { t with class_summary = ClassSummary.add_method class_summary parent meth }
 
+  let set_class_info ({ class_summary; _ } as t) class_name class_info =
+    { t with class_summary = ClassSummary.set_class_info class_summary class_name class_info }
+
+  let get_class_info { class_summary; _ } class_name =
+    ClassSummary.get_class_info class_summary class_name
+
   let get_usage_attributes_from_class { class_summary; _ } class_name = 
     ClassSummary.get_usage_attributes class_summary class_name
 
@@ -936,8 +955,8 @@ let load_summary func_name =
   | _ ->
     OurSummary.create ()
 
-let load_all_summary global_resolution =
-  if !cache then
+let load_all_summary ?(use_cache=true) global_resolution =
+  if use_cache && !cache then
     ()
   else
   (

@@ -76,10 +76,14 @@ let is_local reference =
   | head :: _ when String.is_prefix ~prefix:"$local_" head -> true
   | _ -> false
 
-
 let is_parameter reference =
   match reference with
   | head :: _ when String.is_prefix ~prefix:"$parameter$" head -> true
+  | _ -> false
+
+let is_self reference =
+  match reference with
+  | head :: _ when String.is_prefix ~prefix:"$parameter$self" head -> true
   | _ -> false
 
 let sanitized reference = List.map ~f:Identifier.sanitized reference

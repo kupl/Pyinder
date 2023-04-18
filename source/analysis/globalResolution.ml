@@ -639,3 +639,26 @@ let refine ~global_resolution annotation refined_type =
   in
   let type_less_or_equal = less_or_equal global_resolution in
   Annotation.refine ~type_less_or_equal ~solve_less_or_equal ~refined_type annotation
+
+
+let rec join_dict_key_value ?key ?value ~global_resolution t =
+  match t with
+  | Type.Unknown un -> Type.unknown (join_dict_key_value un ?key ?value ~global_resolution)
+  | OurTypedDictionary { general; typed_dict } ->
+    OurTypedDictionary { 
+      general=join_dict_key_value general ?key ?value ~global_resolution;
+      typed_dict;
+    }
+  | Parametric { name = "dict"; parameters } -> (
+    match parameters with
+    | [Single key_parameter; Single value_parameter] ->
+      Parametric {
+        name = "dict";
+        parameters = [
+          Single (join global_resolution key_parameter (Option.value key ~default:Type.Bottom));
+          Single (join global_resolution value_parameter (Option.value value ~default:Type.Bottom))
+        ];
+      }
+    | _ -> invalid_arg "It is not valid dict"
+  )
+  | _ -> Log.dump "UPDATE???"; t

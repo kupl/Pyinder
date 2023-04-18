@@ -16,12 +16,13 @@ module Define = Statement.Define
 module type PossibleState = sig
   type t [@@deriving show]
 
+  (*
   val top_to_bottom : t -> t
-
+  
   val set_possibleconditions : t -> t -> t
 
   val update_possible : t -> t -> Reference.t -> t
-
+  *)
   val bottom : t
 
   val less_or_equal : left:t -> right:t -> bool
@@ -30,9 +31,11 @@ module type PossibleState = sig
 
   val widen : previous:t -> next:t -> iteration:int -> t
 
+  (*
   val join_possible : t -> t -> t
 
   val widen_possible : previous:t -> next:t -> iteration:int -> t
+  *)
 
   val forward : statement_key:int -> t -> statement:Statement.t -> t
 
@@ -45,7 +48,6 @@ module type PossibleFixpoint = sig
   type t = {
     preconditions: state Int.Table.t;
     postconditions: state Int.Table.t;
-    possibleconditions: state Int.Table.t;
   }
   [@@deriving show]
 
@@ -55,8 +57,9 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
+  (*
   val exit_possible : t -> state option
-
+  *)
   val forward : cfg:Cfg.t -> initial:state -> Reference.t -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
@@ -71,7 +74,7 @@ module Make (State : PossibleState) = struct
   type t = {
     preconditions: State.t Int.Table.t;
     postconditions: State.t Int.Table.t;
-    possibleconditions : State.t Int.Table.t;
+    (*possibleconditions : State.t Int.Table.t;*)
   }
 
   let equal ~f left right =
@@ -79,14 +82,17 @@ module Make (State : PossibleState) = struct
     && Core.Hashtbl.equal f left.postconditions right.postconditions
 
 
-  let pp format { preconditions; postconditions; possibleconditions } =
+  let pp format { preconditions; postconditions; _ } =
     let print_state ~name ~key ~data =
       Format.fprintf format "%s %d -> %a\n" name key State.pp data
     in
     Hashtbl.iteri preconditions ~f:(print_state ~name:"Precondition");
     Hashtbl.iteri postconditions ~f:(print_state ~name:"Postcondition");
+    ()
+    (*
     Hashtbl.iteri possibleconditions ~f:(print_state ~name:"Possiblecondition");
     let _ = possibleconditions in ()
+    *)
 
 
   let show fixpoint = Format.asprintf "%a" pp fixpoint
@@ -96,9 +102,9 @@ module Make (State : PossibleState) = struct
   let normal_exit { postconditions; _ } = Hashtbl.find postconditions Cfg.normal_index
 
   let exit { postconditions; _ } = Hashtbl.find postconditions Cfg.exit_index
-
+    (*
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
-
+    *)
   let our_compute_fixpoint cfg func_name ~initial_index ~initial ~predecessors ~successors ~transition =
     (*
      * This is the implementation of a monotonically increasing chaotic fixpoint
@@ -110,11 +116,14 @@ module Make (State : PossibleState) = struct
      *   F. Bourdoncle. Efficient chaotic iteration strategies with widenings.
      *   In Formal Methods in Programming and Their Applications, pp 128-141.
      *)
+    let _ = func_name in
     let components = WeakTopologicalOrder.create ~cfg ~entry_index:initial_index ~successors in
 
     let preconditions = Int.Table.create () in
     let postconditions = Int.Table.create () in
+    (*
     let possibleconditions = Int.Table.create () in
+    *)
 
     let class_hierachy = Hashtbl.create (module Reference) in
     let _ = class_hierachy in
@@ -125,13 +134,14 @@ module Make (State : PossibleState) = struct
         State.join state initial
       else
         predecessors node
-        |> Set.fold ~init:(state |> State.top_to_bottom) ~f:(fun sofar predecessor_index ->
+        |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
                Hashtbl.find postconditions predecessor_index
                |> Option.value ~default:State.bottom
                (*|> State.top_to_bottom*)
                |> State.join sofar)
     in
 
+    (*
     let join_with_predcessors_possibleconditions node state =
       if Int.equal (Cfg.Node.id node) initial_index then
         State.join state initial
@@ -143,6 +153,7 @@ module Make (State : PossibleState) = struct
               |> Option.value ~default:State.bottom
               |> State.join_possible sofar)
     in
+    *)
 
     let analyze_node node =
       let node_id = Cfg.Node.id node in
@@ -154,14 +165,17 @@ module Make (State : PossibleState) = struct
       in
 
       
-
+      (*
       let prepossible = 
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predcessors_possibleconditions node
       in
-      (*
+      *)
+      
+      
       Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+      (*
       Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
       *)
       (*
@@ -184,6 +198,7 @@ module Make (State : PossibleState) = struct
       *)
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       
+      (*
       (*Log.dump "%s" (Format.asprintf "[ Node Pre Possiblecondition ]\n%a\n" State.pp prepossible);*)
       let possiblecondition = State.set_possibleconditions precondition postcondition in
       (*Log.dump "%s" (Format.asprintf "[ Node Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
@@ -193,6 +208,7 @@ module Make (State : PossibleState) = struct
       let possiblecondition = State.update_possible prepossible possiblecondition func_name in
       (*Log.dump "%s" (Format.asprintf "[ Node Update Possiblecondition ]\n%a\n" State.pp possiblecondition);*)
       Hashtbl.set possibleconditions ~key:node_id ~data:possiblecondition
+      *)
 
     in
     let rec analyze_component = function
@@ -266,7 +282,7 @@ module Make (State : PossibleState) = struct
     *)
     
 
-    { preconditions; postconditions; possibleconditions }
+    { preconditions; postconditions; }
 
   let compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
     (*
@@ -283,8 +299,9 @@ module Make (State : PossibleState) = struct
 
     let preconditions = Int.Table.create () in
     let postconditions = Int.Table.create () in
+    (*
     let possibleconditions = Int.Table.create () in
-
+    *)
     let join_with_predecessors_postconditions node state =
       if Int.equal (Cfg.Node.id node) initial_index then
         State.join state initial
@@ -353,7 +370,7 @@ module Make (State : PossibleState) = struct
           iterate 0
     in
     List.iter ~f:analyze_component components;
-    { preconditions; postconditions; possibleconditions }
+    { preconditions; postconditions; }
 
 
   let forward ~cfg ~initial func_name =

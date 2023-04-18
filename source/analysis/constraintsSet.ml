@@ -414,12 +414,6 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
         impossible
     in
     match left, right with
-    | OurTypedDictionary left, OurTypedDictionary right -> 
-      Type.OurTypedDictionary.solve_less_or_equal ~left:left.typed_dict ~right:right.typed_dict ~solve:solve_less_or_equal ~order ~constraints ~impossible
-    | OurTypedDictionary our, _ ->
-      solve_less_or_equal order ~constraints ~left:our.general ~right
-    | _, OurTypedDictionary our ->
-      solve_less_or_equal order ~constraints ~left ~right:our.general
     | _, _ when Type.equal left right -> [constraints]
     | _, Type.Primitive "object" -> [constraints]
     | other, Type.Any -> [add_fallbacks other]
@@ -436,9 +430,17 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
         in
         solve_less_or_equal order ~constraints ~left ~right
     | _, Type.ParameterVariadicComponent _ -> impossible
+    | Type.Unknown left, _ -> solve_less_or_equal order ~constraints ~left ~right
+    | _, Type.Unknown right -> solve_less_or_equal order ~constraints ~left ~right
     | Type.Annotated left, _ -> solve_less_or_equal order ~constraints ~left ~right
     | _, Type.Annotated right -> solve_less_or_equal order ~constraints ~left ~right
     | Type.Any, other -> [add_fallbacks other]
+    | OurTypedDictionary left, OurTypedDictionary right -> 
+      Type.OurTypedDictionary.solve_less_or_equal ~left:left.typed_dict ~right:right.typed_dict ~solve:solve_less_or_equal ~order ~constraints ~impossible
+    | OurTypedDictionary our, _ ->
+      solve_less_or_equal order ~constraints ~left:our.general ~right
+    | _, OurTypedDictionary our ->
+      solve_less_or_equal order ~constraints ~left ~right:our.general
     | Type.Variable left_variable, Type.Variable right_variable
       when Type.Variable.Unary.is_free left_variable && Type.Variable.Unary.is_free right_variable
       ->
@@ -609,29 +611,38 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | _, Type.Parametric { name = right_name; parameters = right_parameters } ->
         let solve_respecting_variance constraints = function
           | Type.Variable.UnaryPair (unary, left), Type.Variable.UnaryPair (_, right) -> (
-              match left, right, unary with
-              (* TODO kill these special cases *)
-              | Type.Bottom, _, _ ->
-                  (* T[Bottom] is a subtype of T[_T2], for any _T2 and regardless of its variance. *)
-                  constraints
-              | _, Type.Top, _ ->
-                  (* T[_T2] is a subtype of T[Top], for any _T2 and regardless of its variance. *)
-                  constraints
-              | Top, _, _ -> impossible
-              | left, right, { Type.Variable.Unary.variance = Covariant; _ } ->
-                  constraints
-                  |> List.concat_map ~f:(fun constraints ->
-                         solve_less_or_equal order ~constraints ~left ~right)
-              | left, right, { variance = Contravariant; _ } ->
-                  constraints
-                  |> List.concat_map ~f:(fun constraints ->
-                         solve_less_or_equal order ~constraints ~left:right ~right:left)
-              | left, right, { variance = Invariant; _ } ->
-                  constraints
-                  |> List.concat_map ~f:(fun constraints ->
-                         solve_less_or_equal order ~constraints ~left ~right)
-                  |> List.concat_map ~f:(fun constraints ->
-                         solve_less_or_equal order ~constraints ~left:right ~right:left))
+              let rec constraints_unary_pair left right unary =
+                match left, right, unary with
+                (* Ignore Unknown *)
+                | Type.Unknown left, _, _ ->
+                  constraints_unary_pair left right unary
+                | _, Type.Unknown right, _ ->
+                  constraints_unary_pair left right unary
+                (* TODO kill these special cases *)
+                | Type.Bottom, _, _ ->
+                    (* T[Bottom] is a subtype of T[_T2], for any _T2 and regardless of its variance. *)
+                    constraints
+                | _, Type.Top, _ ->
+                    (* T[_T2] is a subtype of T[Top], for any _T2 and regardless of its variance. *)
+                    constraints
+                | Top, _, _ -> impossible
+                | left, right, { Type.Variable.Unary.variance = Covariant; _ } ->
+                    constraints
+                    |> List.concat_map ~f:(fun constraints ->
+                          solve_less_or_equal order ~constraints ~left ~right)
+                | left, right, { variance = Contravariant; _ } ->
+                    constraints
+                    |> List.concat_map ~f:(fun constraints ->
+                          solve_less_or_equal order ~constraints ~left:right ~right:left)
+                | left, right, { variance = Invariant; _ } ->
+                    constraints
+                    |> List.concat_map ~f:(fun constraints ->
+                          solve_less_or_equal order ~constraints ~left ~right)
+                    |> List.concat_map ~f:(fun constraints ->
+                          solve_less_or_equal order ~constraints ~left:right ~right:left)
+              in
+              constraints_unary_pair left right unary
+            )
           | ( Type.Variable.ParameterVariadicPair (_, left),
               Type.Variable.ParameterVariadicPair (_, right) ) ->
               let left = Type.Callable.create ~parameters:left ~annotation:Type.Any () in

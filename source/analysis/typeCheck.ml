@@ -84,15 +84,18 @@ module type OurSignature = sig
 
   val unreachable : t
 
+  (*
   val resolution : t -> Resolution.t option
-
+*)
   val initial : resolution:Resolution.t -> t
 
+  (*
   val parse_and_check_annotation
     :  ?bind_variables:bool ->
     resolution:Resolution.t ->
     Expression.t ->
     Error.t list * Type.t
+    *)
 
   include PossibleFixpoint.PossibleState with type t := t
 end
@@ -6311,14 +6314,13 @@ module PossibleState (Context : Context) = struct
   }
 
   (* None means the state in unreachable *)
-  and t =
-    | Unreachable
-    | Value of Resolution.t
+  and t = {
+    at_type: TypeCheckAT.t;
+    rt_type: TypeCheckRT.t;
+  }
+  [@@deriving equal]
 
-  let top_to_bottom t =
-    match t with
-    | Value resolution -> Value (Resolution.top_to_bottom resolution)
-    | _ -> t
+  (*
   let set_possibleconditions pre post =
     match pre, post with
     | Value preresolution, Value postresolution ->
@@ -6326,7 +6328,9 @@ module PossibleState (Context : Context) = struct
         Refinement.Store.remain_new ~old_store:(Resolution.get_annotation_store preresolution) ~new_store:(Resolution.get_annotation_store postresolution)
       ))
     | _ -> Unreachable
+  *)
 
+  (*
   let pp format = function
     | Unreachable -> Format.fprintf format "  <UNREACHABLE STATE>\n"
     | Value resolution ->
@@ -6366,32 +6370,32 @@ module PossibleState (Context : Context) = struct
           Resolution.pp
           resolution
           errors
+  *)
 
+  let pp format { at_type; rt_type; } = 
+    Format.fprintf format "    <ANNOTATED TYPE>\n%a\n\n    <REAL TYPE>\n%a\n\n" TypeCheckAT.pp at_type TypeCheckRT.pp rt_type
 
   let show state = Format.asprintf "%a" pp state
 
-  and equal left right =
-    match left, right with
-    | Unreachable, Unreachable -> true
-    | Value left_resolution, Value right_resolution ->
-        Resolution.refinements_equal left_resolution right_resolution
-    | _, _ -> false
 
+  let create ~resolution = {
+    at_type=TypeCheckAT.create ~resolution;
+    rt_type=TypeCheckRT.create ~resolution;
+  }
+  let unreachable = {
+    at_type=TypeCheckAT.unreachable;
+    rt_type=TypeCheckRT.unreachable;
+  }
 
-  let create ~resolution = Value resolution
+  let bottom = unreachable
 
-  let unreachable = Unreachable
-
-  let bottom = Unreachable
-
-  
+  (*
   let emit_error ~errors ~location ~kind =
     Error.create
       ~location:(Location.with_module ~module_reference:Context.qualifier location)
       ~kind
       ~define:Context.define
     :: errors
-
 
   let emit_typed_dictionary_errors ~errors mismatches =
     let emit_error errors mismatch =
@@ -6533,27 +6537,27 @@ module PossibleState (Context : Context) = struct
       if bind_variables then Type.Variable.mark_all_variables_as_bound annotation else annotation
     in
     errors, annotation
-
-
-  let resolution = function
-    | Unreachable -> None
-    | Value resolution -> Some resolution
-
-
+*)
+  (*
   let resolution_or_default ~default = function
     | Unreachable -> default
     | Value resolution -> resolution
+  *)
 
+  let resolution_of_rt t =
+    match t.rt_type with
+    | Unreachable -> None
+    | Value resolution -> Some resolution
+
+  let resolution_or_default_of_rt t ~default =
+    match t.rt_type with
+    | Unreachable -> default
+    | Value resolution -> resolution
 
   let less_or_equal ~left ~right =
-    match left, right with
-    | Unreachable, _ -> true
-    | _, Unreachable -> false
-    | Value left_resolution, Value right_resolution ->
-        Refinement.Store.less_or_equal_monotone
-          ~left:(Resolution.annotation_store left_resolution)
-          ~right:(Resolution.annotation_store right_resolution)
-
+    TypeCheckAT.less_or_equal ~left:left.at_type ~right:right.at_type
+    && TypeCheckRT.less_or_equal ~left:left.rt_type ~right:right.rt_type
+(*
   let widening_threshold = 3
 
   let add_fixpoint_threshold_reached_error () =
@@ -6573,32 +6577,18 @@ module PossibleState (Context : Context) = struct
         let statement_key = [%hash: int * int] (Cfg.entry_index, 0) in
         let (_ : unit option) = Context.error_map >>| LocalErrorMap.append ~statement_key ~error in
         ()
-
+*)
 
   let widen ~previous ~next ~iteration =
-    match previous, next with
-    | Unreachable, _ -> next
-    | _, Unreachable -> previous
-    | Value previous_resolution, Value next_resolution ->
-        if iteration + 1 >= widening_threshold then
-          add_fixpoint_threshold_reached_error ();
-        Value
-        (Resolution.outer_widen_refinements
-             ~iteration
-             ~widening_threshold
-             previous_resolution
-             next_resolution)
-        (*
-          (Resolution.outer_widen_refinements
-             ~iteration
-             ~widening_threshold
-             previous_resolution
-             next_resolution)
-        *)
+    {
+      at_type=TypeCheckAT.widen ~previous:previous.at_type ~next:next.at_type ~iteration;
+      rt_type=TypeCheckRT.widen ~previous:previous.rt_type ~next:next.rt_type ~iteration;
+    }
 
 
   let join left right = widen ~previous:left ~next:right ~iteration:0
 
+  (*
   let widen_possible ~previous ~next ~iteration =
     match previous, next with
     | Unreachable, _ -> next
@@ -6644,9 +6634,9 @@ module PossibleState (Context : Context) = struct
       let update_annotation = Refinement.Store.join_with_merge ~global_resolution update_annotation current_possibleannotation in
       let update_resolution = Resolution.set_annotation_store current_resolution update_annotation in
       Value update_resolution
-      
+  *)
 
-  
+  (**
   module Resolved = struct
     type base =
       | Class of Type.t
@@ -6762,13 +6752,13 @@ module PossibleState (Context : Context) = struct
     Location.WithModule.instantiate
       ~lookup:(AstEnvironment.ReadOnly.get_relative ast_environment)
       location
-
+  *)
 
   let define_signature =
     let { Node.value = { Define.signature; _ }; _ } = Context.define in
     signature
 
-  (*
+  
   let return_annotation ~global_resolution =
     let signature = define_signature in
     let annotation : Type.t =
@@ -6785,7 +6775,7 @@ module PossibleState (Context : Context) = struct
     in
     Type.Variable.mark_all_variables_as_bound annotation
 
-
+(*
   let rec validate_return expression ~resolution ~errors ~location ~actual ~is_implicit =
     let global_resolution = Resolution.global_resolution resolution in
     let { Node.location = define_location; value = define } = Context.define in
@@ -12951,33 +12941,24 @@ module PossibleState (Context : Context) = struct
     *)
 
   let initial ~resolution =
-    (TypeCheckRT.initial ~resolution, TypeCheckAT.initial ~resolution)
+    {
+      at_type=TypeCheckAT.initial ~resolution;
+      rt_type=TypeCheckRT.initial ~resolution;
+    }
 
-  let forward ~statement_key state ~statement =
-    match state with
-    | Unreachable -> state
-    | Value resolution ->
-      (*
-        Log.dump "%s" ("[[[ Forward ]]]]");
-        Log.dump "%a" Resolution.pp resolution;
-        Log.dump "%a" Statement.pp statement;
-      *)
-        let at_resolution, at_errors = TypeCheckAT.forward_statement ~resolution ~statement in
-        let at_resolution =
-          match at_resolution with
-          | Unreachable -> None
-          | Value at_resolution -> Some at_resolution
-        in
+  let forward ~statement_key { at_type; rt_type; } ~statement =
+    let rt_resolution ~at_resolution =
+      match rt_type with
+      | Unreachable -> rt_type
+      | Value resolution ->
         let rt_resolution, rt_errors = TypeCheckRT.forward_statement ~resolution ~at_resolution ~statement in
-        
-        let _ = at_resolution, at_errors in
         let post_resolution, errors = rt_resolution, rt_errors in
         (*Format.printf "[ Statement ] \n\n%a \n\n" Statement.pp statement;*)
         
         
         let post_resolution = 
           match post_resolution with
-          | Unreachable -> Unreachable
+          | Unreachable -> TypeCheckRT.Unreachable
           | Value post_resolution ->
             (*Log.dump "%s" (Format.asprintf "[ Post Resolution ] \n\n%a \n\n" Resolution.pp post_resolution);*)
             Value post_resolution
@@ -13007,6 +12988,23 @@ module PossibleState (Context : Context) = struct
               ()
         in
         post_resolution
+    in
+
+    let at_type, rt_type =
+      let at_resolution =
+        match at_type with
+        | Unreachable -> None
+        | Value resolution ->
+            let at_resolution, at_errors = TypeCheckAT.forward_statement ~resolution ~statement in
+            let _ = at_errors in (* at errors *)
+            match at_resolution with
+            | Unreachable -> None
+            | Value at_resolution -> Some at_resolution
+      in
+      at_type, rt_resolution ~at_resolution
+    in
+    { at_type; rt_type; }
+
 
 
   let backward ~statement_key:_ state ~statement:_ = state
@@ -13844,15 +13842,26 @@ let exit_state ~resolution (module Context : Context) =
   *)
   
 
-  let initial, _ = PossibleState.initial ~resolution in
+  let initial = PossibleState.initial ~resolution in
   let initial = 
     if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) 
     then (
-      match initial with
-      | Unreachable -> initial
-      | Value resolution ->
-        let final_model = OurTypeSet.load_summary (Reference.create OurTypeSet.final_summary) in
-        (*Log.dump ">>> %a" OurTypeSet.OurSummary.pp final_model;*)
+      let update_resolution resolution =
+        
+        let final_model = !OurTypeSet.our_model in
+
+        (*
+        ( (* Class Info 가져오기 *)
+        match parent with
+        | Some class_name ->
+          let our_model = OurTypeSet.load_summary name in
+          let our_model = OurTypeSet.OurSummary.set_class_info our_model class_name (OurTypeSet.OurSummary.get_class_info our_model class_name) in 
+          OurTypeSet.save_summary our_model name;
+        | None -> ()
+        );
+        *)
+        
+        
 
         (* self 변수 업데이트 하기 *)
         let update_resolution_of_self ~final_model resolution =
@@ -13880,15 +13889,11 @@ let exit_state ~resolution (module Context : Context) =
             | Name name -> 
               let annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
               let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
-              (*
-              Log.dump "%a => %a\n\n[[[ Before ]]]\n%a\n\n[[[ After ]]]\n%a\n\n" Name.pp name Annotation.pp annotation  Resolution.pp resolution Resolution.pp last_resolution;
-              *)
+              
               last_resolution
             | _ -> resolution
           )
         in
-
-        let _ = update_resolution_of_self in
 
         let resolution_updated_attributes = 
           resolution 
@@ -13900,15 +13905,39 @@ let exit_state ~resolution (module Context : Context) =
         let our_model = OurTypeSet.OurSummary.set_arg_annotation our_model name (Resolution.get_annotation_store resolution_updated_attributes) in 
         OurTypeSet.save_summary our_model name;
 
-        
         let resolution =
           resolution_updated_attributes 
-          |> update_resolution_of_self ~final_model
-          |> Resolution.top_to_bottom (* Top은 모두 Bottom으로 *)
-          
+          |> update_resolution_of_self ~final_model 
         in
 
-        Value resolution
+        resolution
+      in
+
+      let at_type =
+        match initial.at_type with
+        | Unreachable -> initial.at_type
+        | Value resolution ->
+          Value (update_resolution resolution)
+      in
+
+      let rt_type =
+        match initial.rt_type with
+        | Unreachable -> initial.rt_type
+        | Value resolution ->
+          let x = 
+            update_resolution resolution 
+            |> Resolution.top_to_bottom
+            |> Resolution.add_unknown
+          in
+          Value (
+            x
+          )
+      in
+
+      {
+        PossibleState.at_type;
+        rt_type;
+      }
 
     ) (*PossibleState.top_to_bottom initial*)
     else initial
@@ -13918,7 +13947,7 @@ let exit_state ~resolution (module Context : Context) =
   *)
   let global_resolution = Resolution.global_resolution resolution in
   if Define.is_stub define then
-    let resolution = Option.value_exn (PossibleState.resolution initial) in
+    let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
     let errors_sofar =
       Option.value_exn
         ~message:"analysis context has no error map"
@@ -14007,7 +14036,7 @@ let exit_state ~resolution (module Context : Context) =
     (if Define.dump_cfg define then
        let precondition { PossibleFixpoint.preconditions; _ } id =
          match Hashtbl.find preconditions id with
-         | Some (PossibleState.Value exit_resolution) ->
+         | Some { PossibleState.rt_type = Value exit_resolution ; _ } ->
              Resolution.annotation_store exit_resolution |> Refinement.Store.show
          | _ -> ""
        in
@@ -14048,13 +14077,15 @@ let exit_state ~resolution (module Context : Context) =
       in
       *)
 
+      Log.dump "WERWER";
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
       let our_model = 
         (match last_state with
         | Some state ->
-          (match state with
+          (match state.rt_type with
           | Value v ->
+            Log.dump "OH %a" Resolution.pp v;
             let our_model = OurTypeSet.OurSummary.set_return_condition our_model name (Resolution.get_annotation_store v) in
             let our_model = 
               (match parent with
@@ -14098,7 +14129,7 @@ let exit_state ~resolution (module Context : Context) =
       match exit with
       | None -> errors
       | Some post_state ->
-          let resolution = PossibleState.resolution_or_default post_state ~default:resolution in
+          let resolution = PossibleState.resolution_or_default_of_rt post_state ~default:resolution in
           emit_errors_on_exit (module Context) ~errors_sofar:errors ~resolution ()
           |> filter_errors (module Context) ~global_resolution
     in

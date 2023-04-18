@@ -258,7 +258,7 @@ module type UsedefFixpoint = sig
   type t = {
     usedef_tables: state Int.Table.t
   }
-  [@@deriving show, sexp]
+  [@@deriving show, sexp, equal]
 
   val entry : t -> state option
 
@@ -278,7 +278,9 @@ module type UsedefFixpoint = sig
 
   val backward : cfg:Cfg.t -> initial:state -> t
 
+  (*
   val equal : f:(state -> state -> bool) -> t -> t -> bool
+*)
 end
 
 module Make (State : UsedefState) = struct
@@ -287,11 +289,12 @@ module Make (State : UsedefState) = struct
 
   type t = {
     usedef_tables: State.t Int.Table.t;
-  } [@@deriving sexp]
+  } [@@deriving sexp, equal]
 
+  (*
   let equal ~f left right =
     Core.Hashtbl.equal f left.usedef_tables right.usedef_tables
-
+  *)
 
   let pp format { usedef_tables; } =
     let print_state ~name ~key ~data =

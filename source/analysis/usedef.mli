@@ -45,7 +45,7 @@ module type UsedefFixpoint = sig
   type t = {
     usedef_tables: state Int.Table.t
   }
-  [@@deriving show, sexp]
+  [@@deriving show, sexp, equal]
 
   val entry : t -> state option
 
@@ -65,7 +65,9 @@ module type UsedefFixpoint = sig
 
   val backward : cfg:Cfg.t -> initial:state -> t
 
+  (*
   val equal : f:(state -> state -> bool) -> t -> t -> bool
+*)
 end
 
 

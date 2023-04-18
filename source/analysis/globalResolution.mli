@@ -264,3 +264,5 @@ val type_of_generator_send_and_return : global_resolution:t -> Type.t -> Type.t 
 val define : t -> Reference.t -> Define.t option
 
 val refine : global_resolution:t -> Annotation.t -> Type.t -> Annotation.t
+
+val join_dict_key_value : ?key:Type.t -> ?value:Type.t -> global_resolution:t -> Type.t -> Type.t

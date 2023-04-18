@@ -165,6 +165,10 @@ module OurSummary : sig
 
   val add_class_method : t -> Reference.t -> string -> t
 
+  val set_class_info : t -> Reference.t -> ClassInfo.t -> t
+
+  val get_class_info : t -> Reference.t -> ClassInfo.t
+
   val get_usage_attributes_from_class : t -> Reference.t -> AttributeStorage.t
 
   val get_self_attributes_tree : t -> Reference.t -> Refinement.Unit.t Identifier.Map.Tree.t
@@ -198,6 +202,6 @@ val save_summary : OurSummary.t -> Reference.t -> unit
 
 val load_summary : Reference.t -> OurSummary.t
 
-val load_all_summary : GlobalResolution.t -> unit
+val load_all_summary : ?use_cache:bool -> GlobalResolution.t -> unit
 
 val select_our_model : Reference.t -> OurSummary.t

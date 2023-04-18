@@ -185,8 +185,9 @@
     let global_resolution =
       Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
     in
-    Analysis.OurTypeSet.load_all_summary global_resolution;
+    Analysis.OurTypeSet.load_all_summary global_resolution ~use_cache:false;
     let our_model = !Analysis.OurTypeSet.our_model in
+    Log.dump "OKOK %a" Analysis.OurTypeSet.OurSummary.pp our_model;
     Analysis.OurTypeSet.save_summary our_model (Ast.Reference.create Analysis.OurTypeSet.final_summary);
     if (Analysis.OurTypeSet.OurSummary.equal prev_model our_model)
     then single_errors, ast_environment, type_environment

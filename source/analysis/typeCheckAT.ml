@@ -23,11 +23,9 @@ module type ATSignature = sig
   [@@deriving eq]
 
   val create : resolution:Resolution.t -> t
-
   val unreachable : t
 
   val resolution : t -> Resolution.t option
-
   val initial : resolution:Resolution.t -> t
 
   val forward_statement : resolution:Resolution.t -> statement:statement Node.t -> t * Error.t list
@@ -274,11 +272,12 @@ module TypeCheckAT (Context : Context) = struct
   and t =
     | Unreachable
     | Value of Resolution.t
-
+(*
   let top_to_bottom t =
     match t with
     | Value resolution -> Value (Resolution.top_to_bottom resolution)
     | _ -> t
+    
   let set_possibleconditions pre post =
     match pre, post with
     | Value preresolution, Value postresolution ->
@@ -286,7 +285,7 @@ module TypeCheckAT (Context : Context) = struct
         Refinement.Store.remain_new ~old_store:(Resolution.get_annotation_store preresolution) ~new_store:(Resolution.get_annotation_store postresolution)
       ))
     | _ -> Unreachable
-
+    *)
   let pp format = function
     | Unreachable -> Format.fprintf format "  <UNREACHABLE STATE>\n"
     | Value resolution ->
@@ -558,6 +557,7 @@ module TypeCheckAT (Context : Context) = struct
 
   let join left right = widen ~previous:left ~next:right ~iteration:0
 
+  (*
   let widen_possible ~previous ~next ~iteration =
     match previous, next with
     | Unreachable, _ -> next
@@ -571,6 +571,7 @@ module TypeCheckAT (Context : Context) = struct
              ~widening_threshold
              previous_resolution
              next_resolution)
+
 
   let join_possible left right = widen_possible ~previous:left ~next:right ~iteration:0
 
@@ -603,6 +604,7 @@ module TypeCheckAT (Context : Context) = struct
       let update_annotation = Refinement.Store.join_with_merge ~global_resolution update_annotation current_possibleannotation in
       let update_resolution = Resolution.set_annotation_store current_resolution update_annotation in
       Value update_resolution
+    *)
       
 
 
@@ -1447,7 +1449,7 @@ module TypeCheckAT (Context : Context) = struct
                   (match base with
                   | { Node.value = Name name; _} ->
                     (*
-                    Log.dump "Expression : %a / %a -> %a" Expression.pp e Type.pp key_arg.resolved Type.pp value_arg.resolved;
+                    Log.dump "Expression : %a / %a -> %a" Expression.pp expression Type.pp key_arg.resolved Type.pp value_arg.resolved;
                     *)
                     let annotation_type = Resolution.resolve_expression_to_type resolution base in
                     let name = name_to_reference name |> Option.value ~default:Reference.empty in
@@ -1471,11 +1473,19 @@ module TypeCheckAT (Context : Context) = struct
                     let prefix_name = Reference.prefix name |> Option.value ~default:Reference.empty in
                     let attributes = Reference.drop_prefix ~prefix:prefix_name name in
 
+                    let prefix_name, attributes = 
+                      if Reference.is_empty prefix_name 
+                      then attributes, prefix_name
+                      else prefix_name, attributes
+                    in
+
                     let annotation_store = Resolution.get_annotation_store resolution in
                     let update_annotation_store = Refinement.Store.set_annotation ~name:prefix_name ~attribute_path:attributes ~base:None ~annotation annotation_store in
                     
                     let x = Resolution.set_annotation_store resolution update_annotation_store in
-
+                    (*
+                    Log.dump "%a" Resolution.pp x;
+                    *)
                     x
                   | _ -> resolution
                   )
@@ -1512,8 +1522,7 @@ module TypeCheckAT (Context : Context) = struct
       let rec update_resolved_type t =
         match t with
         (* possible infinite loop *)
-        | Type.Variable _ -> update_resolved_type (t |> Type.Variable.convert_all_escaped_free_variables_to_bottom)
-        | Type.Any
+        | Type.Variable _ -> update_resolved_type (t |> Type.Variable.convert_all_escaped_free_variables_to_anys)
         | Type.Bottom 
           ->
           let resolved_arguments =
@@ -2029,6 +2038,7 @@ module TypeCheckAT (Context : Context) = struct
               (*Log.dump "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable;*)
 
               let update_arg_type arg_type ret_cond_type =
+                (*
                 let handle_top arg_type ret_cond_type =
                   match arg_type, ret_cond_type with
                   | _, Type.Bottom -> arg_type
@@ -2038,6 +2048,7 @@ module TypeCheckAT (Context : Context) = struct
                     Union (List.map t ~f:(fun typ -> if Type.is_unbound typ then ret_cond_type else typ))
                   | _ -> ret_cond_type
                 in
+                *)
                 (*
                 compatible 한데 order가 아닌 경우는 List, Dict, Tuple에 새로운 타입이 추가 되었을 때   
                 *)
@@ -2064,7 +2075,8 @@ module TypeCheckAT (Context : Context) = struct
                         x
                       )
                   else
-                    handle_top arg_type ret_cond_type
+                    (* TODO: add error *)
+                    arg_type
               in 
               
               let allowed_list =
@@ -2081,7 +2093,7 @@ module TypeCheckAT (Context : Context) = struct
                 | Named reference when List.exists allowed_list ~f:(fun allowed -> String.equal allowed (Reference.show reference)) ->
                   resolution
                 | Named reference ->
-                  (* ToDo
+                  (* TODO
                   * Overload 구현
                   *)
                   let params = callable.implementation.parameters in
@@ -2143,6 +2155,8 @@ module TypeCheckAT (Context : Context) = struct
                   )
                   in
 
+                  let _ = param_type_list in
+
                   (*
                   Log.dump "TEST HERE";
                   let param_type_list = List.rev param_type_list in
@@ -2151,13 +2165,14 @@ module TypeCheckAT (Context : Context) = struct
                   );
                   *)
                   
-                  
+                  (*
                   if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
                     let { StatementDefine.Signature.name; _ } = define_signature in
                     let our_model = OurTypeSet.load_summary name in
                     let our_model = OurTypeSet.OurSummary.add_arg_types our_model reference param_type_list in
                     OurTypeSet.save_summary our_model name
                   else ();
+                  *)
 
                   resolution
                 | _ -> resolution (* Must Fix *)
@@ -2588,45 +2603,6 @@ module TypeCheckAT (Context : Context) = struct
             >>| add_incompatible_non_meta_error errors
             |> Option.value ~default:errors
           in
-
-          (* 
-             Set possiblecondition 
-             How to convert parametric to type.union?
-          *)
-          (match Node.value expression with
-          | Name name ->
-
-            let make_possible_type annotation =
-              (match annotation with
-              | Type.Parametric { parameters = [Single (Primitive _ as element)]; _ } when Type.is_meta annotation 
-                -> element
-              | _ when Type.is_meta annotation or Type.is_untyped annotation -> Type.Bottom
-              | Type.Primitive "typing._Alias" -> Type.Bottom
-              | Type.Tuple (Concatenation concatenation) ->
-                  Type.OrderedTypes.Concatenation.extract_sole_unbounded_annotation concatenation
-                  |> Option.value ~default:Type.Bottom
-              | Type.Tuple (Type.OrderedTypes.Concrete annotations) ->
-                  Type.union annotations
-              | Type.Union annotations -> Type.union annotations
-              | _ ->Type.Bottom
-              )
-            in
-            let possible_type = List.fold annotations ~init:Type.Bottom ~f:(fun sofar (annotation, _) -> Type.union [sofar; make_possible_type annotation] ) in
-            let new_resolution = Resolution.new_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable possible_type) in
-            let new_store = Resolution.get_annotation_store new_resolution in
-            (*Format.printf "[[[ NEW RESOLUTION ]]] \n\n%a\n\n%a\n\n" Type.pp possible_type Resolution.pp new_resolution;*)
-            
-            if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
-              let {StatementDefine.Signature.name; _} = define_signature in
-              let our_model = OurTypeSet.load_summary name in
-              let our_model = 
-                OurTypeSet.OurSummary.join_with_merge_function_possiblecondition ~global_resolution:(Resolution.global_resolution resolution) our_model name new_store
-              in
-              OurTypeSet.save_summary our_model name
-            else ()
-            
-          | _ -> ()
-          );
           
           resolution, errors
         in
@@ -5509,13 +5485,14 @@ module TypeCheckAT (Context : Context) = struct
           else
             return_type
         in
-        
+        (*
         if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
           let our_model = OurTypeSet.load_summary name in
           let our_model = OurTypeSet.OurSummary.add_return_info our_model name actual in
           OurTypeSet.save_summary our_model name;
         else ();
+        *)
         (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
         let resolution =
@@ -6050,7 +6027,7 @@ module TypeCheckAT (Context : Context) = struct
           | Define.Capture.Kind.ClassSelf parent ->
               resolution, errors, type_of_parent ~global_resolution parent |> Type.meta
         in
-        let annotation = Annotation.create_immutable annotation in
+        let annotation = Annotation.create_mutable annotation in
         let resolution =
           let reference = Reference.create name in
           Resolution.new_local resolution ~reference ~annotation
@@ -6257,22 +6234,22 @@ module TypeCheckAT (Context : Context) = struct
                 match parsed_annotation, value_annotation with
                 | Some annotation, Some _ when Type.contains_final annotation ->
                     ( add_final_parameter_annotation_error ~errors,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, Some value_annotation when contains_prohibited_any annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
                         ~given_annotation:(Some annotation)
                         (Some value_annotation),
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, _ when Type.contains_final annotation ->
                     ( add_final_parameter_annotation_error ~errors,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, None when contains_prohibited_any annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
                         ~given_annotation:(Some annotation)
                         None,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, _ ->
                     let errors =
                       emit_invalid_enumeration_literal_errors
@@ -6281,7 +6258,7 @@ module TypeCheckAT (Context : Context) = struct
                         ~errors
                         annotation
                     in
-                    errors, Annotation.create_immutable annotation
+                    errors, Annotation.create_mutable annotation
                 | None, Some value_annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
@@ -6909,10 +6886,13 @@ module TypeCheckAT (Context : Context) = struct
 
 
   let forward ~statement_key state ~statement =
+
     match state with
     | Unreachable -> state
     | Value resolution ->
-        
+      let _ = statement_key, statement, resolution in
+      state
+        (*
       (*
         Log.dump "%s" ("[[[ Forward ]]]]");
         Log.dump "%a" Resolution.pp resolution;
@@ -6954,7 +6934,7 @@ module TypeCheckAT (Context : Context) = struct
               ()
         in
         post_resolution
-
-
+        *)
+        
   let backward ~statement_key:_ state ~statement:_ = state
 end

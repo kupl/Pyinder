@@ -273,10 +273,13 @@ module TypeCheckRT (Context : Context) = struct
   and t =
     | Unreachable
     | Value of Resolution.t
+
+    (*
   let top_to_bottom t =
     match t with
     | Value resolution -> Value (Resolution.top_to_bottom resolution)
     | _ -> t
+    
   let set_possibleconditions pre post =
     match pre, post with
     | Value preresolution, Value postresolution ->
@@ -284,6 +287,7 @@ module TypeCheckRT (Context : Context) = struct
         Refinement.Store.remain_new ~old_store:(Resolution.get_annotation_store preresolution) ~new_store:(Resolution.get_annotation_store postresolution)
       ))
     | _ -> Unreachable
+    *)
 
   let pp format = function
     | Unreachable -> Format.fprintf format "  <UNREACHABLE STATE>\n"
@@ -556,6 +560,7 @@ module TypeCheckRT (Context : Context) = struct
 
   let join left right = widen ~previous:left ~next:right ~iteration:0
 
+  (*
   let widen_possible ~previous ~next ~iteration =
     match previous, next with
     | Unreachable, _ -> next
@@ -601,7 +606,7 @@ module TypeCheckRT (Context : Context) = struct
       let update_annotation = Refinement.Store.join_with_merge ~global_resolution update_annotation current_possibleannotation in
       let update_resolution = Resolution.set_annotation_store current_resolution update_annotation in
       Value update_resolution
-      
+  *)
 
 
   module Resolved = struct
@@ -743,7 +748,7 @@ module TypeCheckRT (Context : Context) = struct
     Type.Variable.mark_all_variables_as_bound annotation
 
 
-  let rec validate_return expression ~resolution ~errors ~location ~actual ~is_implicit =
+  let rec validate_return expression ~resolution ~at_resolution ~errors ~location ~actual ~is_implicit =
     let global_resolution = Resolution.global_resolution resolution in
     let { Node.location = define_location; value = define } = Context.define in
     let { Define.Signature.async; generator; return_annotation = return_annotation_expression; _ } =
@@ -755,7 +760,7 @@ module TypeCheckRT (Context : Context) = struct
     let actual =
       GlobalResolution.resolve_mutable_literals
         global_resolution
-        ~resolve:(resolve_expression_type ~resolution)
+        ~resolve:(resolve_expression_type ~resolution ~at_resolution)
         ~expression
         ~resolved:actual
         ~expected:return_annotation
@@ -839,15 +844,15 @@ module TypeCheckRT (Context : Context) = struct
     | { typed_dictionary_errors; _ } -> emit_typed_dictionary_errors ~errors typed_dictionary_errors
 
 
-  and forward_expression ~resolution ({ Node.location; value } as expression) =
+  and forward_expression ~resolution ~at_resolution ({ Node.location; value } as expression) =
     let _ = expression in
     let global_resolution = Resolution.global_resolution resolution in
     let forward_entry ~resolution ~errors ~entry:{ Dictionary.Entry.key; value } =
       let { Resolved.resolution; resolved = key_resolved; errors = key_errors; _ } =
-        forward_expression ~resolution key
+        forward_expression ~resolution ~at_resolution key
       in
       let { Resolved.resolution; resolved = value_resolved; errors = value_errors; _ } =
-        forward_expression ~resolution value
+        forward_expression ~resolution ~at_resolution value
       in
       ( Type.weaken_literals key_resolved,
         Type.weaken_literals value_resolved,
@@ -864,7 +869,7 @@ module TypeCheckRT (Context : Context) = struct
         let iterator_resolution, iterator_errors =
           let post_resolution, errors =
             let { Assign.target; annotation; value } = Statement.generator_assignment generator in
-            forward_assignment ~resolution ~location ~target ~annotation ~value
+            forward_assignment ~resolution ~at_resolution ~location ~target ~annotation ~value
           in
           resolution_or_default post_resolution ~default:resolution, errors
         in
@@ -884,7 +889,7 @@ module TypeCheckRT (Context : Context) = struct
       in
       List.fold conditions ~init:(resolution, errors) ~f:(fun (resolution, errors) condition ->
           let resolution, new_errors =
-            let post_resolution, errors = forward_assert ~resolution condition in
+            let post_resolution, errors = forward_assert ~resolution ~at_resolution condition in
             resolution_or_default post_resolution ~default:resolution, errors
           in
           resolution, List.append new_errors errors)
@@ -898,7 +903,7 @@ module TypeCheckRT (Context : Context) = struct
           ~init:(resolution, errors)
         |> fun (resolution, errors) ->
         let { Resolved.resolved; errors = element_errors; _ } =
-          forward_expression ~resolution element
+          forward_expression ~resolution ~at_resolution element
         in
         resolved, List.append element_errors errors
       in
@@ -916,7 +921,7 @@ module TypeCheckRT (Context : Context) = struct
         match Node.value expression with
         | Expression.Starred (Starred.Once expression) ->
             let { Resolved.resolution; resolved = new_resolved; errors = new_errors; _ } =
-              forward_expression ~resolution expression
+              forward_expression ~resolution ~at_resolution expression
             in
             let parameter =
               new_resolved
@@ -932,7 +937,7 @@ module TypeCheckRT (Context : Context) = struct
             }
         | _ ->
             let { Resolved.resolution; resolved = new_resolved; errors = new_errors; _ } =
-              forward_expression ~resolution expression
+              forward_expression ~resolution ~at_resolution expression
             in
             {
               resolution;
@@ -1328,7 +1333,7 @@ module TypeCheckRT (Context : Context) = struct
               let reversed_arguments =
                 let forward_argument reversed_arguments argument =
                   let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
+                  forward_expression ~resolution ~at_resolution expression
                   |> fun { resolved; _ } ->
                     { AttributeResolution.Argument.kind; expression = Some expression; resolved }
                     :: reversed_arguments
@@ -1360,7 +1365,7 @@ module TypeCheckRT (Context : Context) = struct
                     let reversed_arguments =
                       let forward_argument reversed_arguments argument =
                         let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                        forward_expression ~resolution expression
+                        forward_expression ~resolution ~at_resolution expression
                         |> fun { resolved; _ } ->
                           { AttributeResolution.Argument.kind; expression = Some expression; resolved }
                           :: reversed_arguments
@@ -1388,7 +1393,7 @@ module TypeCheckRT (Context : Context) = struct
               let reversed_arguments =
                 let forward_argument reversed_arguments argument =
                   let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
+                  forward_expression ~resolution ~at_resolution expression
                   |> fun { resolved; _ } ->
                     { AttributeResolution.Argument.kind; expression = Some expression; resolved }
                     :: reversed_arguments
@@ -1426,7 +1431,7 @@ module TypeCheckRT (Context : Context) = struct
                 let reversed_arguments =
                   let forward_argument reversed_arguments argument =
                     let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                    forward_expression ~resolution expression
+                    forward_expression ~resolution ~at_resolution expression
                     |> fun { resolved; _ } ->
                       { AttributeResolution.Argument.kind; expression = Some expression; resolved }
                       :: reversed_arguments
@@ -1445,35 +1450,43 @@ module TypeCheckRT (Context : Context) = struct
                   (match base with
                   | { Node.value = Name name; _} ->
                     (*
-                    Log.dump "Expression : %a / %a -> %a" Expression.pp e Type.pp key_arg.resolved Type.pp value_arg.resolved;
+                    Log.dump "Expression : %a / %a -> %a" Expression.pp expression Type.pp key_arg.resolved Type.pp value_arg.resolved;
                     *)
                     let annotation_type = Resolution.resolve_expression_to_type resolution base in
                     let name = name_to_reference name |> Option.value ~default:Reference.empty in
 
-                    let type_t =
+                    let update_dict_field =
                       (* key 원소가 literal이면 OurTypedDictionary *)
                       if Type.contains_literal key_arg.resolved
                       then
                         Type.OurTypedDictionary.update_dict_field annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg.resolved
                       else (* key 원소가 literal이 아니면 Dictionary *)
-                        Type.Parametric { 
-                          name = "dict";
-                          parameters = [
-                            Type.Record.Parameter.Single key_arg.resolved;
-                            Type.Record.Parameter.Single value_arg.resolved;
-                          ];
-                        }
+                        annotation_type
                     in
 
-                    let annotation = type_t |> Annotation.create_mutable in
+
+                    let update_dict_key_value =
+                      GlobalResolution.join_dict_key_value update_dict_field ~global_resolution ~key:key_arg.resolved ~value:value_arg.resolved
+                    in
+                    (*
+                    Log.dump "Result Type : %a" Type.pp update_dict_key_value;
+                    *)
+                    let annotation = update_dict_key_value |> Annotation.create_mutable in
                     let prefix_name = Reference.prefix name |> Option.value ~default:Reference.empty in
                     let attributes = Reference.drop_prefix ~prefix:prefix_name name in
 
+                    let prefix_name, attributes = 
+                      if Reference.is_empty prefix_name 
+                      then attributes, prefix_name
+                      else prefix_name, attributes
+                    in
+
                     let annotation_store = Resolution.get_annotation_store resolution in
                     let update_annotation_store = Refinement.Store.set_annotation ~name:prefix_name ~attribute_path:attributes ~base:None ~annotation annotation_store in
-                    
                     let x = Resolution.set_annotation_store resolution update_annotation_store in
-
+                    (*
+                    Log.dump "Result Resolution : %a" Resolution.pp x;
+                    *)
                     x
                   | _ -> resolution
                   )
@@ -1511,13 +1524,16 @@ module TypeCheckRT (Context : Context) = struct
         match t with
         (* possible infinite loop *)
         | Type.Variable _ -> update_resolved_type (t |> Type.Variable.convert_all_escaped_free_variables_to_bottom)
+        | Type.Unknown unknown -> Type.Unknown (update_resolved_type unknown)
+        | Type.Top 
         | Type.Any
+          -> update_resolved_type Type.Bottom
         | Type.Bottom 
           ->
           let resolved_arguments =
             let forward_argument reversed_arguments argument =
               let expression, _ = Ast.Expression.Call.Argument.unpack argument in
-              forward_expression ~resolution expression
+              forward_expression ~resolution ~at_resolution expression
               |> fun { resolved; _ } ->
                 resolved :: reversed_arguments
             in
@@ -1535,7 +1551,7 @@ module TypeCheckRT (Context : Context) = struct
             | Name (Name.Attribute { attribute = "__list__"; _}) -> Type.list (Type.union resolved_arguments)
             | Name (Name.Attribute { attribute = "__set__"; _}) -> Type.set (Type.union resolved_arguments)
             | Name (Name.Attribute { attribute = "__tuple__"; _}) -> Type.tuple resolved_arguments
-            | Name (Name.Attribute { attribute = "__dict__"; _}) -> Type.dictionary ~key:Type.Any ~value:Type.Any
+            | Name (Name.Attribute { attribute = "__dict__"; _}) -> Type.dictionary ~key:Type.Bottom ~value:Type.Bottom
             | _ -> resolved_dict_getitem (Callee.resolved callee) t
           in
 
@@ -1549,7 +1565,7 @@ module TypeCheckRT (Context : Context) = struct
           ~signature_select:
             (GlobalResolution.signature_select
                 ~global_resolution
-                ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution))
+                ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution ~at_resolution))
           ~global_resolution
       in
 
@@ -1671,7 +1687,7 @@ module TypeCheckRT (Context : Context) = struct
                           GlobalResolution.signature_select
                             ~arguments
                             ~global_resolution:(Resolution.global_resolution resolution)
-                            ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
+                            ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution ~at_resolution)
                             ~callable
                             ~self_argument;
                         (* Make sure we emit errors against the inverse function, not the original *)
@@ -1914,7 +1930,7 @@ module TypeCheckRT (Context : Context) = struct
               let resolution, errors, reversed_arguments =
                 let forward_argument (resolution, errors, reversed_arguments) argument =
                   let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
+                  forward_expression ~resolution ~at_resolution expression
                   |> fun { resolution; errors = new_errors; resolved; _ } ->
                   ( resolution,
                     List.append new_errors errors,
@@ -1934,7 +1950,7 @@ module TypeCheckRT (Context : Context) = struct
                     ~order:(GlobalResolution.full_order global_resolution)
                     ~resolve_mutable_literals:
                       (GlobalResolution.resolve_mutable_literals global_resolution)
-                    ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
+                    ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution ~at_resolution)
                     ~callable
               |> instantiate_return_annotation
                     ~order:(GlobalResolution.full_order global_resolution)
@@ -1944,7 +1960,7 @@ module TypeCheckRT (Context : Context) = struct
               let resolution, errors, reversed_arguments =
                 let forward_argument (resolution, errors, reversed_arguments) argument =
                   let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
+                  forward_expression ~resolution ~at_resolution expression
                   |> fun { resolution; errors = new_errors; resolved; _ } ->
                   ( resolution,
                     List.append new_errors errors,
@@ -1957,7 +1973,7 @@ module TypeCheckRT (Context : Context) = struct
               let selected_return_annotation =
                 GlobalResolution.signature_select
                   ~global_resolution
-                  ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
+                  ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution ~at_resolution)
                   ~arguments
                   ~callable
                   ~self_argument
@@ -1978,7 +1994,7 @@ module TypeCheckRT (Context : Context) = struct
             let resolution, errors, reversed_arguments =
               let forward_argument (resolution, errors, reversed_arguments) argument =
                 let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                forward_expression ~resolution expression
+                forward_expression ~resolution ~at_resolution expression
                 |> fun { resolution; errors = new_errors; resolved; _ } ->
                   (*Log.dump "HERE? %a %a" Expression.pp expression Type.pp resolved;*)
                 ( resolution,
@@ -2006,7 +2022,7 @@ module TypeCheckRT (Context : Context) = struct
                   let selected_return_annotation =
                     GlobalResolution.signature_select
                       ~global_resolution
-                      ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
+                      ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution ~at_resolution)
                       ~arguments
                       ~callable
                       ~self_argument
@@ -2026,15 +2042,28 @@ module TypeCheckRT (Context : Context) = struct
             | KnownCallable { callable = { TypeOperation.callable; self_argument }; arguments; _ } ->
               (*Log.dump "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable;*)
 
-              let update_arg_type arg_type ret_cond_type =
-                let handle_top arg_type ret_cond_type =
-                  match arg_type, ret_cond_type with
-                  | _, Type.Bottom -> arg_type
-                  | Type.Top, _ -> ret_cond_type
-                  | _, Type.Top -> arg_type
-                  | Union t, _ ->
-                    Union (List.map t ~f:(fun typ -> if Type.is_unbound typ then ret_cond_type else typ))
-                  | _ -> ret_cond_type
+              let update_arg_type arg_type ret_cond_type arg_annotation_type target_func_arg_annotation =
+                let _ = arg_annotation_type in
+
+                let update_annotate_type arg_type target_func_arg_annotation =
+                  match arg_type with
+                  | Type.Unknown unknown -> 
+                    if (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type)
+                    then GlobalResolution.join global_resolution unknown target_func_arg_annotation
+                    else Type.union_join unknown target_func_arg_annotation
+                    (*
+                  | Union t_list -> 
+                    (match target_func_arg_annotation with
+                    | Type.Union t_list' ->
+                      (match List.findi t_list ~f:(fun _ t -> Type.equal t Unknown) with
+                      | Some (i, _) -> Union ((List.drop t_list i)@t_list')
+                      | _ -> arg_type
+                      )
+                    | _ ->
+                      Union (List.map t_list ~f:(fun t -> if Type.equal t Unknown then target_func_arg_annotation else t))
+                    )
+                    *)
+                  | _ -> arg_type
                 in
                 (*
                 compatible 한데 order가 아닌 경우는 List, Dict, Tuple에 새로운 타입이 추가 되었을 때   
@@ -2043,26 +2072,21 @@ module TypeCheckRT (Context : Context) = struct
                 (* order 인데 top 이면 update x *)
 
                 (*
-                Log.dump "Update Arg Type %a %a %b" Type.pp arg_type Type.pp ret_cond_type (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type);
+                Log.dump "Update Arg Type %a %a %a %a %b" Type.pp arg_type Type.pp ret_cond_type Type.pp arg_annotation_type Type.pp target_func_arg_annotation (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type);
                 *)
                 (*
                 Log.dump "%b %b" (GlobalResolution.is_compatible_with global_resolution ~left:arg_type ~right:ret_cond_type) (not (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type));
                 *)
-                if (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type)
-                then
-                  if (GlobalResolution.less_or_equal global_resolution ~left:arg_type ~right:ret_cond_type)
-                  then arg_type
-                  else ret_cond_type 
-                else
+
+                let heuristic_update_type =
                   if (GlobalResolution.is_compatible_with global_resolution ~left:arg_type ~right:ret_cond_type)
-                  then
-                      (
-                        let x = GlobalResolution.join global_resolution arg_type ret_cond_type in
-                        (*Log.dump "HELP %a + %a = %a" Type.pp arg_type Type.pp ret_cond_type Type.pp x;*)
-                        x
-                      )
-                  else
-                    handle_top arg_type ret_cond_type
+                    && (not (GlobalResolution.types_are_orderable global_resolution arg_type ret_cond_type))
+                  then 
+                    GlobalResolution.join global_resolution arg_type ret_cond_type
+                  else arg_type 
+                in
+                (* TODO: add type contradiction *) 
+                update_annotate_type heuristic_update_type target_func_arg_annotation
               in 
               
               let allowed_list =
@@ -2115,16 +2139,38 @@ module TypeCheckRT (Context : Context) = struct
                         (match arg.expression with
                         | Some exp -> (
                           match Node.value exp with
-                          | Name _ ->
+                          | Name name ->
                             let arg_reference = Expression.show exp |> Reference.create in
                             let callee_name = reference in
                             let our_model = OurTypeSet.load_summary callee_name in
                             let ret_cond = OurTypeSet.OurSummary.get_return_condition our_model callee_name in
+                            let func_arg_annotation = OurTypeSet.OurSummary.get_arg_annotation our_model callee_name in
+                            let base, attribute_path, _ = Resolution.partition_name resolution ~name in
+                            let target_func_arg_annotation = Refinement.Store.get_annotation ~name:base ~attribute_path func_arg_annotation in
+                            let target_func_arg_type =
+                              match target_func_arg_annotation with
+                              | Some a -> Annotation.annotation a
+                              | None -> Type.Bottom
+                            in
+
                             let tmp_resolution = Resolution.set_annotation_store resolution ret_cond in
                             let param_reference = Reference.create (List.nth_exn param_list (idx+revise_index)) in
                             let arg_type = Resolution.resolve_expression_to_type resolution exp in
+                            let arg_annotation_type = Resolution.resolve_expression_to_type (Option.value ~default:resolution at_resolution) exp in
                             let ret_cond_type = Resolution.resolve_reference tmp_resolution param_reference in
-                            let new_arg_type = update_arg_type arg_type ret_cond_type in
+
+                            let usedef_tables = 
+                              OurTypeSet.OurSummary.get_usedef_tables our_model callee_name 
+                              |> Option.value ~default:Usedef.UsedefStruct.empty
+                            in            
+                            let new_arg_type =
+                              match Usedef.UsedefStruct.normal_exit usedef_tables with
+                              | Some usedef_state -> 
+                                if Usedef.UsedefState.is_undefined usedef_state param_reference
+                                then GlobalResolution.join global_resolution arg_type ret_cond_type
+                                else update_arg_type arg_type ret_cond_type arg_annotation_type target_func_arg_type
+                              | _ -> update_arg_type arg_type ret_cond_type arg_annotation_type target_func_arg_type
+                            in
                             (*
                             Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Reference.pp arg_reference Type.pp new_arg_type;
                             *)
@@ -2209,6 +2255,9 @@ module TypeCheckRT (Context : Context) = struct
       );
       *)
 
+      (*
+      Log.dump "[[[ Callee ]]]\n\n%a\n\n" Expression.pp (Callee.expression callee);
+      *)
       Context.Builder.add_callee
         ~global_resolution
         ~target
@@ -2226,6 +2275,10 @@ module TypeCheckRT (Context : Context) = struct
           callables_with_selected_return_annotations
           ~f:extract_found_not_found_unknown_attribute
       in
+
+      (*
+      Log.dump "HMM?? %a" Resolution.pp resolution;
+      *)
       join_return_annotations
         ~resolution
         ~errors
@@ -2238,7 +2291,7 @@ module TypeCheckRT (Context : Context) = struct
     match value with
     | Await expression -> (
         let { Resolved.resolution; resolved; errors; _ } =
-          forward_expression ~resolution expression
+          forward_expression ~resolution ~at_resolution expression
         in
         match resolved with
         | Type.Any ->
@@ -2272,14 +2325,14 @@ module TypeCheckRT (Context : Context) = struct
           _;
         }
           =
-          forward_expression ~resolution left
+          forward_expression ~resolution ~at_resolution left
         in
         let left_assume =
           match operator with
           | BooleanOperator.And -> left
           | BooleanOperator.Or -> normalize (negate left)
         in
-        match refine_resolution_for_assert ~resolution:resolution_left left_assume with
+        match refine_resolution_for_assert ~resolution:resolution_left ~at_resolution left_assume with
         | Unreachable ->
             {
               Resolved.resolution = resolution_left;
@@ -2297,7 +2350,7 @@ module TypeCheckRT (Context : Context) = struct
                 _;
               }
                 =
-                forward_expression ~resolution:refined_resolution right
+                forward_expression ~resolution:refined_resolution ~at_resolution right
               in
               let resolved =
                 match resolved_left with
@@ -2372,7 +2425,7 @@ module TypeCheckRT (Context : Context) = struct
               base = Some (Super resolved);
             }
         | None ->
-            let { Resolved.resolved; _ } = forward_expression ~resolution callee in
+            let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution callee in
             forward_callable
               ~resolution
               ~errors:[]
@@ -2386,7 +2439,7 @@ module TypeCheckRT (Context : Context) = struct
           arguments = [{ Call.Argument.value; _ }];
         } ->
         (* Resolve `type()` calls. *)
-        let resolved = resolve_expression_type ~resolution value |> Type.meta in
+        let resolved = resolve_expression_type ~resolution ~at_resolution value |> Type.meta in
         { resolution; errors = []; resolved; resolved_annotation = None; base = None }
     | Call { callee = { Node.location; value = Name (Name.Identifier "reveal_locals") }; _ } ->
         (* Special case reveal_locals(). *)
@@ -2428,7 +2481,7 @@ module TypeCheckRT (Context : Context) = struct
             ~location
             ~kind:
               (Error.RevealedType
-                  { expression = value; annotation = resolve_expression ~resolution value; qualify })
+                  { expression = value; annotation = resolve_expression ~resolution ~at_resolution value; qualify })
         in
         { resolution; errors; resolved = Type.none; resolved_annotation = None; base = None }
     | Call
@@ -2448,7 +2501,7 @@ module TypeCheckRT (Context : Context) = struct
         let errors, cast_annotation = parse_and_check_annotation ~resolution cast_annotation in
         let resolution, resolved, errors =
           let { Resolved.resolution; resolved; errors = value_errors; _ } =
-            forward_expression ~resolution value
+            forward_expression ~resolution ~at_resolution value
           in
           resolution, resolved, List.append value_errors errors
         in
@@ -2496,7 +2549,7 @@ module TypeCheckRT (Context : Context) = struct
             [{ Call.Argument.value = expression; _ }; { Call.Argument.value = annotations; _ }] as
             arguments;
         } ->
-        let { Resolved.resolved; _ } = forward_expression ~resolution callee in
+        let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution callee in
         let callables =
           match resolved with
           | Type.Callable callable -> [callable]
@@ -2517,14 +2570,14 @@ module TypeCheckRT (Context : Context) = struct
         (* We special case type inference for `isinstance` in asserted, and the typeshed stubs are
             imprecise (doesn't correctly declare the arguments as a recursive tuple. *)
         let resolution, errors =
-          let { Resolved.resolution; errors; _ } = forward_expression ~resolution expression in
+          let { Resolved.resolution; errors; _ } = forward_expression ~resolution ~at_resolution expression in
           let resolution, errors, annotations =
             let rec collect_types (state, errors, collected) = function
               | { Node.value = Expression.Tuple annotations; _ } ->
                   List.fold annotations ~init:(state, errors, collected) ~f:collect_types
               | expression ->
                   let { Resolved.resolution; resolved; errors = expression_errors; _ } =
-                    forward_expression ~resolution expression
+                    forward_expression ~resolution ~at_resolution expression
                   in
                   let new_annotations =
                     match resolved with
@@ -2649,11 +2702,11 @@ module TypeCheckRT (Context : Context) = struct
         } ->
         let resolution, resolved_callee, errors, resolved_base =
           let resolution, assume_errors =
-            let post_resolution, errors = forward_assert ~resolution expression in
+            let post_resolution, errors = forward_assert ~resolution ~at_resolution expression in
             resolution_or_default post_resolution ~default:resolution, errors
           in
           let { Resolved.resolution; resolved; errors = callee_errors; base = resolved_base; _ } =
-            forward_expression ~resolution callee
+            forward_expression ~resolution ~at_resolution callee
           in
           resolution, resolved, List.append assume_errors callee_errors, resolved_base
         in
@@ -2688,11 +2741,11 @@ module TypeCheckRT (Context : Context) = struct
         } ->
         let resolution, resolved_callee, errors, resolved_base =
           let resolution, assume_errors =
-            let post_resolution, errors = forward_assert ~resolution (negate expression) in
+            let post_resolution, errors = forward_assert ~resolution ~at_resolution (negate expression) in
             resolution_or_default post_resolution ~default:resolution, errors
           in
           let { Resolved.resolution; resolved; errors = callee_errors; base = resolved_base; _ } =
-            forward_expression ~resolution callee
+            forward_expression ~resolution ~at_resolution callee
           in
           resolution, resolved, List.append assume_errors callee_errors, resolved_base
         in
@@ -2722,17 +2775,17 @@ module TypeCheckRT (Context : Context) = struct
             :: { Call.Argument.value = attribute_expression; _ } :: (([] | [_]) as default_argument);
         } -> (
         let ({ Resolved.errors; resolution; _ } as base_resolved) =
-          forward_expression ~resolution base
+          forward_expression ~resolution ~at_resolution base
         in
         let resolution, errors, attribute_resolved =
-          forward_expression ~resolution attribute_expression
+          forward_expression ~resolution ~at_resolution attribute_expression
           |> fun { resolution; errors = attribute_errors; resolved = attribute_resolved; _ } ->
           resolution, List.append attribute_errors errors, attribute_resolved
         in
         let resolution, errors, has_default =
           match default_argument with
           | [{ Call.Argument.value = default_expression; _ }] ->
-              forward_expression ~resolution default_expression
+              forward_expression ~resolution ~at_resolution default_expression
               |> fun { resolution; errors = default_errors; _ } ->
               resolution, List.append default_errors errors, true
           | _ -> resolution, errors, false
@@ -2764,7 +2817,7 @@ module TypeCheckRT (Context : Context) = struct
           _;
         }
           =
-          forward_expression ~resolution callee
+          forward_expression ~resolution ~at_resolution callee
         in
         (*
         Log.dump "Call : %a => %a" Expression.pp callee Type.pp resolved_callee;
@@ -2924,7 +2977,7 @@ module TypeCheckRT (Context : Context) = struct
             | Some resolved ->
                 let callee =
                   let { Resolved.resolved = resolved_base; _ } =
-                    forward_expression ~resolution right
+                    forward_expression ~resolution ~at_resolution right
                   in
                   Callee.Attribute
                     {
@@ -3065,7 +3118,7 @@ module TypeCheckRT (Context : Context) = struct
                       }
                     in
                     let ({ Resolved.resolved; _ } as getitem_resolution) =
-                      forward_expression ~resolution getitem_attribute
+                      forward_expression ~resolution ~at_resolution getitem_attribute
                     in
                     let is_valid_getitem = function
                       | Type.Parametric
@@ -3099,11 +3152,11 @@ module TypeCheckRT (Context : Context) = struct
                     in
                     match resolved with
                     | Type.Union elements when List.for_all ~f:is_valid_getitem elements ->
-                        forward_expression ~resolution call
-                    | _ when is_valid_getitem resolved -> forward_expression ~resolution call
+                        forward_expression ~resolution ~at_resolution call
+                    | _ when is_valid_getitem resolved -> forward_expression ~resolution ~at_resolution call
                     | _ ->
                         let errors =
-                          let { Resolved.resolved; _ } = forward_expression ~resolution right in
+                          let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
                           emit_error
                             ~errors
                             ~location
@@ -3124,7 +3177,7 @@ module TypeCheckRT (Context : Context) = struct
 
           resolution, errors, GlobalResolution.join global_resolution joined_annotation resolved
         in
-        let { Resolved.resolution; resolved; errors; _ } = forward_expression ~resolution right in
+        let { Resolved.resolution; resolved; errors; _ } = forward_expression ~resolution ~at_resolution right in
         let resolution, errors, resolved =
           (* We should really error here if resolve_class fails *)
           Type.resolve_class resolved
@@ -3138,14 +3191,14 @@ module TypeCheckRT (Context : Context) = struct
         let operator = { operator with left } in
         match ComparisonOperator.override ~location operator with
         | Some expression ->
-            let resolved = forward_expression ~resolution expression in
+            let resolved = forward_expression ~resolution ~at_resolution expression in
             { resolved with errors = resolved.errors }
         | None ->
           (*Format.printf "\n\n%a binary %a\n\n" Expression.pp left Expression.pp right;*)
-            let resolution, errors = forward_expression ~resolution left
+            let resolution, errors = forward_expression ~resolution ~at_resolution left
             |> (fun { Resolved.resolution; errors = left_errors; _ } ->
                   let { Resolved.resolution; errors = right_errors; Resolved.resolved; _ } =
-                    forward_expression ~resolution right
+                    forward_expression ~resolution ~at_resolution right
                   in
                   
                   let update_resolution =
@@ -3208,7 +3261,7 @@ module TypeCheckRT (Context : Context) = struct
             | Some (key, value) -> (
                 
                 let { Resolved.resolution; resolved = source; errors = new_errors; _ } =
-                  forward_expression ~resolution keyword
+                  forward_expression ~resolution ~at_resolution keyword
                 in
 
                 let errors = List.append new_errors errors in
@@ -3354,7 +3407,7 @@ module TypeCheckRT (Context : Context) = struct
         let forward_substring ((resolution, errors) as sofar) = function
           | Substring.Literal _ -> sofar
           | Substring.Format expression ->
-              forward_expression ~resolution expression
+              forward_expression ~resolution ~at_resolution expression
               |> fun { resolution; errors = new_errors; _ } ->
               resolution, List.append new_errors errors
         in
@@ -3383,7 +3436,7 @@ module TypeCheckRT (Context : Context) = struct
           List.fold ~f:add_parameter ~init:resolution parameters
         in
         let { Resolved.resolved; errors; _ } =
-          forward_expression ~resolution:resolution_with_parameters body
+          forward_expression ~resolution:resolution_with_parameters ~at_resolution body
         in
         (* Judgement call, many more people want to pass in `lambda: 0` to `defaultdict` than want
             to write a function that take in callables with literal return types. If you really want
@@ -3457,6 +3510,10 @@ module TypeCheckRT (Context : Context) = struct
           * that relies on the legacy behaviror in the presence of ambiguous
           * fully-qualified names.
           *)
+
+          (*
+          Log.dump "TEST : %a" Expression.pp expression;
+          *)
         match
           Ast.Expression.name_to_reference name
           >>= GlobalResolution.resolve_exports global_resolution
@@ -3468,7 +3525,7 @@ module TypeCheckRT (Context : Context) = struct
         | Some name_reference -> forward_reference ~resolution ~errors:[] name_reference
         | None ->
             let ({ Resolved.errors; resolved = resolved_base; _ } as base_resolved) =
-              forward_expression ~resolution base
+              forward_expression ~resolution ~at_resolution base
             in
             let errors, resolved_base =
               if Type.Variable.contains_escaped_free_variable resolved_base then
@@ -3529,26 +3586,26 @@ module TypeCheckRT (Context : Context) = struct
           match starred with
           | Starred.Once expression
           | Starred.Twice expression ->
-              forward_expression ~resolution expression
+              forward_expression ~resolution ~at_resolution expression
         in
         { resolved with resolved = Type.Top; resolved_annotation = None; base = None }
     | Ternary { Ternary.target; test; alternative } ->
         let test_errors =
-          let { Resolved.errors; _ } = forward_expression ~resolution test in
+          let { Resolved.errors; _ } = forward_expression ~resolution ~at_resolution test in
           errors
         in
         let target_resolved, target_errors =
-          let post_resolution = refine_resolution_for_assert ~resolution test in
+          let post_resolution = refine_resolution_for_assert ~resolution ~at_resolution test in
           let resolution = resolution_or_default post_resolution ~default:resolution in
-          let { Resolved.resolved; errors; _ } = forward_expression ~resolution target in
+          let { Resolved.resolved; errors; _ } = forward_expression ~resolution ~at_resolution target in
           resolved, errors
         in
         let alternative_resolved, alternative_errors =
           let post_resolution =
-            refine_resolution_for_assert ~resolution (normalize (negate test))
+            refine_resolution_for_assert ~resolution ~at_resolution (normalize (negate test))
           in
           let resolution = resolution_or_default post_resolution ~default:resolution in
-          let { Resolved.resolved; errors; _ } = forward_expression ~resolution alternative in
+          let { Resolved.resolved; errors; _ } = forward_expression ~resolution ~at_resolution alternative in
           resolved, errors
         in
         let resolved =
@@ -3575,7 +3632,7 @@ module TypeCheckRT (Context : Context) = struct
               match expression with
               | { Node.value = Expression.Starred (Starred.Once expression); _ } ->
                   let { Resolved.resolution; resolved = resolved_element; errors = new_errors; _ } =
-                    forward_expression ~resolution expression
+                    forward_expression ~resolution ~at_resolution expression
                   in
                   let new_errors, ordered_type =
                     match resolved_element with
@@ -3603,7 +3660,7 @@ module TypeCheckRT (Context : Context) = struct
                   resolution, new_errors, ordered_type
               | _ ->
                   let { Resolved.resolution; resolved = resolved_element; errors = new_errors; _ } =
-                    forward_expression ~resolution expression
+                    forward_expression ~resolution ~at_resolution expression
                   in
                   resolution, new_errors, Type.OrderedTypes.Concrete [resolved_element]
             in
@@ -3640,25 +3697,25 @@ module TypeCheckRT (Context : Context) = struct
         { resolution; errors; resolved; resolved_annotation = None; base = None }
     | UnaryOperator ({ UnaryOperator.operand; _ } as operator) -> (
         match UnaryOperator.override operator with
-        | Some expression -> forward_expression ~resolution expression
+        | Some expression -> forward_expression ~resolution ~at_resolution expression
         | None ->
-            let resolved = forward_expression ~resolution operand in
+            let resolved = forward_expression ~resolution ~at_resolution operand in
             { resolved with resolved = Type.bool; resolved_annotation = None; base = None })
     | WalrusOperator { value; target } ->
         let resolution, errors =
           let post_resolution, errors =
-            forward_assignment ~resolution ~location ~target ~value ~annotation:None
+            forward_assignment ~resolution ~at_resolution ~location ~target ~value ~annotation:None
           in
           resolution_or_default post_resolution ~default:resolution, errors
         in
-        let resolved = forward_expression ~resolution value in
+        let resolved = forward_expression ~resolution ~at_resolution value in
         { resolved with errors = List.append errors resolved.errors }
     | Expression.Yield yielded ->
         let { Resolved.resolution; resolved = yield_type; errors; _ } =
           match yielded with
           | Some expression ->
               let { Resolved.resolution; resolved; errors; _ } =
-                forward_expression ~resolution expression
+                forward_expression ~resolution ~at_resolution expression
               in
               { resolution; errors; resolved; resolved_annotation = None; base = None }
           | None ->
@@ -3677,7 +3734,7 @@ module TypeCheckRT (Context : Context) = struct
             Type.generator ~yield_type ()
         in
         let errors =
-          validate_return ~location None ~resolution ~errors ~actual ~is_implicit:false
+          validate_return ~location None ~resolution ~at_resolution ~errors ~actual ~is_implicit:false
         in
         let send_type, _ =
           return_annotation ~global_resolution
@@ -3686,7 +3743,7 @@ module TypeCheckRT (Context : Context) = struct
         { resolution; errors; resolved = send_type; resolved_annotation = None; base = None }
     | Expression.YieldFrom yielded_from ->
         let { Resolved.resolution; resolved; errors; _ } =
-          forward_expression ~resolution yielded_from
+          forward_expression ~resolution ~at_resolution yielded_from
         in
         let yield_type =
           resolved
@@ -3703,7 +3760,7 @@ module TypeCheckRT (Context : Context) = struct
             Type.generator ~yield_type ~send_type ()
         in
         let errors =
-          validate_return ~location None ~resolution ~errors ~actual ~is_implicit:false
+          validate_return ~location None ~resolution ~at_resolution ~errors ~actual ~is_implicit:false
         in
         {
           resolution;
@@ -3714,7 +3771,8 @@ module TypeCheckRT (Context : Context) = struct
         }
 
 
-  and refine_resolution_for_assert ~resolution test =
+  and refine_resolution_for_assert ~resolution ~at_resolution test =
+    Log.dump "EXP : %a" Expression.pp test;
     let global_resolution = Resolution.global_resolution resolution in
     let annotation_less_or_equal =
       Annotation.less_or_equal
@@ -3725,7 +3783,7 @@ module TypeCheckRT (Context : Context) = struct
         match parse_and_check_annotation ~resolution annotation |> snd with
         | Type.Top -> (
             (* Try to resolve meta-types given as expressions. *)
-            match resolve_expression_type ~resolution annotation with
+            match resolve_expression_type ~resolution ~at_resolution annotation with
             | annotation when Type.is_meta annotation -> Type.single_parameter annotation
             | Type.Tuple (Concrete elements) when List.for_all ~f:Type.is_meta elements ->
                 List.map ~f:Type.single_parameter elements |> Type.union
@@ -3740,10 +3798,14 @@ module TypeCheckRT (Context : Context) = struct
             | _ -> Type.Top)
         | annotation -> annotation
       in
-      match annotation with
-      | { Node.value = Expression.Tuple elements; _ } ->
-          List.map ~f:parse_meta elements |> fun elements -> Type.Union elements
-      | _ -> parse_meta annotation
+      let x =
+        match annotation with
+        | { Node.value = Expression.Tuple elements; _ } ->
+            List.map ~f:parse_meta elements |> fun elements -> Type.Union elements
+        | _ -> parse_meta annotation
+      in
+      Log.dump "Parse Refinement %a" Type.pp x;
+      x
     in
     let partition annotation ~boundary =
       let consistent_with_boundary, not_consistent_with_boundary =
@@ -3803,7 +3865,7 @@ module TypeCheckRT (Context : Context) = struct
     in
     let rec existing_annotation name =
       match Resolution.get_local_with_attributes ~global_fallback:true ~name resolution, name with
-      | Some annotation, _ -> Some annotation
+      | Some annotation, _ -> Log.dump "Existing : %a" Annotation.pp annotation; Some annotation
       | _, Name.Attribute { base = { Node.value = Name base; _ }; attribute; _ } -> (
           let attribute =
             existing_annotation base
@@ -3971,7 +4033,7 @@ module TypeCheckRT (Context : Context) = struct
           if Type.contains_unknown mismatched_type || Type.is_any mismatched_type then
             false
           else
-            let { Resolved.resolved; _ } = forward_expression ~resolution value in
+            let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution value in
             (not (Type.is_unbound resolved))
             && (not (Type.contains_unknown resolved))
             && (not (Type.is_any resolved))
@@ -4062,7 +4124,7 @@ module TypeCheckRT (Context : Context) = struct
           right;
         }
       when is_simple_name name -> (
-        let { Resolved.resolved = refined; _ } = forward_expression ~resolution right in
+        let { Resolved.resolved = refined; _ } = forward_expression ~resolution ~at_resolution right in
         let refined = Annotation.create_mutable refined in
         match existing_annotation name with
         | Some previous ->
@@ -4082,7 +4144,7 @@ module TypeCheckRT (Context : Context) = struct
         }
       when is_simple_name name -> (
         let reference = name_to_reference_exn name in
-        let { Resolved.resolved; _ } = forward_expression ~resolution right in
+        let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
         match
           GlobalResolution.extract_type_parameters
             global_resolution
@@ -4119,9 +4181,9 @@ module TypeCheckRT (Context : Context) = struct
           operator = ComparisonOperator.IsNot;
           right = { Node.value = Constant Constant.NoneLiteral; _ };
         } ->
-        refine_resolution_for_assert ~resolution left
+        refine_resolution_for_assert ~resolution ~at_resolution left
     | Name name when is_simple_name name -> (
-      (*Log.dump "IS_HERE >>> %a" Name.pp name;*)
+      Log.dump "IS_HERE >>> %a" Name.pp name;
         match existing_annotation name with
         | Some { Annotation.annotation = Type.NoneType; _ } -> Unreachable
         | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
@@ -4194,23 +4256,23 @@ module TypeCheckRT (Context : Context) = struct
     | Call
         { arguments = { Call.Argument.name = None; value = { Node.value = Name name; _ } } :: _; _ }
       when is_simple_name name -> (
-        let { Annotation.annotation = callee_type; _ } = resolve_expression ~resolution test in
+        let { Annotation.annotation = callee_type; _ } = resolve_expression ~resolution ~at_resolution test in
         match Type.typeguard_annotation callee_type with
         | Some guard_type ->
             let resolution = refine_local ~name (Annotation.create_mutable guard_type) in
             Value resolution
         | None -> Value resolution)
     (* Compound assertions *)
-    | WalrusOperator { target; _ } -> refine_resolution_for_assert ~resolution target
+    | WalrusOperator { target; _ } -> refine_resolution_for_assert ~resolution ~at_resolution target
     | BooleanOperator { BooleanOperator.left; operator; right } -> (
         match operator with
         | BooleanOperator.And ->
-            let left_state = refine_resolution_for_assert ~resolution left in
+            let left_state = refine_resolution_for_assert ~resolution ~at_resolution left in
             let right_state =
               left_state
               |> function
               | Unreachable -> Unreachable
-              | Value resolution -> refine_resolution_for_assert ~resolution right
+              | Value resolution -> refine_resolution_for_assert ~resolution ~at_resolution right
             in
             let state =
               match left_state, right_state with
@@ -4222,7 +4284,7 @@ module TypeCheckRT (Context : Context) = struct
             state
         | BooleanOperator.Or ->
             let update resolution expression =
-              refine_resolution_for_assert ~resolution expression
+              refine_resolution_for_assert ~resolution ~at_resolution expression
               |> function
               | Value post_resolution -> post_resolution
               | Unreachable -> resolution
@@ -4237,18 +4299,20 @@ module TypeCheckRT (Context : Context) = struct
     | _ -> Value resolution
 
 
-  and forward_assert ?(origin = Assert.Origin.Assertion) ~resolution test =
-    let { Resolved.resolution; errors; _ } = forward_expression ~resolution test in
-    (*Log.dump "%s" (Format.asprintf "[ Before Refined Resolution ]\n%a\n\n" Resolution.pp resolution);*)
-    let resolution = refine_resolution_for_assert ~resolution test in
+  and forward_assert ?(origin = Assert.Origin.Assertion) ~resolution ~at_resolution test =
+    let { Resolved.resolution; errors; _ } = forward_expression ~resolution ~at_resolution test in
+    (*
+    Log.dump "%s" (Format.asprintf "[ Before Refined Resolution ]\n%a\n\n" Resolution.pp resolution);
+    *)
+    let resolution = refine_resolution_for_assert ~resolution ~at_resolution test in
 
     
-    (*
+    
     (match resolution with
     | Value resolution -> Log.dump "%s" (Format.asprintf "[ Refined Resolution ]\n%a\n\n" Resolution.pp resolution);
     | Unreachable -> print_endline "Unreachable";
     );
-    *)
+    
     
     
     (* Ignore type errors from the [assert (not foo)] in the else-branch because it's the same [foo]
@@ -4266,7 +4330,7 @@ module TypeCheckRT (Context : Context) = struct
     resolution, errors
 
 
-  and forward_assignment ~resolution ~location ~target ~annotation ~value =
+  and forward_assignment ~resolution ~at_resolution ~location ~target ~annotation ~value =
     (*Log.dump "[Forward Assignment] Target %a" Expression.pp target;*)
     let { Node.value = { Define.signature = { parent; _ }; _ } as define; _ } = Context.define in
     let global_resolution = Resolution.global_resolution resolution in
@@ -4360,7 +4424,7 @@ module TypeCheckRT (Context : Context) = struct
         let resolution, errors, resolved_value =
           let { Resolved.resolution; errors = new_errors; resolved; _ } =
             (* 여기서 expression의 resolved_value가 정해지고 이것의 타입이 곧 annotation이 된다 *)
-            forward_expression ~resolution value
+            forward_expression ~resolution ~at_resolution value
           in
           resolution, List.append new_errors errors, resolved
         in
@@ -4512,7 +4576,7 @@ module TypeCheckRT (Context : Context) = struct
                     else
                       ();
                   *)
-                    let resolved = resolve_expression_type ~resolution attribute.base in
+                    let resolved = resolve_expression_type ~resolution ~at_resolution attribute.base in
                     `Attribute (attribute, resolved)
               in
               let inner_assignment resolution errors resolved_base =
@@ -4523,7 +4587,7 @@ module TypeCheckRT (Context : Context) = struct
                       ( Some reference,
                         None,
                         from_reference ~location:Location.any reference
-                        |> resolve_expression ~resolution )
+                        |> resolve_expression ~resolution ~at_resolution )
                   | `Attribute ({ Name.Attribute.base; attribute; _ }, resolved) ->
                       let name = attribute in
                       let parent, accessed_through_class =
@@ -4559,7 +4623,7 @@ module TypeCheckRT (Context : Context) = struct
                             (* The reason why we need to do resolve_expression on the entire target
                                 again is to deal with imported globals. To fix it, we ought to stop
                                 representing imported globals as `Expression.Name.Attribute`. *)
-                            resolve_expression ~resolution target
+                            resolve_expression ~resolution ~at_resolution target
                       in
                       begin
                         match attribute with
@@ -4651,6 +4715,7 @@ module TypeCheckRT (Context : Context) = struct
                             | ReadOnly _, true, _ -> Some (ReadOnly reference)
                             | _ -> None)
                       in
+                      
                       let check_assignment_compatibility errors =
                         let is_valid_enumeration_assignment =
                           let parent_annotation =
@@ -4724,6 +4789,7 @@ module TypeCheckRT (Context : Context) = struct
                             |> fun kind -> emit_error ~errors ~location ~kind
                         | _ -> errors
                       in
+                      
                       let check_assign_class_variable_on_instance errors =
                         match
                           ( resolved_base,
@@ -4826,7 +4892,7 @@ module TypeCheckRT (Context : Context) = struct
                       in
                       let check_enumeration_literal errors =
                         original_annotation
-                        >>| emit_invalid_enumeration_literal_errors ~resolution ~location ~errors
+                        >>| emit_invalid_enumeration_literal_errors ~resolution ~at_resolution ~location ~errors
                         |> Option.value ~default:errors
                       in
                       let check_previously_annotated errors =
@@ -5156,6 +5222,10 @@ module TypeCheckRT (Context : Context) = struct
                       Annotation.create_mutable guide
                   in
 
+                  (*
+                  Log.dump "Annotation >>> %a / expected : %a / resolved : %a" Annotation.pp annotation Type.pp expected Type.pp resolved_value;
+                  *)
+
                   (* 2. 또 업데이트??? *)
                   let errors, annotation =
                     if
@@ -5180,6 +5250,7 @@ module TypeCheckRT (Context : Context) = struct
                     else
                       errors, annotation
                   in
+
 
                   (* 
                     * Annotation을 Update 한 후 Resolution 업데이트
@@ -5213,7 +5284,7 @@ module TypeCheckRT (Context : Context) = struct
               let resolved_value_weakened =
                 GlobalResolution.resolve_mutable_literals
                   global_resolution
-                  ~resolve:(resolve_expression_type ~resolution)
+                  ~resolve:(resolve_expression_type ~resolution ~at_resolution)
                   ~expression
                   ~resolved:resolved_value
                   ~expected
@@ -5363,29 +5434,29 @@ module TypeCheckRT (Context : Context) = struct
         Value resolution, errors
 
 
-  and resolve_expression ~resolution expression =
-    forward_expression ~resolution expression
+  and resolve_expression ~resolution ~at_resolution expression =
+    forward_expression ~resolution ~at_resolution expression
     |> fun { Resolved.resolved; resolved_annotation; _ } ->
     resolved_annotation |> Option.value ~default:(Annotation.create_mutable resolved)
 
 
-  and resolve_expression_type ~resolution expression =
-    resolve_expression ~resolution expression |> Annotation.annotation
+  and resolve_expression_type ~resolution ~at_resolution expression =
+    resolve_expression ~resolution ~at_resolution expression |> Annotation.annotation
 
 
-  and resolve_expression_type_with_locals ~resolution ~locals expression =
+  and resolve_expression_type_with_locals ~resolution ~at_resolution ~locals expression =
     let new_local resolution (reference, annotation) =
       Resolution.new_local resolution ~reference ~annotation
     in
     let resolution_with_locals = List.fold ~init:resolution ~f:new_local locals in
-    resolve_expression ~resolution:resolution_with_locals expression |> Annotation.annotation
+    resolve_expression ~resolution:resolution_with_locals ~at_resolution expression |> Annotation.annotation
 
 
-  and resolve_reference_type ~resolution reference =
-    from_reference ~location:Location.any reference |> resolve_expression_type ~resolution
+  and resolve_reference_type ~resolution ~at_resolution reference =
+    from_reference ~location:Location.any reference |> resolve_expression_type ~resolution ~at_resolution
 
 
-  and emit_invalid_enumeration_literal_errors ~resolution ~location ~errors annotation =
+  and emit_invalid_enumeration_literal_errors ~resolution ~at_resolution ~location ~errors annotation =
     let invalid_enumeration_literals =
       let is_invalid_enumeration_member = function
         | Type.Literal (Type.EnumerationMember { enumeration_type; member_name }) ->
@@ -5410,7 +5481,7 @@ module TypeCheckRT (Context : Context) = struct
                         }))
               in
               let { Resolved.resolved = resolved_member_type; _ } =
-                forward_expression ~resolution literal_expression
+                forward_expression ~resolution ~at_resolution literal_expression
               in
               GlobalResolution.less_or_equal
                 global_resolution
@@ -5430,17 +5501,17 @@ module TypeCheckRT (Context : Context) = struct
 
 
   let forward_statement ~resolution ~at_resolution ~statement:({ Node.location; value } as statement) =
-    let _ = statement, at_resolution in
+    let _ = statement in
     let global_resolution = Resolution.global_resolution resolution in
     (*Log.dump "Statement : %a \n %a" Statement.pp { location; value } Resolution.pp resolution;*)
     let validate_return = validate_return ~location in
     match value with
     | Statement.Assign { Assign.target; annotation; value } ->
-        forward_assignment ~resolution ~location ~target ~annotation ~value
-    | Assert { Assert.test; origin; _ } -> forward_assert ~resolution ~origin test
+        forward_assignment ~resolution ~at_resolution ~location ~target ~annotation ~value
+    | Assert { Assert.test; origin; _ } -> forward_assert ~resolution ~at_resolution ~origin test
     | Delete expressions ->
         let process_expression (resolution, errors_sofar) expression =
-          let { Resolved.resolution; errors; _ } = forward_expression ~resolution expression in
+          let { Resolved.resolution; errors; _ } = forward_expression ~resolution ~at_resolution expression in
           let resolution =
             match Node.value expression with
             | Name (Identifier identifier) ->
@@ -5456,10 +5527,10 @@ module TypeCheckRT (Context : Context) = struct
     | Expression
         { Node.value = Call { callee; arguments = { Call.Argument.value = test; _ } :: _ }; _ }
       when Core.Set.mem Recognized.assert_functions (Expression.show callee) ->
-        forward_assert ~resolution test
+        forward_assert ~resolution ~at_resolution test
     | Expression expression ->
         let { Resolved.resolution; resolved; errors; _ } =
-          forward_expression ~resolution expression
+          forward_expression ~resolution ~at_resolution expression
         in
         if Type.is_noreturn resolved then
           (Unreachable, errors)
@@ -5467,7 +5538,7 @@ module TypeCheckRT (Context : Context) = struct
           (Value resolution, errors)
     | Raise { Raise.expression = Some expression; _ } ->
         let { Resolved.resolution; resolved; errors; _ } =
-          forward_expression ~resolution expression
+          forward_expression ~resolution ~at_resolution expression
         in
         let expected = Type.Primitive "BaseException" in
         let actual =
@@ -5499,7 +5570,7 @@ module TypeCheckRT (Context : Context) = struct
                 resolved_annotation = None;
                 base = None;
               }
-            ~f:(fun expression -> forward_expression ~resolution expression)
+            ~f:(fun expression -> forward_expression ~resolution ~at_resolution expression)
         in
         let actual =
           if define_signature.generator && not define_signature.async then
@@ -5514,7 +5585,7 @@ module TypeCheckRT (Context : Context) = struct
           let our_model = OurTypeSet.OurSummary.add_return_info our_model name actual in
           OurTypeSet.save_summary our_model name;
         else ();
-        (Value resolution, validate_return expression ~resolution ~errors ~actual ~is_implicit)
+        (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
         let resolution =
           if Reference.is_local name then (* 내장 함수 *)
@@ -5919,7 +5990,7 @@ module TypeCheckRT (Context : Context) = struct
             | _ -> errors)
         | None ->
             let { Resolved.errors = decorator_errors; _ } =
-              forward_expression ~resolution decorator
+              forward_expression ~resolution ~at_resolution:None decorator
             in
             List.append decorator_errors errors
       in
@@ -6048,7 +6119,7 @@ module TypeCheckRT (Context : Context) = struct
           | Define.Capture.Kind.ClassSelf parent ->
               resolution, errors, type_of_parent ~global_resolution parent |> Type.meta
         in
-        let annotation = Annotation.create_immutable annotation in
+        let annotation = Annotation.create_mutable annotation in
         let resolution =
           let reference = Reference.create name in
           Resolution.new_local resolution ~reference ~annotation
@@ -6243,7 +6314,7 @@ module TypeCheckRT (Context : Context) = struct
                 in
                 let value_annotation =
                   value
-                  >>| (fun expression -> forward_expression ~resolution expression)
+                  >>| (fun expression -> forward_expression ~resolution ~at_resolution:None expression)
                   >>| fun { resolved; _ } -> resolved
                 in
                 let errors =
@@ -6255,31 +6326,32 @@ module TypeCheckRT (Context : Context) = struct
                 match parsed_annotation, value_annotation with
                 | Some annotation, Some _ when Type.contains_final annotation ->
                     ( add_final_parameter_annotation_error ~errors,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, Some value_annotation when contains_prohibited_any annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
                         ~given_annotation:(Some annotation)
                         (Some value_annotation),
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, _ when Type.contains_final annotation ->
                     ( add_final_parameter_annotation_error ~errors,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, None when contains_prohibited_any annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
                         ~given_annotation:(Some annotation)
                         None,
-                      Annotation.create_immutable annotation )
+                      Annotation.create_mutable annotation )
                 | Some annotation, _ ->
                     let errors =
                       emit_invalid_enumeration_literal_errors
                         ~resolution
+                        ~at_resolution: None
                         ~location
                         ~errors
                         annotation
                     in
-                    errors, Annotation.create_immutable annotation
+                    errors, Annotation.create_mutable annotation
                 | None, Some value_annotation ->
                     ( add_missing_parameter_annotation_error
                         ~errors
@@ -6607,7 +6679,7 @@ module TypeCheckRT (Context : Context) = struct
             |> Node.create ~location
           in
           let { Resolved.errors = init_subclass_errors; _ } =
-            forward_expression ~resolution implicit_call
+            forward_expression ~resolution ~at_resolution:None implicit_call
           in
           init_subclass_errors @ errors
       | None -> errors
@@ -6687,7 +6759,7 @@ module TypeCheckRT (Context : Context) = struct
                     }
                 | Type.Callable { Type.Callable.implementation; _ } ->
                     let original_implementation =
-                      resolve_reference_type ~resolution name
+                      resolve_reference_type ~resolution ~at_resolution:None name
                       |> function
                       | Type.Callable { Type.Callable.implementation = original_implementation; _ }
                       | Type.Parametric

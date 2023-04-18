@@ -138,26 +138,6 @@ module OrderImplementation = struct
         union
       else
         match left, right with
-        | Type.OurTypedDictionary { general=left_general; typed_dict=left_typed_dict; }, 
-          Type.OurTypedDictionary { general=right_general; typed_dict=right_typed_dict; } ->
-            let x = Type.OurTypedDictionary {
-              general=join order left_general right_general;
-              typed_dict=Type.OurTypedDictionary.join ~join:Type.union_join left_typed_dict right_typed_dict;
-            }
-            in
-            x
-        | Type.OurTypedDictionary { general; typed_dict }, other ->
-          let new_general = join order general other in
-          if Type.is_dictionary_or_mapping new_general then
-            OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
-          else 
-            new_general
-        | other, Type.OurTypedDictionary { general; typed_dict } ->
-          let new_general = join order other general in
-          if Type.is_dictionary_or_mapping new_general then
-            OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
-          else 
-            new_general
         | Type.Bottom, other
         | other, Type.Bottom ->
             other
@@ -167,6 +147,34 @@ module OrderImplementation = struct
         | Type.Any, _
         | _, Type.Any ->
             Type.Any
+        | Type.OurTypedDictionary { general=left_general; typed_dict=left_typed_dict; }, 
+        Type.OurTypedDictionary { general=right_general; typed_dict=right_typed_dict; } ->
+          let _ = Type.OurTypedDictionary {
+            general=join order left_general right_general;
+            typed_dict=Type.OurTypedDictionary.join ~join:Type.union_join left_typed_dict right_typed_dict;
+          }
+          
+          in
+  
+          union
+          (*
+          (*
+          Log.dump "Left : %a \n Right : %a \n Result : %a" Type.pp left Type.pp right Type.pp x;
+          *)
+          x
+          *)
+      | Type.OurTypedDictionary { general; typed_dict }, other ->
+        let new_general = join order general other in
+        if Type.is_dictionary_or_mapping new_general then
+          OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
+        else 
+          new_general
+      | other, Type.OurTypedDictionary { general; typed_dict } ->
+        let new_general = join order other general in
+        if Type.is_dictionary_or_mapping new_general then
+          OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
+        else 
+          new_general
         | Type.ParameterVariadicComponent _, _
         | _, Type.ParameterVariadicComponent _ ->
             union
@@ -175,6 +183,8 @@ module OrderImplementation = struct
             union
         | Type.Annotated left, _ -> Type.annotated (join order left right)
         | _, Type.Annotated right -> Type.annotated (join order left right)
+        | Type.Unknown left, _ -> Type.unknown (join order left right)
+        | _, Type.Unknown right -> Type.unknown (join order left right)
         | Type.RecursiveType left_recursive_type, Type.RecursiveType right_recursive_type ->
             let new_name = Type.RecursiveType.Namespace.create_fresh_name () in
             (* Based on https://cstheory.stackexchange.com/a/38415. *)
@@ -226,6 +236,19 @@ module OrderImplementation = struct
         | _, Type.Variable _
         | Type.Variable _, _ ->
             union
+            (*
+        | ( Type.Parametric { name = left_primitive; parameters = [Single left_key; Single left_value] },
+            Type.Parametric { name = right_primitive; parameters = [Single right_key; Single right_value] } )
+            when (String.equal left_primitive "dict") && (String.equal right_primitive "dict") ->
+            (* Dictionary Join *)
+            Type.Parametric {
+              name = "dict";
+              parameters = [
+                Single (join order left_key right_key);
+                Single (join order left_value right_value);
+              ]
+            }
+            *)
         | ( Type.Parametric { name = left_primitive; _ },
             Type.Parametric { name = right_primitive; _ } )
         | Type.Parametric { name = left_primitive; _ }, Type.Primitive right_primitive
@@ -501,6 +524,8 @@ module OrderImplementation = struct
             Type.Bottom
         | Type.Annotated left, _ -> Type.annotated (meet order left right)
         | _, Type.Annotated right -> Type.annotated (meet order left right)
+        | Type.Unknown left, _ -> Type.unknown (meet order left right)
+        | _, Type.Unknown right -> Type.unknown (meet order left right)
         | (Type.Variable _ as variable), other
         | other, (Type.Variable _ as variable) ->
             if always_less_or_equal order ~left:variable ~right:other then

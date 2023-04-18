@@ -66,16 +66,15 @@ module type OurSignature = sig
 
   val unreachable : t
 
-  val resolution : t -> Resolution.t option
-
   val initial : resolution:Resolution.t -> t
 
+  (*
   val parse_and_check_annotation
     :  ?bind_variables:bool ->
     resolution:Resolution.t ->
     Expression.t ->
     Error.t list * Type.t
-
+  *)
   include PossibleFixpoint.PossibleState with type t := t
 end
 

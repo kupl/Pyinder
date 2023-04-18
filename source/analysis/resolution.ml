@@ -450,5 +450,8 @@ let fallback_attribute
 let top_to_bottom ({ annotation_store; _ } as t) =
   { t with annotation_store = Refinement.Store.top_to_bottom annotation_store }
 
+let add_unknown ({ annotation_store; _ } as t) =
+  { t with annotation_store = Refinement.Store.add_unknown annotation_store }
+
 let update_self_attributes_tree ({ annotation_store; _} as t) self_attributes_tree class_param =
   { t with annotation_store = Refinement.Store.update_self_attributes_tree annotation_store self_attributes_tree class_param}
