@@ -147,7 +147,8 @@
            in
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
              Analysis.ErrorsEnvironment.ReadOnly.ast_environment environment,
-             Analysis.ErrorsEnvironment.ReadOnly.type_environment environment )))
+             Analysis.ErrorsEnvironment.ReadOnly.type_environment environment )
+             ))
   let print_errors errors =
     Yojson.Safe.to_string
       (`Assoc
@@ -173,7 +174,6 @@
    *)
    Analysis.OurTypeSet.set_data_path configuration;
    
-   
    Log.dump "%s" "Type Inferecne...";
    Analysis.OurTypeSet.save_mode "inference";
 
@@ -181,14 +181,16 @@
 
    let rec fixpoint n prev_model =
     let single_errors, ast_environment, type_environment = do_check configuration in
-    Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors;
+    Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors |> Analysis.AnalysisError.deduplicate;
+    
     let global_resolution =
       Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
     in
     Analysis.OurTypeSet.load_all_summary global_resolution ~use_cache:false;
+    Analysis.OurTypeSet.save_global_summary ();
     let our_model = !Analysis.OurTypeSet.our_model in
-    Log.dump "OKOK %a" Analysis.OurTypeSet.OurSummary.pp our_model;
-    Analysis.OurTypeSet.save_summary our_model (Ast.Reference.create Analysis.OurTypeSet.final_summary);
+    
+    (*Log.dump "OKOK %a" Analysis.OurTypeSet.OurSummary.pp our_model;*)
     if (Analysis.OurTypeSet.OurSummary.equal prev_model our_model)
     then single_errors, ast_environment, type_environment
     else fixpoint (n+1) our_model
@@ -198,7 +200,9 @@
    Unix.sleep(1);
 
    
-  let _, ast_environment, _ = fixpoint 0 !Analysis.OurTypeSet.our_model in
+  let errors, ast_environment, _ = fixpoint 0 !Analysis.OurTypeSet.our_model in
+
+  
    
 
    Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;
@@ -207,14 +211,14 @@
    
    Analysis.OurTypeSet.save_mode "search";
    (*print_endline "[[[ Search Mode ]]]";*)
-   let errors, _, _ = do_check configuration in
+   let _, _, _ = do_check configuration in
    Log.dump "END";
    
   (*
    Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
   *)
    Unix.sleep(1);
-   let errors = Analysis.AnalysisError.filter_type_error errors in
+   let errors = Analysis.AnalysisError.filter_type_error errors |> Analysis.AnalysisError.deduplicate in
    Pyinder.Summarize.ast_environment := Some ast_environment;
    Pyinder.Summarize.errors := errors;
 
@@ -224,7 +228,7 @@
       ~f:(Server.RequestHandler.instantiate_error ~build_system ~configuration ~ast_environment)
    in
 
-   (*print_errors x;*)
+   print_errors x;
    x
  
 
@@ -265,13 +269,15 @@
             )
           in
 
+          let _ = single_errors in
+
           (* ADD ERRORS *)
           
           (*
           print_endline "";
           Log.print "%s\n" (Analysis.OurTypeSet.ClassSummary.pp_json !Analysis.OurTypeSet.our_model.class_summary);
           *)
-          print_errors (single_errors@errors);
+          print_errors (errors);
           Lwt.return ExitStatus.Ok)
     | None -> raise NoAstEnvironment
  
@@ -341,8 +347,7 @@
          message;
        ExitStatus.PyreError
    | _ as exn ->
-       print_endline "INTERNAL ERROR !!!";
-       print_endline (Exn.to_string exn);
+       Log.error "INTERNAL ERROR !!!";
        Printexc.print_backtrace Out_channel.stdout ;
        Log.error "Pyre encountered an internal exception: %s" (Exn.to_string exn);
        ExitStatus.PyreError
@@ -356,12 +361,14 @@
     | _ -> ()
     );
 
-    let _ = analyze_json in
+    let _ = analyze_json, print_error_and_scenario, UnequalErrorScenario in
     
     Log.dump "%s" "Analyze Call Graph...";
+    (*
     Analysis.OurTypeSet.save_mode "cfg";
     Unix.sleep(1);
     let _ = AnalyzeCommand.run_analyze_mine analyze_json in
+    
     Log.dump "%s" "Done";
 
     let errors = !Pyinder.Summarize.errors in
@@ -379,7 +386,7 @@
       let _ = print_error_and_scenario check_configuration error_and_scenario_list in ()
     | List.Or_unequal_lengths.Unequal_lengths -> raise UnequalErrorScenario
     );
-    
+    *)
     
     Unix.sleep(1);
     x

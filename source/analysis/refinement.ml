@@ -196,11 +196,12 @@ module Unit = struct
                    ~key:identifier
                    ~data:
                      (find attributes identifier
-                     |> Option.value ~default:empty
+                     |> Option.value ~default:empty (* TODO : is empty? or remain unknown? *)
                      |> recurse ~annotation ~identifiers);
           }
     in
-    recurse ~annotation ~identifiers:(attribute_path |> Reference.as_list) refinement_unit
+    let x = recurse ~annotation ~identifiers:(attribute_path |> Reference.as_list) refinement_unit in
+    x
 
 
   (** If `attribute_path` is empty, get the base annotation. Otherwise, find the appropriate
@@ -475,7 +476,7 @@ module Store = struct
   let get_base ~name store = get_unit ~name store |> Unit.base
 
   let get_attributes ~name store = get_unit ~name store |> Unit.attributes
-
+  
   let get_annotation ~name ~attribute_path store =
     get_unit ~name store |> Unit.get_annotation ~attribute_path
 
@@ -738,14 +739,26 @@ module Store = struct
       temporary_annotations = Reference.Map.mapi temporary_annotations ~f:(fun ~key ~data -> if Reference.is_self key then data else Unit.add_unknown data);
     }
 
-  let update_self_attributes_tree ({ annotations; _ } as t) self_attributes_tree class_param =
-    let annotations =
+  let update_self_attributes_tree { annotations; temporary_annotations; } self_attributes_tree class_param =
+    let annotations, unit_base =
       match (Reference.Map.find annotations class_param) with
       | Some u ->
-        Reference.Map.set annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree)
+        Reference.Map.set annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree), u
       | _ ->
-        Reference.Map.set annotations ~key:class_param ~data:(Unit.empty |> Unit.set_attributes ~attributes:self_attributes_tree)
+        failwith "No Class Variable"
     in
-    { t with annotations; }
+
+    let _ = unit_base in
+    (*
+    let annotations =
+      match (Reference.Map.find temporary_annotations class_param) with
+      | Some u ->
+        Reference.Map.set temporary_annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree)
+      | _ ->
+        Reference.Map.set temporary_annotations ~key:class_param ~data:(unit_base |> Unit.set_attributes ~attributes:self_attributes_tree)
+    in
+    *)
+
+    { annotations; temporary_annotations; }
 
 end

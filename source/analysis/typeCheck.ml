@@ -12995,11 +12995,14 @@ module PossibleState (Context : Context) = struct
         match at_type with
         | Unreachable -> None
         | Value resolution ->
+          Some resolution
+            (*
             let at_resolution, at_errors = TypeCheckAT.forward_statement ~resolution ~statement in
             let _ = at_errors in (* at errors *)
             match at_resolution with
             | Unreachable -> None
             | Value at_resolution -> Some at_resolution
+            *)
       in
       at_type, rt_resolution ~at_resolution
     in
@@ -13820,8 +13823,9 @@ let exit_state ~resolution (module Context : Context) =
   let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; _ } as define; _ } =
     Context.define
   in
-  (*
+  
   let global_resolution = Resolution.global_resolution resolution in
+  (*
   let _ = our_model in
   let resolution = 
     (match parent with
@@ -13840,7 +13844,6 @@ let exit_state ~resolution (module Context : Context) =
   let our_arg_types = OurTypeSet.OurSummary.get_func_arg_types !OurTypeSet.our_model name in
   let resolution = OurTypeSet.ArgTypes.export_to_resolution our_arg_types resolution in
   *)
-  
 
   let initial = PossibleState.initial ~resolution in
   let initial = 
@@ -13860,15 +13863,21 @@ let exit_state ~resolution (module Context : Context) =
         | None -> ()
         );
         *)
-        
-        
+        (*
+        Log.dump "Treating %a" Reference.pp name;
+        *)
 
         (* self 변수 업데이트 하기 *)
         let update_resolution_of_self ~final_model resolution =
           match parent, List.nth parameters 0 with
           | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-            let self_attributes_tree = OurTypeSet.OurSummary.get_self_attributes_tree final_model class_name in
-            (*Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data -> Log.dump "HMM %s : %a" key Refinement.Unit.pp data);*)
+            (*
+            Log.dump "Class Name : %a" Reference.pp class_name;
+            *)
+            let self_attributes_tree = OurTypeSet.OurSummary.get_self_attributes_tree ~global_resolution final_model class_name in
+            (*
+            Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data -> Log.dump "HMM %s : %a" key Refinement.Unit.pp data);
+            *)
             let resolution = Resolution.update_self_attributes_tree resolution self_attributes_tree (Reference.create class_param) in
             (*Log.dump "FINAL %a" Resolution.pp resolution;*)
             resolution
@@ -13878,10 +13887,39 @@ let exit_state ~resolution (module Context : Context) =
         (* attribute 보고 update하기 *)
         let update_resolution_from_attributes ~final_model resolution =
           let func_attrs = 
+            let parent_usage_attributes = AttributeAnalysis.AttributeStorage.empty in
+            let class_summary = OurTypeSet.OurSummary.class_summary final_model in
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-              OurTypeSet.OurSummary.find_class_of_attributes ~class_name ~class_param final_model name
-            | _ -> OurTypeSet.OurSummary.find_class_of_attributes final_model name
+
+              let rec get_parent_usage_attributes class_name parent_usage_attributes =
+                (* 부모 클래스 계속 순회하면서 attributes 업데이트 *)
+                let parent_usage_attributes =
+                  OurTypeSet.ClassSummary.get_usage_attributes class_summary class_name
+                  |> AttributeAnalysis.AttributeStorage.join parent_usage_attributes
+                in
+                let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_name)) in
+                (match class_summary with
+                | Some { Node.value = class_summary; _ } ->
+                  List.fold ~init:parent_usage_attributes (ClassSummary.base_classes class_summary) 
+                    ~f:(fun parent_usage_attributes { Node.value = parent_class_exp; _ }  ->
+                      match parent_class_exp with
+                      | Name name ->
+                        let class_name = name_to_reference name |> Option.value ~default:Reference.empty in
+                        get_parent_usage_attributes class_name parent_usage_attributes
+                      | _ -> parent_usage_attributes
+                    )
+                | _ -> parent_usage_attributes
+                )
+              in
+
+              let parent_usage_attributes =
+                get_parent_usage_attributes class_name parent_usage_attributes
+                |> AttributeAnalysis.AttributeStorage.add_prefix ~prefix:(Reference.create class_param)
+              in
+
+              OurTypeSet.OurSummary.find_class_of_attributes final_model name parent_usage_attributes
+            | _ -> OurTypeSet.OurSummary.find_class_of_attributes final_model name parent_usage_attributes
             )
           in  
           LocInsensitiveExpMap.fold func_attrs ~init:resolution ~f:(fun ~key:{ Node.value; _ } ~data resolution ->
@@ -13895,19 +13933,28 @@ let exit_state ~resolution (module Context : Context) =
           )
         in
 
+        (* Arg Types 보고 update 하기 *)
+        let update_resolution_from_arg_types ~final_model func_name resolution =
+          let func_arg_types = OurTypeSet.OurSummary.get_func_arg_types final_model func_name in
+          OurTypeSet.ArgTypes.join_to_resolution ~join:(GlobalResolution.join global_resolution) func_arg_types resolution
+        in
+
         let resolution_updated_attributes = 
           resolution 
           |> update_resolution_from_attributes ~final_model
         in
 
-        (* Arg Annotation 저장 *)
         let our_model = OurTypeSet.load_summary name in
         let our_model = OurTypeSet.OurSummary.set_arg_annotation our_model name (Resolution.get_annotation_store resolution_updated_attributes) in 
+        
         OurTypeSet.save_summary our_model name;
+        
 
+        
         let resolution =
           resolution_updated_attributes 
           |> update_resolution_of_self ~final_model 
+          |> update_resolution_from_arg_types ~final_model name
         in
 
         resolution
@@ -13928,7 +13975,11 @@ let exit_state ~resolution (module Context : Context) =
             update_resolution resolution 
             |> Resolution.top_to_bottom
             |> Resolution.add_unknown
+
           in
+          (*
+          Log.dump "Result : %a" Resolution.pp x;
+          *)
           Value (
             x
           )
@@ -13981,7 +14032,6 @@ let exit_state ~resolution (module Context : Context) =
     else ();
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
     let exit = PossibleFixpoint.exit fixpoint in
-
 
     (*
     (match PossibleFixpoint.exit_possible fixpoint with
@@ -14077,7 +14127,6 @@ let exit_state ~resolution (module Context : Context) =
       in
       *)
 
-      Log.dump "WERWER";
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
       let our_model = 
@@ -14085,7 +14134,6 @@ let exit_state ~resolution (module Context : Context) =
         | Some state ->
           (match state.rt_type with
           | Value v ->
-            Log.dump "OH %a" Resolution.pp v;
             let our_model = OurTypeSet.OurSummary.set_return_condition our_model name (Resolution.get_annotation_store v) in
             let our_model = 
               (match parent with
@@ -14680,7 +14728,7 @@ let search_define_by_name
     name
   =
   let global_resolution = GlobalResolution.create global_environment ?dependency in
-  OurTypeSet.load_all_summary global_resolution;
+  (*OurTypeSet.load_all_summary global_resolution;*)
   (* TODO(T65923817): Eliminate the need of creating a dummy context here *)
   let resolution = resolution global_resolution (module DummyContext) in
   GlobalResolution.function_definition global_resolution name

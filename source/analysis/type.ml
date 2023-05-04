@@ -42,13 +42,12 @@ module Record = struct
         constraints: 'annotation constraints;
         variance: variance;
         state: state;
-        namespace: RecordNamespace.t;
+        namespace: RecordNamespace.t [@compare.ignore] [@compare.equal.ignore]
+        (* TODO: it is not valid... *);
       }
       [@@deriving compare, eq, sexp, show, hash]
-
       let create ?(constraints = Unconstrained) ?(variance = Invariant) name =
         { variable = name; constraints; variance; state = Free { escaped = false }; namespace = 0 }
-
 
       let pp_concise format { variable; constraints; variance; _ } ~pp_type =
         let name =
@@ -881,6 +880,7 @@ module Record = struct
   end
 
   module TypedDictionary = struct
+    
     type 'annotation typed_dictionary_field = {
       name: string;
       annotation: 'annotation;
@@ -1473,7 +1473,7 @@ module T = struct
       }
 
   and t =
-    | Unknown of t
+    | Unknown
     | Annotated of t
     | Bottom
     | Callable of t Record.Callable.record
@@ -1504,6 +1504,9 @@ end
 include T
 
 type type_t = t [@@deriving compare, eq, sexp, show, hash]
+
+
+let equal = [%compare.equal: type_t]
 
 module IntExpression : sig
   val create : type_t Polynomial.t -> type_t
@@ -1854,153 +1857,133 @@ module Parameter = struct
     | _ -> false
 end
 
-let rec is_any = function
+let is_any = function
   | Any -> true
-  | Unknown unknown -> is_any unknown
   | _ -> false
 
 
-let rec is_async_iterator = function
+let is_async_iterator = function
   | Parametric { name = "typing.AsyncIterator"; _ } -> true
-  | Unknown unknown -> is_async_iterator unknown
   | _ -> false
 
 
-let rec is_callable = function
+let is_callable = function
   | Callable _ -> true
-  | Unknown unknown -> is_callable unknown
   | _ -> false
 
 
-let rec is_dictionary ?(with_key = None) = function
+let is_dictionary ?(with_key = None) = function
   | Parametric { name = "dict"; parameters } -> (
       match with_key, parameters with
       | Some key, [Single key_parameter; _] -> equal key key_parameter
       | _ -> true)
-  | Unknown unknown -> is_dictionary unknown
   | _ -> false
 
 
-let rec is_dictionary_or_mapping = function
+let is_dictionary_or_mapping = function
   | Parametric { name = "typing.Mapping" | "dict"; _ } -> true
-  | Unknown unknown -> is_dictionary_or_mapping unknown
   | _ -> false
 
 
-let rec is_ellipsis = function
+let is_ellipsis = function
   | Primitive "ellipsis" -> true
-  | Unknown unknown -> is_ellipsis unknown
   | _ -> false
 
 
-let rec is_generic_primitive = function
+let is_generic_primitive = function
   | Primitive "typing.Generic" -> true
-  | Unknown unknown -> is_generic_primitive unknown
   | _ -> false
 
 
-let rec is_iterable = function
+let is_iterable = function
   | Parametric { name = "typing.Iterable"; _ } -> true
-  | Unknown unknown -> is_iterable unknown
   | _ -> false
 
 
-let rec is_iterator = function
+let is_iterator = function
   | Parametric { name = "typing.Iterator"; _ } -> true
-  | Unknown unknown -> is_iterator unknown
   | _ -> false
 
 
-let rec is_list = function
+let is_list = function
   | Parametric { name = "list"; _ } -> true
-  | Unknown unknown -> is_list unknown
   | _ -> false
 
 
-let rec is_meta = function
+let is_meta = function
   | Parametric { name = "type"; _ } -> true
-  | Unknown unknown -> is_meta unknown
   | _ -> false
 
 
-let rec is_none = function
+let is_none = function
   | NoneType -> true
-  | Unknown unknown -> is_none unknown
   | _ -> false
 
 
-let rec is_noreturn = function
+let is_noreturn = function
   | Primitive "typing.NoReturn" -> true
-  | Unknown unknown -> is_noreturn unknown
   | _ -> false
 
 
-let rec is_object = function
+let is_object = function
   | Primitive "object" -> true
-  | Unknown unknown -> is_object unknown
   | _ -> false
 
 
-let rec is_optional = function
+let is_optional = function
   | Union [NoneType; _]
   | Union [_; NoneType] ->
       true
   | Parametric { name = "typing.Optional" | "Optional"; _ } -> true
-  | Unknown unknown -> is_optional unknown
   | _ -> false
 
 
-let rec is_optional_primitive = function
+let is_optional_primitive = function
   | Primitive "typing.Optional" -> true
-  | Unknown unknown -> is_optional_primitive unknown
   | _ -> false
 
 
-let rec is_primitive = function
+let is_primitive = function
   | Primitive _ -> true
-  | Unknown unknown -> is_primitive unknown
   | _ -> false
 
 
-let rec is_top = function
+let is_top = function
   | Top -> true
-  | Unknown unknown -> is_top unknown
   | _ -> false
 
-let rec is_bottom = function
+let is_unknown = function
+  | Unknown -> true
+  | _ -> false
+
+let is_bottom = function
   | Bottom -> true
-  | Unknown unknown -> is_bottom unknown
   | _ -> false
 
 
-let rec is_tuple = function
+let is_tuple = function
   | Tuple _ -> true
   | Parametric { name = "typing.Tuple" | "Tuple"; _ } -> true
-  | Unknown unknown -> is_tuple unknown
   | _ -> false
 
 
-let rec is_type_alias = function
+let is_type_alias = function
   | Primitive "typing_extensions.TypeAlias" -> true
-  | Unknown unknown -> is_type_alias unknown
   | _ -> false
 
 
-let rec is_unbound = function
+let is_unbound = function
   | Bottom -> true
-  | Unknown unknown -> is_unbound unknown
   | _ -> false
 
 
-let rec is_union = function
+let is_union = function
   | Union _ -> true
-  | Unknown unknown -> is_union unknown
   | _ -> false
 
 
-let rec is_variable = function
+let is_variable = function
   | Variable _ -> true
-  | Unknown unknown -> is_variable unknown
   | _ -> false
 
 
@@ -2012,7 +1995,6 @@ let rec is_falsy = function
   | Literal (Bytes "") ->
       true
   | Annotated annotated -> is_falsy annotated
-  | Unknown unknown -> is_falsy unknown
   | Union types -> List.for_all types ~f:is_falsy
   | _ -> false
 
@@ -2027,10 +2009,8 @@ let rec is_truthy = function
     when not (String.is_empty value) ->
       true
   | Annotated annotated -> is_truthy annotated
-  | Unknown unknown -> is_falsy unknown
   | Union types -> List.for_all types ~f:is_truthy
   | _ -> false
-
 
 let reverse_substitute name =
   match name with
@@ -2108,7 +2088,7 @@ let rec pp format annotation =
     | ordered_type -> Format.asprintf "%a" (Record.OrderedTypes.pp_concise ~pp_type:pp) ordered_type
   in
   match annotation with
-  | Unknown unknown -> Format.fprintf format "Unknown[%a]" pp unknown
+  | Unknown -> Format.fprintf format "Unknown"
   | Annotated annotation -> Format.fprintf format "typing.Annotated[%a]" pp annotation
   | Bottom -> Format.fprintf format "bottom"
   | Callable { kind; implementation; overloads; _ } ->
@@ -2183,7 +2163,7 @@ and pp_concise format annotation =
   match annotation with
   | Annotated annotation -> Format.fprintf format "typing.Annotated[%a]" pp_concise annotation
   | Bottom -> Format.fprintf format "Bottom"
-  | Unknown unknown -> Format.fprintf format "?[%a]" pp_concise unknown
+  | Unknown -> Format.fprintf format "?"
   | Callable { implementation; _ } ->
       let signature_to_string { annotation; parameters; _ } =
         let parameters =
@@ -2294,10 +2274,6 @@ let rec annotated annotation =
   | Annotated annotation -> annotated annotation
   | _ -> Annotated annotation
 
-let rec unknown annotation =
-  match annotation with
-  | Unknown annotation -> unknown annotation
-  | _ -> Unknown annotation
 
 let awaitable parameter = Parametric { name = "typing.Awaitable"; parameters = [Single parameter] }
 
@@ -2511,7 +2487,7 @@ let rec expression annotation =
       | Concrete parameters -> List.map ~f:expression parameters
     in
     match annotation with
-    | Unknown unknown -> get_item_call "Unknown" [expression unknown]
+    | Unknown -> create_name "$Unknown"
     | OurTypedDictionary { general; _ } -> Log.dump "What is covert?"; convert_annotation general
     | Annotated annotation -> get_item_call "typing.Annotated" [expression annotation]
     | Bottom -> create_name "$bottom"
@@ -2722,6 +2698,40 @@ let rec expression annotation =
   Node.create_with_default_location value
 
 
+let union_join left right =
+  let dedup =
+    List.dedup_and_sort ~compare:(fun l r ->
+      if (equal l r) then 0
+      else compare l r  
+    )
+  in
+
+  let single_union_check t =
+    match t with
+    | Union t_list -> if List.length t_list == 1 then List.nth_exn t_list 0 else t
+    | _ -> t
+  in
+
+  let union_result =
+    match left, right with
+    | Union t1, Union t2 -> single_union_check (Union (dedup (t1@t2)))
+    | Union t_list, t | t, Union t_list -> single_union_check (Union (dedup (t::t_list)))
+    | _ -> single_union_check (Union (dedup [left; right]))
+  in
+
+  (* check is top *)
+  let union_result =
+    match union_result with
+    | Union t -> 
+      if Option.is_some (List.find t ~f:(fun t -> is_top t)) then Top else union_result
+    | _ -> union_result
+  in
+  
+  (* union할 때 bot 제외 시키자 *)
+  match (single_union_check union_result) with
+  | Union t -> Union (List.filter t ~f:(fun t -> not (is_bottom t))) |> single_union_check
+  | _ -> union_result
+
 module Transform = struct
   type 'state visit_result = {
     transformed_annotation: t;
@@ -2798,7 +2808,7 @@ module Transform = struct
         match annotation with
         | NoneType -> NoneType
         | Annotated annotation -> Annotated (visit_annotation annotation ~state)
-        | Unknown unknown -> Unknown (visit_annotation unknown ~state)
+        | Unknown -> annotation
         | Callable ({ implementation; overloads; _ } as callable) ->
             let open Record.Callable in
             let visit_overload ({ annotation; parameters; _ } as overload) =
@@ -2949,16 +2959,35 @@ let add_unknown annotation =
 
     let visit_children_after = false
 
-    let visit _ annotation = { Transform.transformed_annotation = Unknown annotation; new_state = () }
+    let visit _ annotation = { Transform.transformed_annotation = union_join annotation Unknown; new_state = () }
   end)
   in
   snd (InstantiateTransform.visit () annotation)
+
+let any_to_unknown annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
+
+    let visit_children_before _ _ = true
+
+    let visit_children_after = false
+
+    let visit _ annotation = { 
+      Transform.transformed_annotation = 
+      (match annotation with
+      | Any -> Unknown
+      | _ -> annotation); new_state = () }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
+  
 
 let contains_callable annotation = exists annotation ~predicate:is_callable
 
 let contains_any annotation = exists annotation ~predicate:is_any
 
-let contains_unknown annotation = exists annotation ~predicate:is_top
+let contains_top annotation = exists annotation ~predicate:is_top
+let contains_unknown annotation = exists annotation ~predicate:is_unknown
 
 let contains_undefined annotation = exists annotation ~predicate:is_unbound
 
@@ -3105,6 +3134,8 @@ module Callable = struct
   include Record.Callable
 
   type t = type_t Record.Callable.record [@@deriving compare, eq, sexp, show, hash]
+
+
 
   type parameters = type_t Record.Callable.record_parameters
   [@@deriving compare, eq, sexp, show, hash]
@@ -4520,7 +4551,7 @@ let elements annotation =
       let elements, recursive_type_names =
         match annotation with
         | Annotated _ -> "typing.Annotated" :: sofar, recursive_type_names
-        | Unknown _ -> "Unknown" :: sofar, recursive_type_names
+        | Unknown -> sofar, recursive_type_names
         | Callable _ -> "typing.Callable" :: sofar, recursive_type_names
         | Literal literal ->
             let sofar =
@@ -6260,39 +6291,7 @@ let dequalify map annotation =
   in
   snd (DequalifyTransform.visit () annotation)
 
-let union_join left right =
-  let dedup =
-    List.dedup_and_sort ~compare:(fun l r ->
-      if (String.equal (show l) (show r)) then 0
-      else compare l r  
-    )
-  in
 
-  let single_union_check t =
-    match t with
-    | Union t_list -> if List.length t_list == 1 then List.nth_exn t_list 0 else t
-    | _ -> t
-  in
-
-  let union_result =
-    match left, right with
-    | Union t1, Union t2 -> single_union_check (Union (dedup (t1@t2)))
-    | Union t_list, t | t, Union t_list -> single_union_check (Union (dedup (t::t_list)))
-    | _ -> single_union_check (Union (dedup [left; right]))
-  in
-
-  (* check is top *)
-  let union_result =
-    match union_result with
-    | Union t -> 
-      if Option.is_some (List.find t ~f:(fun t -> is_top t)) then Top else union_result
-    | _ -> union_result
-  in
-  
-  (* union할 때 bot 제외 시키자 *)
-  match (single_union_check union_result) with
-  | Union t -> Union (List.filter t ~f:(fun t -> not (is_bottom t))) |> single_union_check
-  | _ -> union_result
 
   
 
@@ -6312,28 +6311,6 @@ module OurTypedDictionary = struct
   let add_bottom_in_fields t =
     List.map t ~f:(fun record -> {record with annotation=union_join record.annotation Bottom})
 
-  let rec update_dict_field target_type name annotation =
-    match target_type with
-    | Unknown unknown -> Unknown (update_dict_field unknown name annotation)
-    | Parametric { name = "typing.Dict" | "dict"; _ } ->
-      OurTypedDictionary
-      { 
-        general=target_type;
-        typed_dict = [create_field ~annotation name];
-      }
-    | OurTypedDictionary ({ typed_dict; _ } as our_typed_dict) ->
-      let typed_dict_find _ { name=dict_name; _ } = String.equal name dict_name in
-      let dropped_typed_dict = 
-        (match List.findi typed_dict ~f:typed_dict_find with
-        | Some (i, _) ->
-          List.drop typed_dict i
-        | _ -> typed_dict
-        )
-      in
-      OurTypedDictionary { our_typed_dict with typed_dict=(create_field ~annotation name)::dropped_typed_dict }
-    
-    | _ -> target_type
-
   let join ~join (left: 'annotation record) (right: 'annotation record) =
     List.fold right ~init:left ~f:(fun acc field ->
       match List.find acc ~f:(fun other -> 
@@ -6341,7 +6318,6 @@ module OurTypedDictionary = struct
         (String.equal other.name field.name)) with
       | Some f -> 
         List.map acc ~f:(fun x -> 
-          Log.dump "%a %a %a" pp f.annotation pp field.annotation pp (join f.annotation field.annotation);
           if String.equal x.name field.name
           then { name=f.name; annotation=join f.annotation field.annotation; }
           else x
@@ -6354,6 +6330,27 @@ module OurTypedDictionary = struct
       | None -> field::acc
     )
 
+  let rec update_dict_field ~join_f target_type name annotation =
+    match target_type with
+    | Union t_list -> Union (List.map t_list ~f:(fun t -> update_dict_field ~join_f t name annotation))
+    | Parametric { name = "typing.Dict" | "dict"; _ } ->
+      OurTypedDictionary
+      { 
+        general=target_type;
+        typed_dict = [create_field ~annotation name];
+      }
+    | OurTypedDictionary ({ typed_dict; _ } as our_typed_dict) ->
+      let typed_dict_find _ { name=dict_name; _ } = String.equal name dict_name in
+      let typed_dict = 
+        (match List.findi typed_dict ~f:typed_dict_find with
+        | Some _ -> (* join 하면 됨 *)
+          join ~join:join_f typed_dict [(create_field ~annotation name)]
+        | _ -> (* 추가하면 됨 *) (create_field ~annotation name)::typed_dict
+        )
+      in
+      OurTypedDictionary { our_typed_dict with typed_dict; }
+    
+    | _ -> target_type
   let solve_less_or_equal ~left ~right ~solve ~order ~constraints ~impossible =
     let find name field =
       String.equal name field.name
@@ -6873,7 +6870,7 @@ let resolve_class annotation =
                       instantiated;
                 })
     | Annotated annotation -> extract ~meta annotation
-    | Unknown unknown -> extract ~meta unknown
+    | Unknown -> Some []
     | annotation when is_meta annotation ->
         (* Metaclasses return accessed_through_class=true since they allow looking up only class
            attribute, etc. *)
@@ -7020,7 +7017,7 @@ let rec top_to_bottom t =
   | Union t -> Union (List.map t ~f:top_to_bottom)
   | Variable _ -> t
   | IntExpression _ -> t 
-  | Unknown unknown -> Unknown (top_to_bottom unknown)
+  | Unknown -> Unknown
 
 
 let rec get_dict_value_type ?(with_key = None) t =

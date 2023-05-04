@@ -287,7 +287,7 @@ module EnvironmentTable = struct
 
 
       let read_only ({ upstream_environment; _ } as this_environment) =
-        { ReadOnly.get = get this_environment; upstream_environment }
+        { ReadOnly.get = get this_environment; upstream_environment; }
 
 
       module TriggerMap = Map.Make (struct

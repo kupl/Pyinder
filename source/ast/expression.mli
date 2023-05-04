@@ -518,6 +518,8 @@ val name_to_reference_exn : Name.t -> Reference.t
 
 val is_simple_name : Name.t -> bool
 
+val add_identifier_base : data:Reference.t -> t -> t
+
 val change_identifier_base : data:string -> t -> t
 
 val get_identifier_base : t -> Identifier.t option

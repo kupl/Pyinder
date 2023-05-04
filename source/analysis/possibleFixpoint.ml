@@ -173,9 +173,9 @@ module Make (State : PossibleState) = struct
       in
       *)
       
-      
-      Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
       (*
+      Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+      
       Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
       *)
       (*

@@ -18,6 +18,7 @@ module AttributeStorage :
     type t = Identifier.Set.t LocInsensitiveExpMap.t [@@deriving sexp, equal]
     val empty : t
     val map : t -> f:(Identifier.Set.t -> 'a) -> 'a LocInsensitiveExpMap.t
+    val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit
     val pp :
       Format.formatter -> t -> unit
@@ -28,7 +29,9 @@ module AttributeStorage :
       t
     val add_prefix : t -> prefix:Reference.t -> t
     val filter_by_prefix : t -> prefix:Reference.t -> t
+    val filter_class_var : t -> prefix:Reference.t -> t
     val join : t -> t -> t
+    val join_without_merge : origin:t -> t -> t
   end
 val forward_expression_list :
   (AttributeStorage.t * String.Set.t SkipMap.t) ->

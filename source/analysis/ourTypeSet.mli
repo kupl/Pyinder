@@ -52,6 +52,8 @@ module ClassSummary : sig
 
   val empty : t
 
+  val get_usage_attributes : t -> Reference.t -> AttributeStorage.t
+
   val outer_join_class_variable_type : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Store.t -> t
 
   (*
@@ -76,6 +78,8 @@ module ArgTypes : sig
   val get_type : t -> Identifier.t -> Type.t
 
   val export_to_resolution : t -> Resolution.t -> Resolution.t
+
+  val join_to_resolution : join:(Type.t -> Type.t -> Type.t) -> t -> Resolution.t -> Resolution.t
 end
 
 module FunctionSummary : sig
@@ -127,6 +131,8 @@ module OurSummary : sig
 
   val add_usage_attributes : ?class_name:Reference.t -> ?class_var:string -> t -> Reference.t -> AttributeStorage.t -> t
 
+  val add_parent_attributes : t -> AttributeStorage.t -> Reference.t -> string -> t
+
   val set_arg_annotation : t -> Reference.t -> Refinement.Store.t -> t
 
   val set_return_condition : t -> Reference.t -> Refinement.Store.t -> t
@@ -171,16 +177,18 @@ module OurSummary : sig
 
   val get_usage_attributes_from_class : t -> Reference.t -> AttributeStorage.t
 
-  val get_self_attributes_tree : t -> Reference.t -> Refinement.Unit.t Identifier.Map.Tree.t
+  val get_self_attributes_tree : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Unit.t Identifier.Map.Tree.t
 
   val update_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t -> t
 
   val search_suspicious_variable : t -> global_resolution:GlobalResolution.t -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 
-  val find_class_of_attributes : ?class_name:Reference.t -> ?class_param:string -> t -> Reference.t -> Reference.t LocInsensitiveExpMap.t 
+  val find_class_of_attributes : t -> Reference.t -> AttributeStorage.t -> Reference.t LocInsensitiveExpMap.t 
 end
 
-val final_summary : string
+val global_summary : string
+
+val is_func_model_exist : unit -> bool
 
 val set_data_path : Configuration.Analysis.t -> unit
 
@@ -200,7 +208,15 @@ val load_mode : unit -> string
 
 val save_summary : OurSummary.t -> Reference.t -> unit
 
+val save_global_summary : unit -> unit
+
 val load_summary : Reference.t -> OurSummary.t
+
+val load_global_summary : unit -> OurSummary.t
+
+val load_global_summary_cache : unit -> unit
+
+val load_all_summary_test : unit -> unit
 
 val load_all_summary : ?use_cache:bool -> GlobalResolution.t -> unit
 

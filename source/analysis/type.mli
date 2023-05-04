@@ -35,7 +35,7 @@ module Record : sig
         constraints: 'annotation constraints;
         variance: variance;
         state: state;
-        namespace: RecordNamespace.t;
+        namespace: RecordNamespace.t [@ignore];
       }
       [@@deriving compare, eq, sexp, show, hash]
     end
@@ -365,7 +365,7 @@ and literal =
     }
 
 and t =
-  | Unknown of t
+  | Unknown
   | Annotated of t
   | Bottom
   | Callable of t Record.Callable.record
@@ -464,8 +464,6 @@ val serialize : t -> string
 val parametric : string -> Parameter.t list -> t
 
 val annotated : t -> t
-
-val unknown : t -> t
 
 val awaitable : t -> t
 
@@ -734,6 +732,8 @@ val is_primitive : t -> bool
 
 val is_top : t -> bool
 
+val is_unknown : t -> bool
+
 val is_tuple : t -> bool
 
 val is_type_alias : t -> bool
@@ -747,6 +747,8 @@ val is_falsy : t -> bool
 val is_truthy : t -> bool
 
 val contains_any : t -> bool
+
+val contains_top : t -> bool
 
 val contains_unknown : t -> bool
 
@@ -799,6 +801,8 @@ val instantiate
   t
 
 val add_unknown : t -> t
+
+val any_to_unknown : t -> t
 
 val weaken_literals : t -> t
 
@@ -1104,15 +1108,15 @@ module OurTypedDictionary : sig
 
   val get_field_annotation : type_t typed_dictionary_field list -> string -> type_t
 
-  val add_bottom_in_fields : type_t typed_dictionary_field list -> type_t typed_dictionary_field list 
-
-  val update_dict_field : type_t -> string -> type_t -> type_t
-
+  val add_bottom_in_fields : type_t typed_dictionary_field list -> type_t typed_dictionary_field list
+  
   val join 
-    : join:(type_t -> type_t -> type_t) ->
-      type_t Record.OurTypedDictionary.record ->
-      type_t Record.OurTypedDictionary.record ->
-      type_t Record.OurTypedDictionary.record
+  : join:(type_t -> type_t -> type_t) ->
+    type_t Record.OurTypedDictionary.record ->
+    type_t Record.OurTypedDictionary.record ->
+    type_t Record.OurTypedDictionary.record
+
+  val update_dict_field : join_f:(type_t -> type_t -> type_t) -> type_t -> string -> type_t -> type_t
 
   val solve_less_or_equal
     : left:'annotation Record.OurTypedDictionary.record ->

@@ -2309,6 +2309,18 @@ let name_to_reference_exn name =
 
 let is_simple_name name = Option.is_some (name_to_identifiers name)
 
+let rec add_identifier_base ~data expression =
+  let value =
+    match Node.value expression with
+    | Call ({ callee; _ } as t) -> Call { t with callee = add_identifier_base callee ~data }
+    | Name (Name.Attribute ({ base; _ } as t)) -> Name ( Name.Attribute { t with base = add_identifier_base base ~data })
+    | Name (Name.Identifier attribute) -> 
+      let base = from_reference ~location:(Node.location expression) data in
+      Name (Name.Attribute { base; attribute; special=false; })
+    | _ -> failwith (Format.sprintf "Cannot change base of expression cause of %s" (Expression.show expression))
+  in
+  { expression with Node.value=value }
+
 let rec change_identifier_base ~data expression =
   let value =
     match Node.value expression with

@@ -104,6 +104,9 @@ module ClassAttributes = struct
   let total_attributes { attributes; properties; methods; } =
     AttrsSet.union_list [attributes; properties; methods;]
 
+  let is_used_attr { attributes; properties; methods; } attr =
+    AttrsSet.exists (AttrsSet.union_list [attributes; properties; methods]) ~f:(fun elem -> String.equal elem attr)
+
   let is_subset_with_total_attributes t attributes =
     AttrsSet.is_subset attributes ~of_:(total_attributes t)
 end 
@@ -175,10 +178,15 @@ module ClassInfo = struct
   let get_class_variable_type { class_variable_type; _ } = class_variable_type
 
   let get_usage_attributes { usage_attributes; _ } = usage_attributes
-  let get_self_attributes_tree t =
+  let get_self_attributes_tree ~global_resolution t =
     let name = Reference.create "$parameter$self" in
-    get_class_variable_type t
-    |> Refinement.Store.get_attributes ~name
+    let reference_map = 
+      get_class_variable_type t
+      |> Refinement.Store.combine_join_with_merge ~global_resolution
+    in
+    Reference.Map.find reference_map name
+    |> Option.value ~default:Unit.empty
+    |> Unit.attributes
 
 
   let add_attribute ({ class_attributes; _} as t) attr =
@@ -195,6 +203,18 @@ module ClassInfo = struct
 
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
+
+  let add_parent_attributes ({ class_attributes; usage_attributes; _ } as t) storage =
+    let storage = 
+      AttributeStorage.filter_keys storage ~f:(fun key -> 
+        match Expression.get_identifier_base key with
+        | Some base -> ClassAttributes.is_used_attr class_attributes base
+        | _ -> false
+      ) 
+    in
+    { t with usage_attributes=AttributeStorage.join usage_attributes storage }
+
+    
 
   let outer_join_class_variable_type ~global_resolution ({ class_variable_type; _ } as t) method_postcondition =
     set_class_variable_type t ~data:(
@@ -272,6 +292,8 @@ module ClassSummary = struct
 
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassInfo.add_usage_attributes
 
+  let add_parent_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassInfo.add_parent_attributes
+
   let set_class_info t class_name class_info =
     ClassMap.set t ~key:class_name ~data:class_info
 
@@ -281,7 +303,7 @@ module ClassSummary = struct
 
   let get_class_info t class_name = get t ~class_name ~f:(fun x -> x)
 
-  let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassInfo.get_self_attributes_tree
+  let get_self_attributes_tree ~global_resolution t class_name = get t ~class_name ~f:(ClassInfo.get_self_attributes_tree ~global_resolution)
 
   let get_class_variable_type t class_name = get t ~class_name ~f:ClassInfo.get_class_variable_type
 
@@ -371,6 +393,14 @@ module ArgTypes = struct
         Resolution.new_local resolution ~reference:(Reference.create key) ~annotation:(Annotation.create_immutable data)
     ) t ~init:resolution
 
+  let join_to_resolution ~join t resolution = 
+    ArgTypeMap.fold ~f:(fun ~key ~data resolution ->
+      let reference = Reference.create key in
+      let old_type = Resolution.resolve_reference resolution reference in
+      let new_type = join data old_type in
+      Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_type)
+    ) t ~init:resolution
+
 end
 
 module FunctionSummary = struct
@@ -422,6 +452,49 @@ module FunctionSummary = struct
   let equal 
     {arg_annotation=arg_anno1; arg_types=ref1; return_condition=cond1; return_types=typ1; usage_attributes=use1; _ } 
     {arg_annotation=arg_anno2; arg_types=ref2; return_condition=cond2; return_types=typ2; usage_attributes=use2; _ } =
+    (*
+    Log.dump "%b %b %b %b %b" 
+    (Refinement.Store.equal arg_anno1 arg_anno2) 
+    (ArgTypes.equal ref1 ref2)  
+    (Refinement.Store.equal cond1 cond2)
+    (Type.equal typ1 typ2) (AttributeStorage.equal use1 use2);
+    if not ((Type.equal typ1 typ2) ) then (
+      Log.dump "%a \n vs \n %a" Type.pp typ1 Type.pp typ2;
+      match typ1, typ2 with
+      | Union t1_list, Union t2_list ->
+        let _ =
+        List.iter2 t1_list t2_list ~f:(fun t1 t2 -> 
+            if not (Type.equal t1 t2) then (
+              let rec find t1 t2 =
+                Log.dump "%a\nvs (%b)\n%a" Type.pp t1 (Type.equal t1 t2) Type.pp t2;
+                match t1, t2 with 
+                | Parametric t1, Parametric t2 ->
+                  let t1 = List.nth_exn t1.parameters 0 in
+                  let t2 = List.nth_exn t2.parameters 0 in
+                  (match t1, t2 with
+                  | Single t1, Single t2 ->  find t1 t2
+                  | _ -> Log.dump "No Single"
+                  )
+                | Variable t1, Variable t2 -> 
+
+                  Log.dump "%b %b %b %b %b %b"
+                    (Identifier.equal t1.variable t2.variable)
+                    ([%equal: Type.t Type.Variable.constraints] t1.constraints t2.constraints)
+                    ([%equal: Type.Variable.variance] t1.variance t2.variance)
+                    ([%equal: Type.Variable.state] t1.state t2.state)
+                    ([%equal: Type.Variable.RecordNamespace.t] t1.namespace t2.namespace)
+                    ([%equal: Type.t Type.Variable.RecordUnary.record] t1 t2)
+                | _ -> Log.dump "NO..."
+              in
+              find t1 t2
+            );
+            Log.dump "%a\nvs (%b)\n%a" Type.pp t1 (Type.equal t1 t2) Type.pp t2
+          )
+        in
+        ()
+      | _ -> ()      
+    ); 
+    *)
       (Refinement.Store.equal arg_anno1 arg_anno2)
       && (ArgTypes.equal ref1 ref2) 
       && (Refinement.Store.equal cond1 cond2)
@@ -529,9 +602,9 @@ module FunctionSummary = struct
     
     vartype_map
 
-  let find_class_of_attributes ~class_summary ~class_name ~class_param { usage_attributes; _ } =
+  let find_class_of_attributes ~class_summary { usage_attributes; _ } parent_usage_attributes =
     let identifier_to_string t =
-        Identifier.Set.fold t ~init:AttrsSet.empty ~f:(fun set attr -> AttrsSet.add set attr)
+      Identifier.Set.fold t ~init:AttrsSet.empty ~f:(fun set attr -> AttrsSet.add set attr)
     in
 
     (* have to make proper filter *)
@@ -539,20 +612,23 @@ module FunctionSummary = struct
       List.nth classes 0
     in
     let usage_attributes =
-      match class_name, class_param with
-      | Some class_name, Some class_param ->
-        ClassSummary.get_usage_attributes class_summary class_name
-        |> AttributeStorage.add_prefix ~prefix:(Reference.create class_param)
-        |> AttributeStorage.join usage_attributes
-      | _ -> usage_attributes
+      parent_usage_attributes
+      |> AttributeStorage.join usage_attributes
     in
+    (*
+    Log.dump "TTT : %a" AttributeStorage.pp usage_attributes;
+    *)
     AttributeStorage.map usage_attributes ~f:(fun attributes -> 
         attributes
         |> identifier_to_string
         |> ClassSummary.find_classes_from_attributes class_summary
         |> extract_class
     )
-    |> LocInsensitiveExpMap.filter_map ~f:(fun v -> v)
+    |> LocInsensitiveExpMap.filter_map ~f:(fun v -> 
+      match v with
+      | Some v -> Some v
+      | _ -> v  
+    )
 
 end
 
@@ -684,9 +760,9 @@ module FunctionTable = struct
     )
     *)
 
-  let find_class_of_attributes ~class_summary t func_name =
+  let find_class_of_attributes ~class_summary t func_name parent_usage_attributes =
     let func_summary = FunctionSummaryMap.find t func_name |> Option.value ~default:(FunctionSummary.create ()) in
-    FunctionSummary.find_class_of_attributes ~class_summary func_summary
+    FunctionSummary.find_class_of_attributes ~class_summary func_summary parent_usage_attributes
 
 end
 
@@ -749,16 +825,25 @@ module OurSummary = struct
     { t with function_table = FunctionTable.add_return_info function_table func_name return_type }
 
   let add_usage_attributes ?class_name ?class_var {class_summary; function_table; } func_name storage =
-    let class_summary =
+    let class_summary, storage =
       match class_name, class_var with
       | Some class_name, Some class_var ->
         let filtered_storage = AttributeStorage.filter_by_prefix storage ~prefix:(Reference.create class_var) in
-        ClassSummary.add_usage_attributes class_summary class_name filtered_storage
-      | _ -> class_summary
+        let class_summary = ClassSummary.add_usage_attributes class_summary class_name filtered_storage in
+        let filter_class_var_storage = AttributeStorage.filter_class_var storage ~prefix:(Reference.create class_var) in
+        class_summary, filter_class_var_storage
+      | _ -> class_summary, storage
     in
+
     (*let class_summary =  in*)
     let function_table = FunctionTable.add_usage_attributes function_table func_name storage in
     { class_summary; function_table; }
+
+  let add_parent_attributes ({ class_summary; _ } as t) storage class_name class_var =
+    (* 이거 짜야 댕 *)
+    let filtered_storage = AttributeStorage.filter_by_prefix storage ~prefix:(Reference.create class_var) in
+    let class_summary = ClassSummary.add_parent_attributes class_summary class_name filtered_storage in
+    { t with class_summary; }
 
   let set_arg_annotation({function_table; _} as t) func_name arg_annotation =
     { t with function_table=FunctionTable.set_arg_annotation function_table func_name arg_annotation }
@@ -821,8 +906,8 @@ module OurSummary = struct
   let get_usage_attributes_from_class { class_summary; _ } class_name = 
     ClassSummary.get_usage_attributes class_summary class_name
 
-  let get_self_attributes_tree { class_summary; _ } class_name = 
-    ClassSummary.get_self_attributes_tree class_summary class_name
+  let get_self_attributes_tree ~global_resolution { class_summary; _ } class_name = 
+    ClassSummary.get_self_attributes_tree ~global_resolution class_summary class_name
   
   let update_map_function_of_types ({ class_summary; _ } as t) class_name vartype_map =
     { t with class_summary = ClassSummary.update_map_function_of_types class_summary class_name vartype_map }
@@ -875,11 +960,11 @@ module OurSummary = struct
     *)
     candidates
 
-  let find_class_of_attributes ?class_name ?class_param { class_summary; function_table; } func_name  =
-    FunctionTable.find_class_of_attributes ~class_summary ~class_name ~class_param function_table func_name
+  let find_class_of_attributes { class_summary; function_table; } func_name parent_usage_attributes  =
+    FunctionTable.find_class_of_attributes ~class_summary function_table func_name parent_usage_attributes
 end
 
-let final_summary = "Pyinder.finalSummary"
+let global_summary = "Pyinder.finalSummary"
 let check_dir : string -> bool 
 = fun path ->
   match Sys.is_directory path with
@@ -891,6 +976,8 @@ let check_and_make_dir : string -> unit
   if check_dir path then ()
   else Unix.mkdir path
 
+
+
 (*
 let check_file : string -> bool
 = fun path ->
@@ -901,12 +988,15 @@ match Sys.file_exists path with
   
 let data_path = ref ""
 
+let is_func_model_exist () = check_dir !data_path
+
 let set_data_path (configuration: Configuration.Analysis.t) =
   if String.equal !data_path "" then
     data_path :=
       (List.nth_exn configuration.source_paths 0 
       |> SearchPath.get_root
       |> PyrePath.show) ^ "/pyinder_analysis"
+
 
 
 let our_model = ref (OurSummary.create ());;
@@ -943,9 +1033,11 @@ let save_summary (summary: OurSummary.t) func_name =
   Marshal.to_channel data_out sexp [];
   close_out data_out
 
+let save_global_summary () = save_summary !our_model (Reference.create global_summary)
+
 let load_summary func_name =
   let filename = !data_path ^ "/" ^ (Reference.show func_name) ^ ".marshalled" in
-  
+  let x =
   match Sys.file_exists filename with
   | `Yes ->
       let data_in = open_in filename in
@@ -954,6 +1046,67 @@ let load_summary func_name =
       our_summary
   | _ ->
     OurSummary.create ()
+  in
+  x
+
+let load_global_summary () = load_summary (Reference.create global_summary)
+
+let load_all_summary_test () =
+  (
+    cache := true;
+    let list_files = Sys.readdir !data_path |> Array.to_list in 
+    let _ = List.iter list_files ~f:(fun file -> 
+      if String.equal file "mode.marshalled" then ()
+      else
+      (
+        Log.dump "%s Load..." file;
+        let data_in = open_in (!data_path ^ "/" ^ file) in
+        let t = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
+        close_in data_in;
+        Log.dump "%a" OurSummary.pp t;
+        ()
+      )
+    )
+    in
+    ()
+  )
+
+let global_cache = ref false
+
+let load_global_summary_cache () =
+  Thread.delay((Random.float 1.0) /. 1000.0);
+  if !global_cache then (
+    ()
+  )
+  else
+  (
+    
+    
+    global_cache := true;
+    (*
+    let data_out = open_out filename in
+    Marshal.to_channel data_out "" [];
+    close_out data_out;
+    *)
+    our_model := load_global_summary ();
+
+      (*
+    let filename = !data_path ^ "/" ^ "lock" in
+    match Sys.file_exists filename with
+    | `Yes ->
+
+      Thread.delay((Random.float 1.0) /. 1000.0);
+      load_global_summary_cache ()
+    | _ ->
+      global_cache := true;
+      Log.dump "Only First";
+      let data_out = open_out filename in
+      Marshal.to_channel data_out "" [];
+      close_out data_out;
+      our_model := load_global_summary ();
+      Sys.remove filename;
+      *)
+  )
 
 let load_all_summary ?(use_cache=true) global_resolution =
   if use_cache && !cache then

@@ -7,7 +7,7 @@ module LocInsensitiveExp = struct
   let rec to_default_location ~expression:({ Node.value; _ } as t) =
     let value =
       match value with
-      | Expression.Name (Identifier _ ) | Constant _  -> value
+      | Expression.Name (Identifier _ ) | Constant _ -> value
       | Name (Attribute ({ base; _ } as attr)) ->
         Name (Attribute { attr with base = to_default_location ~expression:base})
       | Call { Call.callee; arguments } ->

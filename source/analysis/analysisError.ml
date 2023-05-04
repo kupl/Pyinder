@@ -683,6 +683,7 @@ let weaken_literals kind =
       ProhibitedAny
         { is_type_alias; missing_annotation = weaken_missing_annotation missing_annotation }
   | UnsupportedOperand (Binary { operator_name; left_operand; right_operand }) ->
+   
       UnsupportedOperand
         (Binary
            {
@@ -2656,7 +2657,7 @@ end)
 
 let due_to_analysis_limitations { kind; _ } =
   let is_due_to_analysis_limitations annotation =
-    Type.contains_unknown annotation || Type.is_unbound annotation || Type.is_type_alias annotation
+    Type.contains_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation
   in
   match kind with
   | IncompatibleAwaitableType actual
@@ -3706,7 +3707,8 @@ let join_at_source ~resolution errors =
 let deduplicate errors =
   let error_set = Hash_set.create ~size:(List.length errors) () in
   List.iter errors ~f:(Core.Hash_set.add error_set);
-  Core.Hash_set.to_list error_set
+  let x = Core.Hash_set.to_list error_set in
+  x
 
 
 let filter ~resolution errors =
@@ -4360,6 +4362,7 @@ let filter_type_error errors =
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
       | IncompatibleAttributeType _ | UndefinedImport _ 
       | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
+      | IncompatibleReturnType _
         -> false
       | _ -> true
       )

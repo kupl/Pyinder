@@ -19,6 +19,9 @@ module AttributeStorage = struct
   let fold t ~init ~f =
     LocInsensitiveExpMap.fold t ~init ~f
 
+  let filter_keys t ~f =
+    LocInsensitiveExpMap.filter_keys t ~f
+
   let pp_identifier_set formatter ident_set =
     let msg = 
       Identifier.Set.fold ident_set ~init:"(" ~f:(fun msg ident ->
@@ -48,22 +51,33 @@ module AttributeStorage = struct
   let add_prefix storage ~prefix =
     fold storage ~init:empty ~f:(fun ~key ~data new_storage ->
       match get_identifier_base key with
-      | Some base ->
-        let key = change_identifier_base key ~data:((Reference.show prefix) ^ base) in
+      | Some _ ->
+        let key = add_identifier_base key ~data:prefix in
         LocInsensitiveExpMap.set new_storage ~key:key ~data
       | _ -> failwith (Format.sprintf "Why is in here by add? %s" (Expression.show key))
     )
 
   let filter_by_prefix storage ~prefix =
+    (* ClassInfo 에 넣기 위해 앞의 self prefixf를 떼는 작업 *)
     fold storage ~init:empty ~f:(fun ~key ~data new_storage ->
       match Node.value key with
       | Constant _ -> new_storage
-      | _ ->
+      | Call _ -> new_storage
+      | Name name ->
         (
-        match get_identifier_base key with
-        | Some base ->
+        match name_to_reference name with
+        | Some reference ->
+          if (not ((Reference.equal reference prefix))) && (Reference.is_prefix ~prefix reference)
+          then (
+            let new_reference = Reference.drop_prefix ~prefix reference in
+            let new_key = from_reference ~location:key.location new_reference in
+            LocInsensitiveExpMap.set new_storage ~key:new_key ~data
+          )
+          else new_storage
+          (*
           let base_reference = Reference.create base in
-          if (Reference.is_prefix ~prefix base_reference) && not (Reference.equal base_reference prefix)
+          Log.dump "BASE : %a" Reference.pp base_reference;
+          if (Reference.equal base_reference prefix)
           then 
             (
               let new_base = (Reference.drop_prefix ~prefix base_reference) |> Reference.show in
@@ -72,11 +86,42 @@ module AttributeStorage = struct
             )
           else 
             new_storage
+            *)
         | _ -> failwith (Format.sprintf "Why is in here by filter? %s" (Expression.show key))
         )
-      
+      | _ -> new_storage
     )
     
+  let filter_class_var storage ~prefix =
+    (* self => ( ... ) 은 관심 없기에 self.x 인 것은 다 쳐낸다 *)
+    LocInsensitiveExpMap.filter_keys storage ~f:(fun key ->
+      match Node.value key with
+      | Constant _ -> false
+      | Call _ -> false
+      | Name name ->
+        (
+        match name_to_reference name with
+        | Some reference ->
+          if Reference.is_prefix ~prefix reference && Reference.length reference > 1
+          then true
+          else false
+          (*
+          let base_reference = Reference.create base in
+          Log.dump "BASE : %a" Reference.pp base_reference;
+          if (Reference.equal base_reference prefix)
+          then 
+            (
+              let new_base = (Reference.drop_prefix ~prefix base_reference) |> Reference.show in
+              let key = change_identifier_base key ~data:new_base in
+              LocInsensitiveExpMap.set new_storage ~key:key ~data
+            )
+          else 
+            new_storage
+            *)
+        | _ -> failwith (Format.sprintf "Why is in here by filter? %s" (Expression.show key))
+        )
+      | _ -> false
+    )
 
   let join left right =
     LocInsensitiveExpMap.merge left right ~f:(fun ~key:_ data ->
@@ -84,6 +129,15 @@ module AttributeStorage = struct
       | `Both (left, right) ->
         Some (Identifier.Set.union left right)
       | `Left data | `Right data -> Some data 
+    )
+
+  let join_without_merge ~origin other =
+    LocInsensitiveExpMap.merge origin other ~f:(fun ~key:_ data ->
+      match data with
+      | `Both (left, right) ->
+        Some (Identifier.Set.union left right)
+      | `Left data -> Some data 
+      | `Right _ -> None
     )
 
   
@@ -124,18 +178,20 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
   in
 
   match value with
-  | Expression.Name (Attribute { base; attribute; _ }) ->
-    if (not is_assign) && (is_in_skip_set skip_map base attribute)
-    then
-      (storage, skip_map) 
-    else
-      (
-
-      (storage
-      |> AttributeStorage.add_attribute base attribute,
-      skip_map)
-    |> forward_expression ~expression:base
-      )
+  | Expression.Name (Attribute { base; attribute; _ } as name) ->
+    (
+    match name_to_reference name with
+    | Some reference when (Reference.is_local reference || Reference.is_parameter reference)  ->
+      if (not is_assign) && (is_in_skip_set skip_map base attribute)
+      then
+        (storage, skip_map) 
+      else
+        (storage
+        |> AttributeStorage.add_attribute base attribute,
+        skip_map)
+        |> forward_expression ~expression:base
+    | _ -> (storage, skip_map) |> forward_expression ~expression:base
+    )
   | Name (Identifier _) -> (storage, skip_map)
   | Await expression -> forward_expression (storage, skip_map) ~expression
   | BooleanOperator { left; right; _ }
@@ -211,7 +267,6 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
 
 let rec forward_statement (storage, skip_map) ~statement:({ Node.value; _ } as statement) =
   let _ = statement in
-  (*Log.dump "%a" Statement.pp statement;*)
   let forward_statement_list (storage, skip_map) ~stmt_list =
     List.fold stmt_list ~init:(storage, skip_map) ~f:(fun (storage, skip_map) statement -> forward_statement (storage, skip_map) ~statement)
   in

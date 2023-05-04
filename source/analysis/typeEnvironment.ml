@@ -54,8 +54,10 @@ let produce_check_results global_environment define_name ~dependency =
       ~global_environment
       ~dependency
       define_name
-  else if OurTypeSet.is_inference_mode mode then
-    let _ = OurTypeSet.save_summary (OurTypeSet.OurSummary.create ()) define_name in
+  else if OurTypeSet.is_inference_mode mode then (
+    (if OurTypeSet.is_func_model_exist () then () else (
+    OurTypeSet.save_summary (OurTypeSet.OurSummary.create ()) define_name));
+    OurTypeSet.load_global_summary_cache ();
     let x = TypeCheck.check_define_by_name
       ~type_check_controls
       ~call_graph_builder
@@ -65,6 +67,7 @@ let produce_check_results global_environment define_name ~dependency =
     in
     (*OurTypeSet.save_summary !OurTypeSet.our_model define_name;*)
     x
+  )
   else
     (
     TypeCheck.check_define_by_name_origin
@@ -125,9 +128,15 @@ let populate_for_definitions ~scheduler environment defines =
   Log.info "Checking %d functions..." number_of_defines;
   let map _ names =
     let analyze_define number_defines name =
-      let x = ReadOnly.get read_only name in
-      let () = x |> ignore in
-      (*let () = ReadOnly.get read_only name |> ignore in*)
+      (*
+      let t = ReadOnly.get read_only name in
+      (match t with
+      | Some t ->
+        let errors = TypeCheck.CheckResult.errors t in
+        List.iter (Option.value errors ~default:[]) ~f:(fun e -> Log.dump "In HERE! : %a" Error.pp e)
+      | _ -> ());
+      *)
+      let () = ReadOnly.get read_only name |> ignore in
       number_defines + 1
     in
     let x = List.fold names ~init:0 ~f:analyze_define in
@@ -188,6 +197,8 @@ let populate_for_modules ~scheduler environment qualifiers =
       ()
   in
   populate_for_definitions ~scheduler environment all_defines;
+
+
   Statistics.event
     ~section:`Memory
     ~name:"shared memory size post-typecheck"
@@ -199,7 +210,6 @@ let populate_for_modules ~scheduler environment qualifiers =
 
 
 let populate_for_project_modules ~scheduler environment =
-  
   let project_qualifiers =
     module_tracker environment
     |> ModuleTracker.read_only

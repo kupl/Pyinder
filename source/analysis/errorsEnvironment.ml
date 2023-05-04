@@ -260,6 +260,7 @@ let create controls =
 
 let check_and_preprocess environment ~scheduler =
   type_environment environment |> TypeEnvironment.populate_for_project_modules ~scheduler;
+
   populate_all_errors ~scheduler environment;
   Profiling.track_shared_memory_usage ~name:"After checking and preprocessing" ();
   ()

@@ -1458,7 +1458,7 @@ module TypeCheckAT (Context : Context) = struct
                       (* key 원소가 literal이면 OurTypedDictionary *)
                       if Type.contains_literal key_arg.resolved
                       then
-                        Type.OurTypedDictionary.update_dict_field annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg.resolved
+                        Type.OurTypedDictionary.update_dict_field ~join_f:(GlobalResolution.join global_resolution) annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg.resolved
                       else (* key 원소가 literal이 아니면 Dictionary *)
                         Type.Parametric { 
                           name = "dict";
