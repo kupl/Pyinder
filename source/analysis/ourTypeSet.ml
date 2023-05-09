@@ -189,6 +189,10 @@ module ClassInfo = struct
     |> Unit.attributes
 
 
+  let get_type_of_class_attribute ~attribute { class_variable_type; _ } =
+    let name = Reference.create "$parameter$self" in
+    Refinement.Store.get_annotation ~name ~attribute_path:(Reference.create attribute) class_variable_type
+
   let add_attribute ({ class_attributes; _} as t) attr =
     let class_attributes = ClassAttributes.add_attribute class_attributes attr in
     { t with class_attributes }
@@ -308,6 +312,8 @@ module ClassSummary = struct
   let get_class_variable_type t class_name = get t ~class_name ~f:ClassInfo.get_class_variable_type
 
   let get_usage_attributes t class_name = get t ~class_name ~f:ClassInfo.get_usage_attributes
+
+  let get_type_of_class_attribute t class_name attribute = get t ~class_name ~f:(ClassInfo.get_type_of_class_attribute ~attribute)
 
   let outer_join_class_variable_type ~global_resolution t class_name method_postcondition =
     let class_info = find_default t class_name in
@@ -908,6 +914,9 @@ module OurSummary = struct
 
   let get_self_attributes_tree ~global_resolution { class_summary; _ } class_name = 
     ClassSummary.get_self_attributes_tree ~global_resolution class_summary class_name
+
+  let get_type_of_class_attribute { class_summary; _ } class_name attribute =
+    ClassSummary.get_type_of_class_attribute class_summary class_name attribute
   
   let update_map_function_of_types ({ class_summary; _ } as t) class_name vartype_map =
     { t with class_summary = ClassSummary.update_map_function_of_types class_summary class_name vartype_map }
@@ -1073,7 +1082,7 @@ let load_all_summary_test () =
 
 let global_cache = ref false
 
-let load_global_summary_cache () =
+let rec load_global_summary_cache () =
   Thread.delay((Random.float 1.0) /. 1000.0);
   if !global_cache then (
     ()
@@ -1081,16 +1090,16 @@ let load_global_summary_cache () =
   else
   (
     
-    
-    global_cache := true;
     (*
+    global_cache := true;
+    
     let data_out = open_out filename in
     Marshal.to_channel data_out "" [];
     close_out data_out;
-    *)
+    
     our_model := load_global_summary ();
-
-      (*
+    *)
+      
     let filename = !data_path ^ "/" ^ "lock" in
     match Sys.file_exists filename with
     | `Yes ->
@@ -1099,13 +1108,12 @@ let load_global_summary_cache () =
       load_global_summary_cache ()
     | _ ->
       global_cache := true;
-      Log.dump "Only First";
       let data_out = open_out filename in
       Marshal.to_channel data_out "" [];
       close_out data_out;
       our_model := load_global_summary ();
       Sys.remove filename;
-      *)
+      
   )
 
 let load_all_summary ?(use_cache=true) global_resolution =

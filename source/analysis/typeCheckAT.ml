@@ -108,7 +108,7 @@ let errors_from_not_found
               let target_reference =
                 (match arguments with
                 | Some args -> 
-                  if position < 1 then Reference.empty
+                  if (position < 1) || (List.length args <= (position-1)) then Reference.empty
                   else
                     let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
                     (match expression with

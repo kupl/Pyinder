@@ -186,11 +186,14 @@
     let global_resolution =
       Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
     in
+    Log.dump "LOAD ALL SUMMARY";
     Analysis.OurTypeSet.load_all_summary global_resolution ~use_cache:false;
+    Log.dump "SAVE ALL SUMMARY";
     Analysis.OurTypeSet.save_global_summary ();
     let our_model = !Analysis.OurTypeSet.our_model in
     
     (*Log.dump "OKOK %a" Analysis.OurTypeSet.OurSummary.pp our_model;*)
+    Log.dump "CHECK EQUAL";
     if (Analysis.OurTypeSet.OurSummary.equal prev_model our_model)
     then single_errors, ast_environment, type_environment
     else fixpoint (n+1) our_model

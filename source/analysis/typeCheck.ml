@@ -169,7 +169,7 @@ let errors_from_not_found
               let target_reference =
                 (match arguments with
                 | Some args -> 
-                  if position < 1 then Reference.empty
+                  if (position < 1) || (List.length args <= (position-1)) then Reference.empty
                   else
                     let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
                     (match expression with
@@ -13871,16 +13871,33 @@ let exit_state ~resolution (module Context : Context) =
         let update_resolution_of_self ~final_model resolution =
           match parent, List.nth parameters 0 with
           | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-            (*
-            Log.dump "Class Name : %a" Reference.pp class_name;
-            *)
-            let self_attributes_tree = OurTypeSet.OurSummary.get_self_attributes_tree ~global_resolution final_model class_name in
-            (*
-            Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data -> Log.dump "HMM %s : %a" key Refinement.Unit.pp data);
-            *)
-            let resolution = Resolution.update_self_attributes_tree resolution self_attributes_tree (Reference.create class_param) in
+
+            let rec update_parent_of_self class_name resolution =
+              let self_attributes_tree = OurTypeSet.OurSummary.get_self_attributes_tree ~global_resolution final_model class_name in
+              (*
+              Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data -> Log.dump "HMM %s : %a" key Refinement.Unit.pp data);
+              *)
+              let resolution = Resolution.update_self_attributes_tree resolution self_attributes_tree (Reference.create class_param) in
+              let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_name)) in
+                (match class_summary with
+                | Some { Node.value = class_summary; _ } ->
+                  List.fold ~init:resolution (ClassSummary.base_classes class_summary) 
+                    ~f:(fun resolution { Node.value = parent_class_exp; _ }  ->
+                      match parent_class_exp with
+                      | Name name ->
+                        let class_name = name_to_reference name |> Option.value ~default:Reference.empty in
+                        update_parent_of_self class_name resolution
+                      | _ -> resolution
+                    )
+                | _ -> resolution
+                )
+            in
+
             (*Log.dump "FINAL %a" Resolution.pp resolution;*)
-            resolution
+            update_parent_of_self class_name resolution
+            
+            
+            
           | _ -> resolution
         in
 
@@ -13891,7 +13908,6 @@ let exit_state ~resolution (module Context : Context) =
             let class_summary = OurTypeSet.OurSummary.class_summary final_model in
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-
               let rec get_parent_usage_attributes class_name parent_usage_attributes =
                 (* 부모 클래스 계속 순회하면서 attributes 업데이트 *)
                 let parent_usage_attributes =
@@ -13926,8 +13942,14 @@ let exit_state ~resolution (module Context : Context) =
             match value with
             | Name name -> 
               let annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
-              let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
               
+              let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
+
+              (*
+              Log.dump "[ Before Resolution ] \n%a" Resolution.pp resolution;
+              Log.dump "Name : %a ===> %a" Expression.pp_expression value Annotation.pp annotation;
+              Log.dump "[ After Resolution ] \n%a" Resolution.pp last_resolution;
+              *)
               last_resolution
             | _ -> resolution
           )
@@ -13941,6 +13963,7 @@ let exit_state ~resolution (module Context : Context) =
 
         let resolution_updated_attributes = 
           resolution 
+          |> update_resolution_of_self ~final_model 
           |> update_resolution_from_attributes ~final_model
         in
 
@@ -13953,23 +13976,26 @@ let exit_state ~resolution (module Context : Context) =
         
         let resolution =
           resolution_updated_attributes 
-          |> update_resolution_of_self ~final_model 
           |> update_resolution_from_arg_types ~final_model name
         in
 
         resolution
       in
 
+      (*
       let at_type =
         match initial.at_type with
         | Unreachable -> initial.at_type
         | Value resolution ->
           Value (update_resolution resolution)
       in
+      *)
+      let at_type = initial.at_type in
+      
 
       let rt_type =
         match initial.rt_type with
-        | Unreachable -> initial.rt_type
+        | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type
         | Value resolution ->
           let x = 
             update_resolution resolution 

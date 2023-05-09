@@ -110,7 +110,8 @@ let errors_from_not_found
               let target_reference =
                 (match arguments with
                 | Some args -> 
-                  if position < 1 then Reference.empty
+                  (* TODO : should check list length? *)
+                  if (position < 1) || (List.length args <= (position-1)) then Reference.empty
                   else
                     let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
                     (match expression with
@@ -1097,6 +1098,7 @@ module TypeCheckRT (Context : Context) = struct
                 else
                   attribute
               in
+
               let undefined_target =
                 if Annotated.Attribute.defined attribute then
                   None
@@ -1238,6 +1240,21 @@ module TypeCheckRT (Context : Context) = struct
                 | Some local_annotation -> local_annotation
                 | None -> global_annotation
               in
+
+              let apply_class_info annotation =
+                match (Annotation.annotation annotation) with
+                | Type.Top | Unknown -> 
+                  if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+                    (* TODO : final summary 만으로 충분한가? *)
+                    let final_model = !OurTypeSet.our_model in
+                    OurTypeSet.OurSummary.get_type_of_class_attribute final_model (Type.class_name resolved_base) attribute
+                    |> Option.value ~default:annotation
+
+                  else
+                    annotation
+                | _ -> annotation
+              in
+
               let join sofar element =
                 let refined =
                   Refinement.Unit.join
@@ -1249,9 +1266,11 @@ module TypeCheckRT (Context : Context) = struct
                 in
                 { refined with annotation = Type.union [sofar.annotation; element.annotation] }
               in
-              List.fold ~init:head_annotation ~f:join tail_annotations |> apply_local_override
+              List.fold ~init:head_annotation ~f:join tail_annotations 
+              |> apply_local_override
+              |> apply_class_info
             in
-            
+
             {
               resolution;
               errors;
@@ -1296,6 +1315,7 @@ module TypeCheckRT (Context : Context) = struct
             (* Attribute access. *)
             access_as_attribute ()
       in
+
       let base =
         match super_base with
         | Some (Resolved.Super _) -> super_base
@@ -2199,6 +2219,7 @@ module TypeCheckRT (Context : Context) = struct
                             let ret_cond = OurTypeSet.OurSummary.get_return_condition our_model callee_name in
                             let func_arg_annotation = OurTypeSet.OurSummary.get_arg_annotation our_model callee_name in
                             let tmp_resolution = Resolution.set_annotation_store resolution ret_cond in
+
                             let param_reference = Reference.create (List.nth_exn param_list (idx+revise_index)) in
 
                             let target_func_arg_annotation = 
@@ -3581,7 +3602,6 @@ module TypeCheckRT (Context : Context) = struct
           * that relies on the legacy behaviror in the presence of ambiguous
           * fully-qualified names.
           *)
-          
         match
           Ast.Expression.name_to_reference name
           >>= GlobalResolution.resolve_exports global_resolution
@@ -5781,6 +5801,7 @@ module TypeCheckRT (Context : Context) = struct
                 match parent, List.nth parameters 0 with
                 | Some class_name, Some { Node.value={ Parameter.name=class_var; _ }; _ } -> (* class 함수 *)
                   let rec update_parent_model our_model class_name =
+                    (* 부모 클래스에 attribute 추가하기 *)
                     let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_name)) in
                     (match class_summary with
                     | Some { Node.value = class_summary; _ } ->

@@ -179,6 +179,8 @@ module OurSummary : sig
 
   val get_self_attributes_tree : global_resolution:GlobalResolution.t -> t -> Reference.t -> Refinement.Unit.t Identifier.Map.Tree.t
 
+  val get_type_of_class_attribute : t -> Reference.t -> string -> Annotation.t option
+
   val update_map_function_of_types : t -> Reference.t -> FunctionSet.t VarTypeMap.t -> t
 
   val search_suspicious_variable : t -> global_resolution:GlobalResolution.t -> Reference.t -> Refinement.Unit.t Reference.Map.t list
