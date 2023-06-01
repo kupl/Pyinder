@@ -1,5 +1,5 @@
-open Core
 open Ast
+open Core
 
 module type UsedefState = sig
   type t [@@deriving show, sexp]

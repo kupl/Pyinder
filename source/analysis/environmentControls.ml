@@ -8,15 +8,18 @@
 type t = {
   configuration: Configuration.Analysis.t;
   populate_call_graph: bool;
+  our_summary: OurDomain.OurSummary.t;
 }
 
-let create ?(populate_call_graph = false) configuration = { configuration; populate_call_graph }
+let create ?(populate_call_graph = false) ?(our_summary = OurDomain.OurSummary.empty) configuration = { configuration; populate_call_graph; our_summary}
 
 let create_for_overlay parent = { parent with populate_call_graph = false }
 
 let configuration { configuration; _ } = configuration
 
 let populate_call_graph { populate_call_graph; _ } = populate_call_graph
+
+let our_summary { our_summary; _} = our_summary
 
 let track_dependencies { configuration = { Configuration.Analysis.incremental_style; _ }; _ } =
   match incremental_style with

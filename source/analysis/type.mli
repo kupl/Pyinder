@@ -706,6 +706,8 @@ val is_dictionary : ?with_key:t option -> t -> bool
 
 val is_dictionary_or_mapping : t -> bool
 
+val is_dict : t -> bool
+
 val is_ellipsis : t -> bool
 
 val is_generic_primitive : t -> bool
@@ -803,6 +805,8 @@ val instantiate
 val add_unknown : t -> t
 
 val any_to_unknown : t -> t
+
+val narrow_iterable : t -> t
 
 val weaken_literals : t -> t
 
@@ -1096,6 +1100,8 @@ val is_concrete : t -> bool
 
 val union_join : t -> t -> t
 
+val narrow_union : join:(t -> t -> t) -> less_or_equal:(left:t -> right:t-> bool) -> t -> t
+
 module OurTypedDictionary : sig
   open Record.OurTypedDictionary
 
@@ -1150,7 +1156,7 @@ module TypedDictionary : sig
     bool
 
   val same_name_different_annotation : t typed_dictionary_field -> t typed_dictionary_field -> bool
-
+ 
   val fields_have_colliding_keys
     :  t typed_dictionary_field list ->
     t typed_dictionary_field list ->

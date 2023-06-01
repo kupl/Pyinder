@@ -53,6 +53,8 @@ val set : caller:caller -> callees:callee_with_locations list -> unit
 
 val get : caller:caller -> callee_with_locations list
 
+val get_callee_name : callee:callee -> Reference.t
+
 module type Builder = sig
   val initialize : unit -> unit
 

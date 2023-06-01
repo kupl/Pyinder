@@ -7,7 +7,6 @@
 
  open Core
 
- exception NoAstEnvironment;;
  exception UnequalErrorScenario;;
 
  module ExitStatus = struct
@@ -134,15 +133,58 @@
  let do_check configuration =
    Scheduler.with_scheduler ~configuration ~f:(fun scheduler ->
        with_performance_tracking ~debug:configuration.debug (fun () ->
-           
            let environment =
              let read_write_environment =
-               Analysis.EnvironmentControls.create ~populate_call_graph:false configuration
+               Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
                |> Analysis.ErrorsEnvironment.create
              in
-             let () =
-               Analysis.ErrorsEnvironment.check_and_preprocess read_write_environment ~scheduler
+
+             let rec fixpoint n environment prev_model skip_set =
+              Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
+          
+              Analysis.ErrorsEnvironment.type_check ~scheduler ~skip_set environment;
+              
+              let global_resolution =
+                Analysis.TypeEnvironment.ReadOnly.global_resolution
+                (Analysis.ErrorsEnvironment.ReadOnly.type_environment (Analysis.ErrorsEnvironment.read_only read_write_environment))
+              in
+              (*
+              Analysis.OurDomain.load_specific_file ();
+              *)
+              Log.dump "Load all summary...";
+              let type_join = Analysis.GlobalResolution.join global_resolution in
+              Analysis.OurDomain.load_all_summary ~type_join ~skip_set ~use_cache:false prev_model;
+              Log.dump "Done";
+              let our_model = !Analysis.OurDomain.our_model in
+              
+              (*Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model;*)
+              if (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
+              then Analysis.ErrorsEnvironment.get_errors ~scheduler environment
+              else (
+                let environment =
+                    Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+                    |> Analysis.ErrorsEnvironment.create
+                in
+                let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
+                let n =
+                  if Ast.Reference.Set.equal skip_set next_skip_set 
+                  then n+1
+                  else 0
+                in
+                fixpoint n environment our_model next_skip_set
+              )
              in
+
+            let () =
+              fixpoint 0 read_write_environment !Analysis.OurDomain.our_model Ast.Reference.Set.empty
+            in
+             
+             (*
+             let () =
+               Analysis.ErrorsEnvironment.check_and_preprocess read_write_environment ~scheduler ~skip_set
+             in
+             *)
+             
              Analysis.ErrorsEnvironment.read_only read_write_environment
            in
            ( Analysis.ErrorsEnvironment.ReadOnly.get_all_errors environment,
@@ -160,7 +202,7 @@
         ])
     |> Log.print "%s" 
  
- let compute_errors ~configuration ~build_system () =
+ let compute_errors ~configuration ~build_system ~analyze_json () =
     (*
    let rec fixpoint configuration n =
     let prev_model = !Analysis.OurTypeSet.our_model in
@@ -172,59 +214,47 @@
     else fixpoint configuration (n+1)
    in
    *)
-   Analysis.OurTypeSet.set_data_path configuration;
+   let _  =analyze_json in
+
+   Analysis.OurDomain.set_data_path configuration;
    
    Log.dump "%s" "Type Inferecne...";
-   Analysis.OurTypeSet.save_mode "inference";
+   Analysis.OurDomain.save_mode "inference";
+
+   Analysis.OurDomain.our_model := Analysis.OurDomain.load_global_summary ();
 
    
-
-   let rec fixpoint n prev_model =
-    let single_errors, ast_environment, type_environment = do_check configuration in
-    Analysis.OurTypeSet.single_errors := Analysis.AnalysisError.filter_type_error single_errors |> Analysis.AnalysisError.deduplicate;
-    
-    let global_resolution =
-      Analysis.TypeEnvironment.ReadOnly.global_resolution type_environment
-    in
-    Log.dump "LOAD ALL SUMMARY";
-    Analysis.OurTypeSet.load_all_summary global_resolution ~use_cache:false;
-    Log.dump "SAVE ALL SUMMARY";
-    Analysis.OurTypeSet.save_global_summary ();
-    let our_model = !Analysis.OurTypeSet.our_model in
-    
-    (*Log.dump "OKOK %a" Analysis.OurTypeSet.OurSummary.pp our_model;*)
-    Log.dump "CHECK EQUAL";
-    if (Analysis.OurTypeSet.OurSummary.equal prev_model our_model)
-    then single_errors, ast_environment, type_environment
-    else fixpoint (n+1) our_model
-   in
    
    (*let _, _ = fixpoint configuration 1 in*)
    Unix.sleep(1);
-
+   (*
+   Analysis.OurDomain.load_specific_file ();
+   Unix.sleep(10);
+   *)
    
-  let errors, ast_environment, _ = fixpoint 0 !Analysis.OurTypeSet.our_model in
-
+   let errors, ast_environment, _ = do_check configuration in
+    
   
    
 
-   Log.dump "%a" Analysis.OurTypeSet.OurSummary.pp !Analysis.OurTypeSet.our_model;
-
+   Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+   (*
    Log.dump "%s" "Type Error Searching...";
    
-   Analysis.OurTypeSet.save_mode "search";
+   Analysis.OurDomain.save_mode "search";
    (*print_endline "[[[ Search Mode ]]]";*)
    let _, _, _ = do_check configuration in
    Log.dump "END";
-   
+   *)
   (*
    Log.dump "%a" Analysis.OurTypeSet.ClassSummary.pp_class_vartype (Analysis.OurTypeSet.OurSummary.class_summary !Analysis.OurTypeSet.our_model);
   *)
    Unix.sleep(1);
    let errors = Analysis.AnalysisError.filter_type_error errors |> Analysis.AnalysisError.deduplicate in
+   (*
    Pyinder.Summarize.ast_environment := Some ast_environment;
    Pyinder.Summarize.errors := errors;
-
+    *)
    let x =
     List.map
       (List.sort ~compare:Analysis.AnalysisError.compare errors)
@@ -236,7 +266,7 @@
  
 
  
- 
+ (*
  let print_error_and_scenario check_configuration error_and_scenario_list =
    let { CheckConfiguration.base = { CommandStartup.BaseConfiguration.source_paths; _ }; _ } =
      check_configuration
@@ -260,7 +290,7 @@
               )
           in
 
-          
+          (*
           let single_errors =
             List.map
             !Analysis.OurTypeSet.single_errors
@@ -273,6 +303,7 @@
           in
 
           let _ = single_errors in
+          *)
 
           (* ADD ERRORS *)
           
@@ -283,8 +314,9 @@
           print_errors (errors);
           Lwt.return ExitStatus.Ok)
     | None -> raise NoAstEnvironment
+    *)
  
-  let run_check check_configuration =
+  let run_check check_configuration analyze_json =
     let { CheckConfiguration.base = { CommandStartup.BaseConfiguration.source_paths; _ }; _ } =
      check_configuration
     in
@@ -293,6 +325,7 @@
       compute_errors
         ~configuration:(CheckConfiguration.analysis_configuration_of check_configuration)
         ~build_system
+        ~analyze_json
         ()
     in
 
@@ -357,14 +390,14 @@
  
  
  let our_analysis check_configuration analyze_json = 
-    let x = run_check check_configuration in 
+    let x = run_check check_configuration analyze_json in 
     (match Lwt.state x with
     | Return _ -> ()
     | Fail exn -> let _ = on_exception exn in ()
     | _ -> ()
     );
 
-    let _ = analyze_json, print_error_and_scenario, UnequalErrorScenario in
+    let _ = analyze_json, UnequalErrorScenario in
     
     Log.dump "%s" "Analyze Call Graph...";
     (*

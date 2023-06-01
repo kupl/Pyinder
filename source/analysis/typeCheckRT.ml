@@ -12,7 +12,7 @@ open Expression
 open Statement
 open TypeCheckUtil
 
-module OurSummary = OurTypeSet.OurSummary
+module OurSummaryResolution = OurTypeSet.OurSummaryResolution
 module StatementDefine = Define
 module Error = AnalysisError
 
@@ -567,7 +567,8 @@ module TypeCheckRT (Context : Context) = struct
         *)
 
 
-  let join left right = widen ~previous:left ~next:right ~iteration:0
+  let join left right = 
+    widen ~previous:left ~next:right ~iteration:0
 
   (*
   let widen_possible ~previous ~next ~iteration =
@@ -1068,7 +1069,7 @@ module TypeCheckRT (Context : Context) = struct
       let reference = name_to_reference name in
       let name_expression = name in
       (*
-      Log.dump "Name >>> %a" Name.pp name;
+      Log.dump "Name >>> %a / Attr : %s" Name.pp name attribute;
       Log.dump "Resolved Base : %a" Type.pp resolved_base;
       *)
       let access_as_attribute () =
@@ -1121,25 +1122,35 @@ module TypeCheckRT (Context : Context) = struct
         in
         match Type.resolve_class resolved_base >>| List.map ~f:find_attribute >>= Option.all with
         | None ->
-            let errors =
+            let errors, resolution =
               if has_default then
-                errors
+                errors, resolution
               else
-                emit_error
-                  ~errors
-                  ~location
-                  ~kind:
-                    (Error.UndefinedAttributeWithReference
-                        {
-                          reference=reference |> Option.value ~default:Reference.empty;
-                          attribute;
-                          origin =
-                            Error.Class
-                              {
-                                class_origin = ClassType resolved_base;
-                                parent_module_path = module_path_of_parent_module resolved_base;
-                              };
-                        })
+                let errors =
+                  emit_error
+                    ~errors
+                    ~location
+                    ~kind:
+                      (Error.UndefinedAttributeWithReference
+                          {
+                            reference=reference |> Option.value ~default:Reference.empty;
+                            attribute;
+                            origin =
+                              Error.Class
+                                {
+                                  class_origin = ClassType resolved_base;
+                                  parent_module_path = module_path_of_parent_module resolved_base;
+                                };
+                          })
+                in
+                let resolution =
+                  (* TODO: have to add attribute in resolution? *)
+                  (*
+                  Log.dump "Base : %a / Attr : %s" Expression.pp base attribute;
+                  *)
+                  resolution
+                in
+                errors, resolution
             in
             {
               Resolved.resolution;
@@ -1178,7 +1189,7 @@ module TypeCheckRT (Context : Context) = struct
                 ~qualifier:Context.qualifier
                 ~name
             end;
-            let errors =
+            let errors, resolution =
               let attribute_name, target =
                 match
                   List.find attribute_info ~f:(fun (_, _, undefined_target) ->
@@ -1192,11 +1203,11 @@ module TypeCheckRT (Context : Context) = struct
               match target with
               | Some target ->
                   if has_default then
-                    errors
+                    errors, resolution
                   else if Option.is_some (inverse_operator name) then
                     (* Defer any missing attribute error until the inverse operator has been
                         typechecked. *)
-                    errors
+                    errors, resolution
                   else
                     let class_origin =
                       match resolved_base with
@@ -1209,22 +1220,31 @@ module TypeCheckRT (Context : Context) = struct
                           |> Option.value ~default:(Error.ClassType target)
                       | _ -> Error.ClassType target
                     in
-                    emit_error
-                      ~errors
-                      ~location
-                      ~kind:
-                        (Error.UndefinedAttributeWithReference
-                            {
-                              reference=reference |> Option.value ~default:Reference.empty;
-                              attribute = attribute_name;
-                              origin =
-                                Error.Class
-                                  {
-                                    class_origin;
-                                    parent_module_path = module_path_of_parent_module target;
-                                  };
-                            })
-              | _ -> errors
+                    let errors =
+                      emit_error
+                        ~errors
+                        ~location
+                        ~kind:
+                          (Error.UndefinedAttributeWithReference
+                              {
+                                reference=reference |> Option.value ~default:Reference.empty;
+                                attribute = attribute_name;
+                                origin =
+                                  Error.Class
+                                    {
+                                      class_origin;
+                                      parent_module_path = module_path_of_parent_module target;
+                                    };
+                              })
+                    in
+                    let resolution =
+                      (* TODO: have to add attribute in resolution? *)
+                      (*Log.dump "Base : %a / Attr : %s" Expression.pp base attribute;*)
+                      Resolution.refine_local_with_attributes resolution ~name:name_expression ~annotation:(Annotation.create_mutable Type.Unknown)
+                      
+                    in
+                    errors, resolution
+              | _ -> errors, resolution
             in
             let resolved_annotation =
               let apply_local_override global_annotation =
@@ -1244,11 +1264,15 @@ module TypeCheckRT (Context : Context) = struct
               let apply_class_info annotation =
                 match (Annotation.annotation annotation) with
                 | Type.Top | Unknown -> 
-                  if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+                  if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                     (* TODO : final summary 만으로 충분한가? *)
-                    let final_model = !OurTypeSet.our_model in
-                    OurTypeSet.OurSummary.get_type_of_class_attribute final_model (Type.class_name resolved_base) attribute
-                    |> Option.value ~default:annotation
+                    let final_model = !OurDomain.our_model in
+                    OurTypeSet.OurSummaryResolution.get_type_of_class_attribute final_model (Type.class_name resolved_base) attribute
+                    |> (fun t ->
+                      match t with
+                      | Type.Unknown -> annotation
+                      | _ -> Annotation.create_mutable t
+                    )
 
                   else
                     annotation
@@ -1499,6 +1523,25 @@ module TypeCheckRT (Context : Context) = struct
                     Log.dump "Expression : %a / %a -> %a" Expression.pp expression Type.pp key_arg.resolved Type.pp value_arg.resolved;
                     *)
                     let annotation_type = Resolution.resolve_expression_to_type resolution base in
+                    (*
+                    let change_dict t =
+                      if Type.is_dict t
+                      then (
+                        Type.dictionary ~key:Type.Unknown ~value:Type.Unknown
+                      )
+                      else t
+                    in
+
+                    let rec resolved_dict t =
+                      match t with
+                      | Type.Union t_list ->
+                        Type.Union (List.map t_list ~f:resolved_dict)
+                      | t -> change_dict t
+                    in
+
+                    let value_arg_resolved = resolved_dict value_arg.resolved in
+                    *)
+                    let value_arg_resolved = value_arg.resolved in
 
                     let name = name_to_reference name |> Option.value ~default:Reference.empty in
 
@@ -1506,14 +1549,14 @@ module TypeCheckRT (Context : Context) = struct
                       (* key 원소가 literal이면 OurTypedDictionary *)
                       if Type.contains_literal key_arg.resolved
                       then (
-                        Type.OurTypedDictionary.update_dict_field ~join_f:(GlobalResolution.join global_resolution) annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg.resolved
+                        Type.OurTypedDictionary.update_dict_field ~join_f:(GlobalResolution.join global_resolution) annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg_resolved
                       )
                       else (* key 원소가 literal이 아니면 Dictionary *)
                         annotation_type
                     in
 
                     let update_dict_key_value =
-                      GlobalResolution.join_dict_key_value update_dict_field ~global_resolution ~key:key_arg.resolved ~value:value_arg.resolved
+                      GlobalResolution.join_dict_key_value update_dict_field ~global_resolution ~key:key_arg.resolved ~value:value_arg_resolved
                     in
                     (*
                     Log.dump "Result Type : %a" Type.pp update_dict_key_value;
@@ -1793,8 +1836,8 @@ module TypeCheckRT (Context : Context) = struct
             (match callable.kind with
             | Named reference ->
               let { StatementDefine.Signature.name; _ } = define_signature in
-              let our_model = OurTypeSet.select_our_model name in
-              let observed_return_type = OurTypeSet.OurSummary.get_func_return_types our_model reference in
+              let our_model = OurDomain.select_our_model name in
+              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference in
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type
               | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
@@ -2165,8 +2208,17 @@ module TypeCheckRT (Context : Context) = struct
               
               let allowed_list =
                 [
-                  "dict.__getitem__";
-                  "dict.__setitem__";
+                  "object";
+                  "int";
+                  "float";
+                  "str";
+                  "bytes";
+                  "dict";
+                  "set";
+                  "list";
+                  "tuple";
+                  "typing";
+                  "json";
                   "hasattr";
                   "getattr";
                 ]
@@ -2174,7 +2226,7 @@ module TypeCheckRT (Context : Context) = struct
               
               let resolution =
                 (match callable.kind with
-                | Named reference when List.exists allowed_list ~f:(fun allowed -> String.equal allowed (Reference.show reference)) ->
+                | Named reference when List.exists allowed_list ~f:(fun allowed -> String.equal allowed (Reference.first reference )) ->
                   resolution
                 | Named reference ->
                   (* ToDo
@@ -2215,22 +2267,15 @@ module TypeCheckRT (Context : Context) = struct
                           match Node.value exp with
                           | Name name ->
                             let callee_name = reference in
-                            let our_model = !OurTypeSet.our_model in
-                            let ret_cond = OurTypeSet.OurSummary.get_return_condition our_model callee_name in
-                            let func_arg_annotation = OurTypeSet.OurSummary.get_arg_annotation our_model callee_name in
-                            let tmp_resolution = Resolution.set_annotation_store resolution ret_cond in
+                            let our_model = !OurDomain.our_model in
+                            let ret_var_type = OurDomain.OurSummary.get_return_var_type our_model callee_name in
+                            let func_arg_types = OurDomain.OurSummary.get_arg_annotation our_model callee_name in
 
-                            let param_reference = Reference.create (List.nth_exn param_list (idx+revise_index)) in
+                            let param_identifier = List.nth_exn param_list (idx+revise_index) in
+                            let param_reference = Reference.create param_identifier in
 
-                            let target_func_arg_annotation = 
-                              Refinement.Store.get_annotation ~name:param_reference ~attribute_path:Reference.empty func_arg_annotation 
-                            in
-
-                            let target_func_arg_type =
-                              match target_func_arg_annotation with
-                              | Some a -> 
-                                Annotation.annotation a
-                              | None -> Type.Unknown
+                            let target_func_arg_type = 
+                              OurDomain.ArgTypes.get_type func_arg_types param_identifier
                             in
 
                             
@@ -2244,21 +2289,21 @@ module TypeCheckRT (Context : Context) = struct
                             let arg_annotation_type = 
                               Resolution.resolve_expression_to_type resolution exp 
                             in
-                            let ret_cond_type = 
-                              Resolution.resolve_reference tmp_resolution param_reference 
+                            let ret_type = 
+                              OurDomain.ReferenceMap.find ret_var_type param_reference |> Option.value ~default:Type.Unknown
                             in
 
                             let usedef_tables = 
-                              OurTypeSet.OurSummary.get_usedef_tables our_model callee_name 
+                              OurDomain.OurSummary.get_usedef_tables our_model callee_name 
                               |> Option.value ~default:Usedef.UsedefStruct.empty
                             in            
                             let new_arg_type =
                               match Usedef.UsedefStruct.normal_exit usedef_tables with
                               | Some usedef_state -> 
                                 if Usedef.UsedefState.is_undefined usedef_state param_reference
-                                then update_arg_type ~heuristic:true arg_type ret_cond_type arg_annotation_type target_func_arg_type
-                                else update_arg_type arg_type ret_cond_type arg_annotation_type target_func_arg_type
-                              | _ -> update_arg_type arg_type ret_cond_type arg_annotation_type target_func_arg_type
+                                then update_arg_type ~heuristic:true arg_type ret_type arg_annotation_type target_func_arg_type
+                                else update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
+                              | _ -> update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
                             in
                             (*
                             Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Expression.pp exp Type.pp new_arg_type;
@@ -2285,11 +2330,11 @@ module TypeCheckRT (Context : Context) = struct
                   *)
                   
                   
-                  if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+                  if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                     let { StatementDefine.Signature.name; _ } = define_signature in
-                    let our_model = OurTypeSet.load_summary name in
-                    let our_model = OurTypeSet.OurSummary.add_arg_types our_model reference param_type_list in
-                    OurTypeSet.save_summary our_model name
+                    let our_model = OurDomain.load_summary name in
+                    let our_model = OurDomain.OurSummary.add_arg_types ~join:(GlobalResolution.join global_resolution) our_model reference param_type_list in
+                    OurDomain.save_summary our_model name
                   else ();
 
                   resolution
@@ -2733,9 +2778,12 @@ module TypeCheckRT (Context : Context) = struct
           in
 
           (* 
+          TODO:
               Set possiblecondition 
               How to convert parametric to type.union?
           *)
+
+          (*
           (match Node.value expression with
           | Name name ->
 
@@ -2758,18 +2806,20 @@ module TypeCheckRT (Context : Context) = struct
             let new_resolution = Resolution.new_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable possible_type) in
             let new_store = Resolution.get_annotation_store new_resolution in
             (*Format.printf "[[[ NEW RESOLUTION ]]] \n\n%a\n\n%a\n\n" Type.pp possible_type Resolution.pp new_resolution;*)
-            
-            if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+            (**)
+            if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
               let {StatementDefine.Signature.name; _} = define_signature in
-              let our_model = OurTypeSet.load_summary name in
+              let our_model = OurDomain.load_summary name in
+              let store_join = Refinement.Store.join_with_merge ~global_resolution:(Resolution.global_resolution resolution) in
               let our_model = 
-                OurTypeSet.OurSummary.join_with_merge_function_possiblecondition ~global_resolution:(Resolution.global_resolution resolution) our_model name new_store
+                OurDomain.OurSummary.join_with_merge_function_possiblecondition ~store_join our_model name new_store
               in
-              OurTypeSet.save_summary our_model name
+              OurDomain.save_summary our_model name
             else ()
             
           | _ -> ()
           );
+          *)
           
           resolution, errors
         in
@@ -5705,11 +5755,11 @@ module TypeCheckRT (Context : Context) = struct
             return_type
         in
         
-        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
-          let our_model = OurTypeSet.load_summary name in
-          let our_model = OurTypeSet.OurSummary.add_return_info our_model name actual in
-          OurTypeSet.save_summary our_model name;
+          let our_model = OurDomain.load_summary name in
+          let our_model = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_model name actual in
+          OurDomain.save_summary our_model name;
         else ();
         (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
@@ -5789,14 +5839,16 @@ module TypeCheckRT (Context : Context) = struct
             classes and functions are analyzed separately. *)
 
         (* Class 에 모든 define body가 담겨 있음 *)
-        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
             | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; _ }; _ } ->
-              let our_model = OurTypeSet.load_summary name in
+              let our_model = OurDomain.load_summary name in
               let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
               let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
+              
+              
               let our_model =
                 match parent, List.nth parameters 0 with
                 | Some class_name, Some { Node.value={ Parameter.name=class_var; _ }; _ } -> (* class 함수 *)
@@ -5810,7 +5862,7 @@ module TypeCheckRT (Context : Context) = struct
                           match parent_class_exp with
                           | Name name ->
                             let class_name = name_to_reference name |> Option.value ~default:Reference.empty in
-                            let model = OurTypeSet.OurSummary.add_parent_attributes model attribute_storage class_name class_var in
+                            let model = OurTypeSet.OurSummaryResolution.add_parent_attributes model attribute_storage class_name class_var in
                             update_parent_model model class_name
                           | _ -> model
                         )
@@ -5818,11 +5870,13 @@ module TypeCheckRT (Context : Context) = struct
                     )
                   in
                   let our_model = update_parent_model our_model class_name in
-                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage ~class_name ~class_var
+              
+                  OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage ~class_name ~class_var
+                  
                 | _ -> 
-                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage
+                  OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage
               in
-              OurTypeSet.save_summary our_model name;
+              OurDomain.save_summary our_model name;
               ()
             | _ -> ()
           )
@@ -5890,25 +5944,25 @@ module TypeCheckRT (Context : Context) = struct
           | _ -> errors
         in
 
-        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name=define_name; _ } = define_signature in
           let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_statement.name)) in
           (match class_summary with
           | Some { Node.value = class_summary; _ } ->
-            let our_model = OurTypeSet.load_summary define_name in
+            let our_model = OurDomain.load_summary define_name in
             let class_attrs = ClassSummary.attributes class_summary in
             let our_model =
               Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } our_model -> 
                 match kind with
                 | Simple _ ->
-                  OurTypeSet.OurSummary.add_class_attribute our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_attribute our_model class_statement.name name
                 | Property _ ->
-                  OurTypeSet.OurSummary.add_class_property our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_property our_model class_statement.name name
                 | Method _ ->
-                  OurTypeSet.OurSummary.add_class_method our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_method our_model class_statement.name name
               ) class_attrs our_model
             in
-            OurTypeSet.save_summary our_model define_name
+            OurDomain.save_summary our_model define_name
           | _ -> ()
           );
             (*

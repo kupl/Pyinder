@@ -739,16 +739,18 @@ module Store = struct
       temporary_annotations = Reference.Map.mapi temporary_annotations ~f:(fun ~key ~data -> if Reference.is_self key then data else Unit.add_unknown data);
     }
 
-  let update_self_attributes_tree { annotations; temporary_annotations; } self_attributes_tree class_param =
-    let annotations, unit_base =
-      match (Reference.Map.find annotations class_param) with
+  let update_self_attributes_tree ~global_resolution { annotations; temporary_annotations; } self_attributes_tree class_param =
+    let merge_one = Unit.join_with_merge ~global_resolution in
+    
+    let annotations =
+      match (ReferenceMap.find annotations class_param) with
       | Some u ->
-        Reference.Map.set annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree), u
+        (ReferenceMap.set annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree))
+        |> ReferenceMap.merge_with ~merge_one annotations
       | _ ->
-        failwith "No Class Variable"
+        annotations
     in
 
-    let _ = unit_base in
     (*
     let annotations =
       match (Reference.Map.find temporary_annotations class_param) with

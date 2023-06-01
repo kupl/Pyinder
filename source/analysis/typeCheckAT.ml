@@ -12,7 +12,7 @@ open Expression
 open Statement
 open TypeCheckUtil
 
-module OurSummary = OurTypeSet.OurSummary
+module OurSummaryResolution = OurTypeSet.OurSummaryResolution
 module StatementDefine = Define
 module Error = AnalysisError
 
@@ -1740,8 +1740,8 @@ module TypeCheckAT (Context : Context) = struct
             (match callable.kind with
             | Named reference ->
               let { StatementDefine.Signature.name; _ } = define_signature in
-              let our_model = OurTypeSet.select_our_model name in
-              let observed_return_type = OurTypeSet.OurSummary.get_func_return_types our_model reference in
+              let our_model = OurDomain.select_our_model name in
+              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference in
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type
               | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
@@ -2036,7 +2036,7 @@ module TypeCheckAT (Context : Context) = struct
             match callable with
             | KnownCallable { callable = { TypeOperation.callable; self_argument }; arguments; _ } ->
               (*Log.dump "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable;*)
-
+              (*
               let update_arg_type arg_type ret_cond_type =
                 (*
                 let handle_top arg_type ret_cond_type =
@@ -2078,7 +2078,7 @@ module TypeCheckAT (Context : Context) = struct
                     (* TODO: add error *)
                     arg_type
               in 
-              
+              *)
               let allowed_list =
                 [
                   "dict.__getitem__";
@@ -2130,10 +2130,13 @@ module TypeCheckAT (Context : Context) = struct
                         | Some exp -> (
                           match Node.value exp with
                           | Name _ ->
+                            let _ = reference in
+                            resolution
+                            (*
                             let arg_reference = Expression.show exp |> Reference.create in
                             let callee_name = reference in
-                            let our_model = OurTypeSet.load_summary callee_name in
-                            let ret_cond = OurTypeSet.OurSummary.get_return_condition our_model callee_name in
+                            let our_model = OurDomain.load_summary callee_name in
+                            let ret_cond = OurDomain.OurSummary.get_return_condition our_model callee_name in
                             let tmp_resolution = Resolution.set_annotation_store resolution ret_cond in
                             let param_reference = Reference.create (List.nth_exn param_list (idx+revise_index)) in
                             let arg_type = Resolution.resolve_expression_to_type resolution exp in
@@ -2144,6 +2147,7 @@ module TypeCheckAT (Context : Context) = struct
                             *)
                             let update_resolution = Resolution.refine_local resolution ~reference:arg_reference ~annotation:(Annotation.create_mutable new_arg_type) in
                             update_resolution
+                            *)
                           | _ -> resolution
                         )
                           
@@ -5571,22 +5575,22 @@ module TypeCheckAT (Context : Context) = struct
            classes and functions are analyzed separately. *)
 
         (* Class 에 모든 define body가 담겨 있음 *)
-        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
             | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; _ }; _ } ->
-              let our_model = OurTypeSet.load_summary name in
+              let our_model = OurDomain.load_summary name in
               let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
               let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
               let our_model =
                 match parent, List.nth parameters 0 with
                 | Some class_name, Some { Node.value={ Parameter.name=class_var; _ }; _ } -> (* class 함수 *)
-                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage ~class_name ~class_var
+                OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage ~class_name ~class_var
                 | _ -> 
-                  OurTypeSet.OurSummary.add_usage_attributes our_model define_name attribute_storage
+                  OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage
               in
-              OurTypeSet.save_summary our_model name;
+              OurDomain.save_summary our_model name;
               ()
             | _ -> ()
           )
@@ -5654,25 +5658,25 @@ module TypeCheckAT (Context : Context) = struct
           | _ -> errors
         in
 
-        if OurTypeSet.is_inference_mode (OurTypeSet.load_mode ()) then
+        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name=define_name; _ } = define_signature in
           let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_statement.name)) in
           (match class_summary with
           | Some { Node.value = class_summary; _ } ->
-            let our_model = OurTypeSet.load_summary define_name in
+            let our_model = OurDomain.load_summary define_name in
             let class_attrs = ClassSummary.attributes class_summary in
             let our_model =
               Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } our_model -> 
                 match kind with
                 | Simple _ ->
-                  OurTypeSet.OurSummary.add_class_attribute our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_attribute our_model class_statement.name name
                 | Property _ ->
-                  OurTypeSet.OurSummary.add_class_property our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_property our_model class_statement.name name
                 | Method _ ->
-                  OurTypeSet.OurSummary.add_class_method our_model class_statement.name name
+                  OurDomain.OurSummary.add_class_method our_model class_statement.name name
               ) class_attrs our_model
             in
-            OurTypeSet.save_summary our_model define_name
+            OurDomain.save_summary our_model define_name
           | _ -> ()
           );
             (*

@@ -7,11 +7,13 @@
 
 type t
 
-val create : ?populate_call_graph:bool -> Configuration.Analysis.t -> t
+val create : ?populate_call_graph:bool -> ?our_summary:OurDomain.OurSummary.t -> Configuration.Analysis.t -> t
 
 val create_for_overlay : t -> t
 
 val configuration : t -> Configuration.Analysis.t
+
+val our_summary : t -> OurDomain.OurSummary.t
 
 val track_dependencies : t -> bool
 

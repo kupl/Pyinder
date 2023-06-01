@@ -131,5 +131,5 @@ module Store : sig
 
   val add_unknown : t -> t
 
-  val update_self_attributes_tree : t -> Unit.t Identifier.Map.Tree.t -> Reference.t -> t
+  val update_self_attributes_tree : global_resolution:GlobalResolution.t -> t -> Unit.t Identifier.Map.Tree.t -> Reference.t -> t
 end

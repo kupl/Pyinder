@@ -128,14 +128,22 @@ module OrderImplementation = struct
         left
         right
       =
-      let union = Type.union [left; right] in
+
+      let left, right =
+        Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
+        Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) right
+      in
+
+      let union = Type.union_join left right in
+
       if Type.equal left right then
         left
-      else if
+      (*else if
         Type.Variable.contains_escaped_free_variable left
         || Type.Variable.contains_escaped_free_variable right
       then
         union
+      *)
       else
         match left, right with
         | Type.Unknown, _
@@ -203,12 +211,25 @@ module OrderImplementation = struct
         *)
         
         | Type.Union _, Type.Union right ->
+
             List.fold right ~init:left ~f:(fun acc right_t ->
               join order acc right_t
             )
           
         | (Type.Union elements as union), other
         | other, (Type.Union elements as union) ->
+          (*
+          if List.length elements > 10 then (
+            Log.dump "<<< Join Heavy Type : %i >>>" (List.length elements);
+            
+            let _ = List.fold elements ~init:Type.Bottom ~f:(fun acc t -> 
+              Log.dump "[[[ Cand : %b ]]]\n%a\n" (always_less_or_equal order ~left:acc ~right:t) Type.pp t;
+              t
+            ) in
+            Log.dump "[[[ With ]]]\n%a\n" Type.pp other;
+            
+          );
+          *)
             if always_less_or_equal order ~left:other ~right:union && not (Type.contains_any other) && not (Type.contains_unknown other)
             then (
               union
@@ -226,7 +247,8 @@ module OrderImplementation = struct
                     | Type.Union _ -> head :: flat_join tail new_element
                     | joined -> joined :: tail)
               in
-              Type.union (List.fold ~f:flat_join ~init:[] (other :: elements))
+              let x = Type.union (List.fold ~f:flat_join ~init:[] (other :: elements)) in
+              x
         | Type.OurTypedDictionary { general; typed_dict }, other ->
           let _ = general, typed_dict, other in
           let new_general = join order general other in
@@ -374,6 +396,16 @@ module OrderImplementation = struct
         | Type.Tuple (Concrete left), Type.Tuple (Concrete right)
           when List.length left = List.length right ->
             List.map2_exn left right ~f:(join order) |> Type.tuple
+        | Type.Tuple (Concrete left), Type.Tuple (Concrete right)
+          when (List.length left < List.length right) && 
+            (List.equal (fun l r -> Type.equal l r) left (List.sub right ~pos:0 ~len:(List.length left)))
+          -> 
+            Type.Tuple (Concrete right)
+        | Type.Tuple (Concrete right), Type.Tuple (Concrete left)
+        when (List.length left < List.length right) && 
+          (List.equal (fun l r -> Type.equal l r) left (List.sub right ~pos:0 ~len:(List.length left)))
+          ->
+            Type.Tuple (Concrete right)
         | Type.Tuple (Concatenation left), Type.Tuple (Concatenation right) ->
             let left_unbounded_element =
               Type.OrderedTypes.Concatenation.extract_sole_unbounded_annotation left
@@ -413,7 +445,7 @@ module OrderImplementation = struct
             | (Type.Parametric _ as annotation)
             | (Type.Primitive _ as annotation) ->
                 join order (Type.parametric "tuple" [Single unbounded_element]) annotation
-            | _ -> Type.union [left; right])
+            | _ -> Type.union_join left right)
         | Type.Tuple (Concrete parameters), (Type.Parametric _ as annotation)
         | (Type.Parametric _ as annotation), Type.Tuple (Concrete parameters) ->
             (* Handle cases like `Tuple[int, int]` <= `Iterator[int]`. *)
@@ -444,8 +476,9 @@ module OrderImplementation = struct
                 right.Callable.implementation
               >>| (fun implementation -> Type.Callable { left with Callable.kind; implementation })
               |> Option.value ~default:union
-            else
+            else (
               union
+            )
         | Type.Callable callable, other
         | other, Type.Callable callable -> (
             match
@@ -479,6 +512,8 @@ module OrderImplementation = struct
         | TypeOperation _, _
         | _, TypeOperation _ ->
             union
+        
+
 
 
     and meet_callable_implementations

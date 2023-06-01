@@ -8,25 +8,27 @@
 open Analysis
 open Interprocedural
 
-module TypeSummarize = OurTypeSet.OurSummary
+module TypeSummarize = OurDomain.OurSummary
 module ReverseCallGraph = OurCallGraph.OurCallGraph
 
 module Summarize : sig
   type t = {
-    type_summary : OurTypeSet.OurSummary.t;
+    type_summary : OurDomain.OurSummary.t;
     call_graph : ReverseCallGraph.t;
     errors : AnalysisError.t list;
   }
-
+  (*
   val create : unit -> t
 
   val analyze : t -> (Ast.Reference.t list list list * Ast.Reference.t list list) list
 
   val pp : Format.formatter -> t -> unit
+  *)
 end
-
+(*
 val errors : (AnalysisError.t list) ref
 
 val ast_environment : (AstEnvironment.ReadOnly.t) option ref
 
 val show_candidate_scenarios : (Ast.Reference.t list list list * Ast.Reference.t list list) -> string
+*)

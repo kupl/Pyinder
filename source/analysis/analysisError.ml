@@ -4356,13 +4356,14 @@ let filter_type_error errors =
       (match kind with
       | UnsupportedOperand _ 
       | IncompatibleParameterType _ | IncompatibleParameterTypeWithReference _ 
-      | UndefinedAttribute _ | UndefinedAttributeWithReference _
+      | UndefinedAttribute _ | UndefinedAttributeWithReference _ | IncompatibleAttributeType _
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
-      | IncompatibleAttributeType _ | UndefinedImport _ 
+      | UndefinedImport _ 
       | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
       | IncompatibleReturnType _
+      | InvalidOverride _
         -> false
       | _ -> true
       )

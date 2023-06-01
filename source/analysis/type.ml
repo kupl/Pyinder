@@ -1884,6 +1884,12 @@ let is_dictionary_or_mapping = function
   | Parametric { name = "typing.Mapping" | "dict"; _ } -> true
   | _ -> false
 
+let is_ourtyped_dictionary = function
+  | OurTypedDictionary _ -> true
+  | _ -> false
+
+let is_dict x =
+  is_dictionary_or_mapping x || is_ourtyped_dictionary x
 
 let is_ellipsis = function
   | Primitive "ellipsis" -> true
@@ -1909,6 +1915,9 @@ let is_list = function
   | Parametric { name = "list"; _ } -> true
   | _ -> false
 
+let is_set = function
+  | Parametric { name = "set"; _ } -> true
+  | _ -> false
 
 let is_meta = function
   | Parametric { name = "type"; _ } -> true
@@ -2488,7 +2497,7 @@ let rec expression annotation =
     in
     match annotation with
     | Unknown -> create_name "$Unknown"
-    | OurTypedDictionary { general; _ } -> Log.dump "What is covert?"; convert_annotation general
+    | OurTypedDictionary { general; _ } -> (*Log.dump "What is covert?";*) convert_annotation general
     | Annotated annotation -> get_item_call "typing.Annotated" [expression annotation]
     | Bottom -> create_name "$bottom"
     | Callable { implementation; overloads; _ } -> (
@@ -2731,6 +2740,77 @@ let union_join left right =
   match (single_union_check union_result) with
   | Union t -> Union (List.filter t ~f:(fun t -> not (is_bottom t))) |> single_union_check
   | _ -> union_result
+
+
+let narrow_union ~join ~less_or_equal t =
+  let _ = join in
+  match t with
+  | Union t_list ->
+    let dedup =
+      List.dedup_and_sort ~compare:(fun l r ->
+        if (equal l r) then 0
+        else compare l r  
+      )
+    in
+  
+    let rec loose_union acc t =
+      match t with
+      | Union t_list ->
+        List.fold t_list ~init:acc ~f:loose_union
+      | _ -> t::acc
+    in
+  
+    let loose_t_list =
+        dedup (List.fold t_list ~init:[] ~f:loose_union)
+    in
+
+    let unknown =
+      List.find loose_t_list ~f:(fun t -> equal Unknown t)
+    in
+
+    let loose_t_list_except_unknown =
+      List.filter loose_t_list ~f:(fun t -> not (equal Unknown t))
+    in
+
+    let check_join left right =
+      less_or_equal ~left ~right || less_or_equal ~left:right ~right:left
+    in
+
+    let rec narrow t_list =
+      match t_list with
+      | hd::tl ->
+        let join_cand, others = List.partition_tf tl ~f:(fun t -> check_join hd t) in
+        if List.length join_cand > 0 then (
+          let join_result, temp = List.fold join_cand ~init:(hd, []) ~f:(fun (acc, temp) t -> 
+            if check_join t acc then (join t acc, temp)
+            else (acc, t::temp)
+          ) in
+          narrow (join_result::(others@temp))
+        ) else (
+          hd::(narrow tl)
+        )
+      | _ -> []
+    in
+
+    let narrow_list = dedup (narrow loose_t_list_except_unknown) in
+    let narrow_result = 
+      (match unknown with
+      | Some u -> u::narrow_list
+      | _ -> narrow_list
+      )
+    in
+    (*
+    if (List.length loose_t_list) > (List.length narrow_result)
+      then Log.dump "[[ Before : %i ]]\n%a\n[[ After : %i ]]\n%a\n" (List.length loose_t_list) pp (Union loose_t_list) (List.length narrow_result) pp (Union narrow_result);
+    *)
+    if List.length narrow_result = 1
+    then List.nth_exn narrow_result 0 
+    else
+      (Union narrow_result)
+  | _ -> t
+
+
+
 
 module Transform = struct
   type 'state visit_result = {
@@ -2980,7 +3060,8 @@ let any_to_unknown annotation =
   end)
   in
   snd (InstantiateTransform.visit () annotation)
-  
+
+
 
 let contains_callable annotation = exists annotation ~predicate:is_callable
 
@@ -6348,6 +6429,7 @@ module OurTypedDictionary = struct
         | _ -> (* 추가하면 됨 *) (create_field ~annotation name)::typed_dict
         )
       in
+
       OurTypedDictionary { our_typed_dict with typed_dict; }
     
     | _ -> target_type
@@ -7033,3 +7115,88 @@ let rec get_dict_value_type ?(with_key = None) t =
       | _ -> get_dict_value_type general
   )
   | _ -> Any  
+
+let is_iterable t =
+  is_iterable t ||
+  is_dict t ||
+  is_list t ||
+  is_set t ||
+  is_tuple t
+
+
+let rec get_depth parent_annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = int
+
+    let visit_children_before _ annotation = (equal parent_annotation annotation) || not (is_iterable annotation)
+
+    let visit_children_after = false
+
+    let visit state annotation = 
+
+      let new_state = 
+        if (not (equal parent_annotation annotation)) && is_iterable annotation
+        then (
+          let depth = get_depth annotation in
+          Int.max state depth
+        )
+        else (
+          state
+        )
+      in
+      
+      { 
+        Transform.transformed_annotation=annotation; new_state; 
+      }
+  end)
+  in
+
+  let x = fst (InstantiateTransform.visit 0 parent_annotation) in
+  x+1
+
+  let narrow_iterable annotation =
+    let module InstantiateTransform = Transform.Make (struct
+      type state = unit
+  
+      let visit_children_before _ _ = false
+  
+      let visit_children_after = true
+  
+      let visit _ annotation = 
+        let depth =
+          if is_iterable annotation
+          then get_depth annotation
+          else 0
+        in
+
+        let annotation =
+          if depth >= 3 
+          then (
+            match annotation with
+            | Parametric { name = "typing.Iterable"; _ } ->
+              iterable Any
+            | Parametric { name = "list"; _ } ->
+              list Any
+            | Parametric { name = "set"; _ } ->
+              set Any
+            | Tuple _ 
+            | Parametric { name = "typing.Tuple" | "Tuple"; _ } 
+            ->
+              tuple [Any]
+            | Parametric { name = "typing.Mapping" | "dict"; _ } 
+            | OurTypedDictionary _
+            ->
+              dictionary ~key:Any ~value:Any
+            | _ -> annotation
+          )
+          else annotation
+        in
+        
+        { 
+          Transform.transformed_annotation = annotation; 
+          new_state = (); 
+        }
+    end)
+    in
+    snd (InstantiateTransform.visit () annotation)
+  

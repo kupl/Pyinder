@@ -146,7 +146,10 @@ let full_order ({ dependency; _ } as resolution) =
 
 let less_or_equal resolution = full_order resolution |> TypeOrder.always_less_or_equal
 
-let join resolution = full_order resolution |> TypeOrder.join
+let join resolution left right = 
+  let order = full_order resolution in
+  TypeOrder.join order left right
+  |> Type.narrow_iterable
 
 let meet resolution = full_order resolution |> TypeOrder.meet
 
@@ -644,7 +647,20 @@ let refine ~global_resolution annotation refined_type =
 let rec join_dict_key_value ?key ?value ~global_resolution t =
   match t with
   | Type.Unknown -> t
-  | Union t_list -> Union (List.map t_list ~f:(fun t -> join_dict_key_value t ?key ?value ~global_resolution))
+  | Union t_list -> 
+    let before_list = (List.map t_list ~f:(fun t -> join_dict_key_value t ?key ?value ~global_resolution)) in
+    let result = Type.Union before_list in
+    (*let x = Type.narrow_union result ~join:(join global_resolution) ~less_or_equal:(less_or_equal global_resolution) in
+    (match x with
+    | Type.Union t_list -> 
+      if (List.length before_list) > (List.length t_list)
+        then Log.dump "[[ Before : %i ]] => [[ After : %i ]]" (List.length before_list) (List.length t_list);
+      ()
+    | _ ->
+      Log.dump "[[ Before : %i ]] => [[ After : %i ]]" (List.length before_list) 1
+    );
+    *)
+    result
   | OurTypedDictionary { general; typed_dict } ->
     Type.OurTypedDictionary { 
       general=join_dict_key_value general ?key ?value ~global_resolution;
@@ -662,4 +678,4 @@ let rec join_dict_key_value ?key ?value ~global_resolution t =
       }
     | _ -> invalid_arg "It is not valid dict"
   )
-  | _ -> Log.dump "UPDATE???: %a" Type.pp t; t
+  | _ -> (*Log.dump "UPDATE???: %a" Type.pp t;*) t

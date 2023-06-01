@@ -58,7 +58,7 @@ module AttributeStorage = struct
     )
 
   let filter_by_prefix storage ~prefix =
-    (* ClassInfo 에 넣기 위해 앞의 self prefixf를 떼는 작업 *)
+    (* ClassInfo 에 넣기 위해 앞의 self prefix를 떼는 작업 *)
     fold storage ~init:empty ~f:(fun ~key ~data new_storage ->
       match Node.value key with
       | Constant _ -> new_storage
@@ -102,9 +102,16 @@ module AttributeStorage = struct
         (
         match name_to_reference name with
         | Some reference ->
-          if Reference.is_prefix ~prefix reference && Reference.length reference > 1
-          then true
-          else false
+          if Reference.is_parameter reference
+          then (
+            if Reference.is_prefix ~prefix reference
+            then false
+            else true
+          )
+          else (
+            false
+          )
+          
           (*
           let base_reference = Reference.create base in
           Log.dump "BASE : %a" Reference.pp base_reference;

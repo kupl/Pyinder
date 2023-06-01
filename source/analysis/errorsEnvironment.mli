@@ -4,6 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *)
+open Ast
 
 module ErrorsEnvironmentReadOnly : sig
   include Environment.ReadOnly
@@ -86,4 +87,8 @@ module Testing : sig
   end
 end
 
-val check_and_preprocess : t -> scheduler:Scheduler.t -> unit
+val check_and_preprocess : scheduler:Scheduler.t -> t -> unit
+
+val type_check : scheduler:Scheduler.t -> skip_set:Reference.Set.t -> t -> unit
+
+val get_errors : scheduler:Scheduler.t -> t -> unit

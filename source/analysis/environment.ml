@@ -226,10 +226,13 @@ module EnvironmentTable = struct
     module ReadOnly = struct
       type t = {
         get: ?dependency:SharedMemoryKeys.DependencyKey.registered -> In.Key.t -> In.Value.t;
+        update: ?dependency:SharedMemoryKeys.DependencyKey.registered -> ?value_join:(In.Value.t -> In.Value.t -> In.Value.t) -> In.Key.t -> In.Value.t;
         upstream_environment: In.PreviousEnvironment.ReadOnly.t;
       }
 
       let get { get; _ } = get
+
+      let update { update; _ } = update
 
       let upstream_environment { upstream_environment; _ } = upstream_environment
 
@@ -285,9 +288,21 @@ module EnvironmentTable = struct
             Table.add table key value;
             value
 
+      let update { table; upstream_environment } ?dependency ?value_join key =
+        let _ = value_join in
+        match Table.get table ?dependency key with
+        | Some hit -> hit
+        | None ->
+            let trigger = In.key_to_trigger key in
+            let dependency = In.trigger_to_dependency trigger in
+            let dependency = Some (SharedMemoryKeys.DependencyKey.Registry.register dependency) in
+            let value = In.produce_value upstream_environment trigger ~dependency in
+            Table.add table key value;
+            value
+
 
       let read_only ({ upstream_environment; _ } as this_environment) =
-        { ReadOnly.get = get this_environment; upstream_environment; }
+        { ReadOnly.get = get this_environment; update = update this_environment; upstream_environment; }
 
 
       module TriggerMap = Map.Make (struct
@@ -520,8 +535,15 @@ module EnvironmentTable = struct
           else
             ReadOnly.get parent ?dependency key
         in
+        let update ?dependency ?value_join key =
+          if overlay_owns_key environment key then
+            ReadOnly.update this_read_only ?dependency ?value_join key
+          else
+            ReadOnly.update parent ?dependency ?value_join key
+        in
         {
           ReadOnly.get;
+          update;
           upstream_environment = In.PreviousEnvironment.Overlay.read_only upstream_environment;
         }
     end

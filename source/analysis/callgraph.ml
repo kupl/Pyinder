@@ -38,6 +38,8 @@ type callee_with_locations = {
   locations: Location.WithModule.t list;
 }
 
+
+
 let callee_to_yojson ?locations callee =
   let locations =
     match locations with
@@ -100,6 +102,16 @@ let set ~caller ~callees = SharedMemory.add caller callees
 
 let get ~caller = SharedMemory.get caller |> Option.value ~default:[]
 
+let get_callee_name ~callee =
+  match callee with
+  | Function t
+  | Method {
+      direct_target=t; _
+    }
+  | PropertySetter {
+      direct_target=t; _
+    }
+    -> t
 module type Builder = sig
   val initialize : unit -> unit
 

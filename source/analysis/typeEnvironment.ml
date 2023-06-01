@@ -26,10 +26,9 @@ end
 let produce_check_results global_environment define_name ~dependency =
   let type_check_controls, call_graph_builder, dependency =
     let controls = AnnotatedGlobalEnvironment.ReadOnly.controls global_environment in
-    
     let configuration = EnvironmentControls.configuration controls in
-    OurTypeSet.set_data_path configuration;
-
+    OurDomain.set_data_path configuration;
+    OurDomain.our_model :=  EnvironmentControls.our_summary controls;
     let type_check_controls = EnvironmentControls.type_check_controls controls in
     let call_graph_builder =
       if EnvironmentControls.populate_call_graph controls then
@@ -45,19 +44,19 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
-  let mode = OurTypeSet.load_mode () in
+  let mode = OurDomain.load_mode () in
   let x = 
-  if OurTypeSet.is_search_mode mode then
+  if OurDomain.is_search_mode mode then
     TypeCheck.search_define_by_name
       ~type_check_controls
       ~call_graph_builder
       ~global_environment
       ~dependency
       define_name
-  else if OurTypeSet.is_inference_mode mode then (
-    (if OurTypeSet.is_func_model_exist () then () else (
-    OurTypeSet.save_summary (OurTypeSet.OurSummary.create ()) define_name));
-    OurTypeSet.load_global_summary_cache ();
+  else if OurDomain.is_inference_mode mode then (
+    (if OurDomain.is_func_model_exist () then () else (
+    OurDomain.save_summary OurDomain.OurSummary.empty define_name));
+    (*OurTypeSet.load_global_summary_cache ();*)
     let x = TypeCheck.check_define_by_name
       ~type_check_controls
       ~call_graph_builder
@@ -78,6 +77,7 @@ let produce_check_results global_environment define_name ~dependency =
           define_name
     )
   in
+
   x
 
 
@@ -156,7 +156,7 @@ let populate_for_definitions ~scheduler environment defines =
         (Scheduler.Policy.fixed_chunk_size
            ~minimum_chunk_size:10
            ~minimum_chunks_per_worker:2
-           ~preferred_chunk_size:1000
+           ~preferred_chunk_size:100
            ())
       ~initial:0
       ~map
@@ -168,7 +168,7 @@ let populate_for_definitions ~scheduler environment defines =
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
 
-let populate_for_modules ~scheduler environment qualifiers =
+let populate_for_modules ~scheduler ?(skip_set=Reference.Set.empty) environment qualifiers =
   Profiling.track_shared_memory_usage ~name:"Before legacy type check" ();
   let all_defines =
     let unannotated_global_environment =
@@ -176,6 +176,7 @@ let populate_for_modules ~scheduler environment qualifiers =
       |> AnnotatedGlobalEnvironment.read_only
       |> AnnotatedGlobalEnvironment.ReadOnly.unannotated_global_environment
     in
+
     let map _ qualifiers =
       List.concat_map qualifiers ~f:(fun qualifier ->
           UnannotatedGlobalEnvironment.ReadOnly.get_define_names
@@ -196,7 +197,15 @@ let populate_for_modules ~scheduler environment qualifiers =
       ~inputs:qualifiers
       ()
   in
-  populate_for_definitions ~scheduler environment all_defines;
+  let filtered_defines =
+    List.filter all_defines ~f:(fun name ->
+      not (Reference.Set.exists skip_set ~f:(Reference.equal name))
+    )
+  in
+
+  if List.length filtered_defines < 20 then
+    List.iter filtered_defines ~f:(fun r -> Log.dump "Analysis: %a" Reference.pp r);
+  populate_for_definitions ~scheduler environment filtered_defines;
 
 
   Statistics.event
@@ -209,13 +218,13 @@ let populate_for_modules ~scheduler environment qualifiers =
 
 
 
-let populate_for_project_modules ~scheduler environment =
+let populate_for_project_modules ~scheduler ?(skip_set=Reference.Set.empty) environment =
   let project_qualifiers =
     module_tracker environment
     |> ModuleTracker.read_only
     |> ModuleTracker.ReadOnly.project_qualifiers
   in
-  populate_for_modules ~scheduler environment project_qualifiers;
+  populate_for_modules ~scheduler ~skip_set environment project_qualifiers;
   
 
 

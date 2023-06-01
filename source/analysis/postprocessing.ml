@@ -128,10 +128,13 @@ let filter_errors
   let mode = Source.mode ~configuration ~local_mode in
   let filter errors =
     let keep_error error = not (Error.suppress ~mode ~ignore_codes error) in
-    List.filter ~f:keep_error errors
+    Error.filter_type_error errors
+    |> List.filter ~f:keep_error 
   in
-  List.map errors_by_define ~f:(fun errors -> filter errors |> List.sort ~compare:Error.compare)
-  |> List.concat_map ~f:(Error.join_at_define ~resolution:global_resolution)
+  let x =
+    List.map errors_by_define ~f:(fun errors -> filter errors |> List.sort ~compare:Error.compare)
+  in
+  x |> List.concat_map ~f:(Error.join_at_define ~resolution:global_resolution)
   |> Error.join_at_source ~resolution:global_resolution
 
 
@@ -142,20 +145,36 @@ let run_on_source
     ~source:({ Source.typecheck_flags; module_path = { ModulePath.qualifier; _ }; _ } as source)
     errors_by_define
   =
+
+  let timer = Timer.start () in
+
   let global_resolution = TypeEnvironment.ReadOnly.global_resolution environment in
   let configuration =
     TypeEnvironment.ReadOnly.controls environment |> EnvironmentControls.configuration
   in
-  filter_errors ~configuration ~global_resolution ~typecheck_flags errors_by_define
-  |> add_local_mode_errors ~define:(Source.top_level_define_node source) source
+  let x = filter_errors ~configuration ~global_resolution ~typecheck_flags errors_by_define in
+  let x = add_local_mode_errors ~define:(Source.top_level_define_node source) source x in
+  let x = 
+  x
   |> handle_ignores_and_fixmes ~qualifier source
   |> List.map
-       ~f:(Error.dequalify (Preprocessing.dequalify_map source) ~resolution:global_resolution)
+       ~f:(fun x -> 
+      let x = Error.dequalify (Preprocessing.dequalify_map source) ~resolution:global_resolution x in
+      x
+    )
   |> List.sort ~compare:Error.compare
+  in
+
+  let time = Timer.stop_in_sec timer in
+
+  if Float.(>.) time 1.0 then
+    Log.dump "%a consume %f" Reference.pp qualifier time;
+  x
 
 
 let run_on_qualifier environment ~dependency qualifier =
   let ast_environment = TypeEnvironment.ReadOnly.ast_environment environment in
+  let x = 
   match AstEnvironment.ReadOnly.get_raw_source ?dependency ast_environment qualifier with
   | None -> []
   | Some
@@ -202,14 +221,35 @@ let run_on_qualifier environment ~dependency qualifier =
       let unannotated_global_environment =
         TypeEnvironment.ReadOnly.unannotated_global_environment environment
       in
-      let errors_by_define =
+      let timer = Timer.start () in
+      let defines_timer = Timer.start () in
+
+      let defines = 
         UnannotatedGlobalEnvironment.ReadOnly.get_define_names
           ?dependency
           unannotated_global_environment
           qualifier
-        |> List.map ~f:(TypeEnvironment.ReadOnly.get_errors ?dependency environment)
       in
+
+      let defines_time = Timer.stop_in_sec defines_timer in
+
+      let errors_by_define =
+        defines |> List.map ~f:(TypeEnvironment.ReadOnly.get_errors ?dependency environment)
+      in
+
+      let time = Timer.stop_in_sec timer in
+      if Float.(>.) time 1.0 then
+        Log.dump "Defines %i consume %f\nQualifier %a consume %f (%i)" 
+          (List.length defines) defines_time
+          Reference.pp qualifier time (List.fold errors_by_define ~init:0 ~f:(fun acc x -> acc + List.length x));
+      
+
       run_on_source ~environment ~source errors_by_define
+      
+  in
+
+  x
+
 
 
 let run ~scheduler ~environment sources =

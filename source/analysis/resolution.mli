@@ -139,4 +139,4 @@ val top_to_bottom : t -> t
 
 val add_unknown : t -> t
 
-val update_self_attributes_tree : t -> Refinement.Unit.t Identifier.Map.Tree.t -> Reference.t -> t
+val update_self_attributes_tree : global_resolution:GlobalResolution.t -> t -> Refinement.Unit.t Identifier.Map.Tree.t -> Reference.t -> t

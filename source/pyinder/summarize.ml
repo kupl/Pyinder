@@ -5,19 +5,18 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-open Core
 open Analysis
 open Interprocedural
-open Ast 
-open Usedef
-open OurTypeSet
+open OurDomain
 
 module TypeSummarize = OurSummary
 module ReverseCallGraph = OurCallGraph.OurCallGraph
 module Signature = Ast.Statement.Define.Signature
 
+(*
 let errors = ref []
 let ast_environment = ref None
+*)
 
 module Summarize = struct
   type t = {
@@ -26,6 +25,7 @@ module Summarize = struct
     errors : AnalysisError.t list
   }
 
+  (*
   let remove_empty_list_of_list l =
     List.rev (List.fold l ~init:[] ~f:(fun sofar e -> if List.is_empty e then sofar else e::sofar))
 
@@ -279,8 +279,9 @@ module Summarize = struct
 
   let pp formatter { type_summary; call_graph; _ } =
     Format.fprintf formatter "%a\n\n%a" TypeSummarize.pp type_summary ReverseCallGraph.pp call_graph; 
+    *)
 end
-
+(*
 let rec show_candidate_scenario candidate_scenario =
   match candidate_scenario with
   | [] -> ""
@@ -309,4 +310,4 @@ let show_candidate_scenarios (prev_list, candidate_scenarios) =
   show_prev_list prev_list ^
   "\n" ^
   show_candidate_scenarios candidate_scenarios
-  
+  *)
