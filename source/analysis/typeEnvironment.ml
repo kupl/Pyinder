@@ -24,6 +24,7 @@ end
 
 
 let produce_check_results global_environment define_name ~dependency =
+  Log.dump "111";
   let type_check_controls, call_graph_builder, dependency =
     let controls = AnnotatedGlobalEnvironment.ReadOnly.controls global_environment in
     let configuration = EnvironmentControls.configuration controls in
@@ -44,6 +45,15 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
+  Log.dump "222";
+  let x = TypeCheck.check_define_by_name
+    ~type_check_controls
+    ~call_graph_builder
+    ~global_environment
+    ~dependency
+    define_name
+  in
+  (*
   let mode = OurDomain.load_mode () in
   let x = 
   if OurDomain.is_search_mode mode then
@@ -77,7 +87,8 @@ let produce_check_results global_environment define_name ~dependency =
           define_name
     )
   in
-
+  *)
+  Log.dump "444";
   x
 
 
@@ -136,7 +147,7 @@ let populate_for_definitions ~scheduler environment defines =
         List.iter (Option.value errors ~default:[]) ~f:(fun e -> Log.dump "In HERE! : %a" Error.pp e)
       | _ -> ());
       *)
-      let () = ReadOnly.get read_only name |> ignore in
+      let () = ReadOnly.add read_only name |> ignore in
       number_defines + 1
     in
     let x = List.fold names ~init:0 ~f:analyze_define in
@@ -165,10 +176,12 @@ let populate_for_definitions ~scheduler environment defines =
       ()
   in
 
+  Log.dump "666";
+
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
 
-let populate_for_modules ~scheduler ?(skip_set=Reference.Set.empty) environment qualifiers =
+let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) environment qualifiers =
   Profiling.track_shared_memory_usage ~name:"Before legacy type check" ();
   let all_defines =
     let unannotated_global_environment =
@@ -203,9 +216,33 @@ let populate_for_modules ~scheduler ?(skip_set=Reference.Set.empty) environment 
     )
   in
 
+  Log.dump "???";
+
+
   if List.length filtered_defines < 20 then
     List.iter filtered_defines ~f:(fun r -> Log.dump "Analysis: %a" Reference.pp r);
   populate_for_definitions ~scheduler environment filtered_defines;
+
+  
+  let read_only = read_only environment in
+  (
+  match type_join with
+  | Some type_join ->
+    let our_summary =
+      List.fold filtered_defines ~init:(!OurDomain.our_model) ~f:(fun our_model define ->
+        let result = ReadOnly.get read_only define in
+        (match result with
+        | Some t -> 
+          let cur_summary =TypeCheck.CheckResult.our_summary t in
+          OurDomain.OurSummary.join ~type_join our_model cur_summary
+        | _ -> our_model
+        )
+      )
+    in
+    OurDomain.our_model := our_summary
+  | _ -> Log.dump "No Join"
+  )
+  ;
 
 
   Statistics.event
@@ -218,13 +255,13 @@ let populate_for_modules ~scheduler ?(skip_set=Reference.Set.empty) environment 
 
 
 
-let populate_for_project_modules ~scheduler ?(skip_set=Reference.Set.empty) environment =
+let populate_for_project_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) environment =
   let project_qualifiers =
     module_tracker environment
     |> ModuleTracker.read_only
     |> ModuleTracker.ReadOnly.project_qualifiers
   in
-  populate_for_modules ~scheduler ~skip_set environment project_qualifiers;
+  populate_for_modules ~scheduler ?type_join ~skip_set environment project_qualifiers;
   
 
 
@@ -244,6 +281,14 @@ module ReadOnly = struct
   let module_tracker environment =
     ast_environment environment |> AstEnvironment.ReadOnly.module_tracker
 
+    (*
+  let get_our_summary environment ?dependency reference =
+    let x = get ?dependency environment reference in
+    match x with
+    | Some x ->
+      TypeCheck.CheckResult.our_summary x
+    | _ -> OurDomain.OurSummary.empty
+    *)
 
   let get_errors environment ?dependency reference =
     let x = get ?dependency environment reference in

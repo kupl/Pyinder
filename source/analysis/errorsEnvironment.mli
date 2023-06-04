@@ -89,6 +89,6 @@ end
 
 val check_and_preprocess : scheduler:Scheduler.t -> t -> unit
 
-val type_check : scheduler:Scheduler.t -> skip_set:Reference.Set.t -> t -> unit
+val type_check : scheduler:Scheduler.t -> type_join:(Type.t -> Type.t -> Type.t) -> skip_set:Reference.Set.t -> t -> unit
 
 val get_errors : scheduler:Scheduler.t -> t -> unit

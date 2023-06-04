@@ -59,8 +59,6 @@ module GlobalLocationTable = Environment.EnvironmentTable.WithCache (struct
   module Key = SharedMemoryKeys.ReferenceKey
   module Value = GlobalLocationValue
 
-  module Test = OurDomain
-
   type trigger = Reference.t [@@deriving sexp, compare]
 
   let convert_trigger = Fn.id

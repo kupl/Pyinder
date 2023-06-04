@@ -21,6 +21,8 @@ let populate_call_graph { populate_call_graph; _ } = populate_call_graph
 
 let our_summary { our_summary; _} = our_summary
 
+let set_our_summary t our_summary = { t with our_summary; }
+
 let track_dependencies { configuration = { Configuration.Analysis.incremental_style; _ }; _ } =
   match incremental_style with
   | Configuration.Analysis.Shallow -> false

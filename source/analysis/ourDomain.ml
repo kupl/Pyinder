@@ -1,10 +1,11 @@
 open Core
 open Ast
-open Usedef
+
 open AttributeAnalysis
-
+(*
+open Usedef
 exception NotEqualException;;
-
+*)
 module ReferenceSet = Reference.Set
 module ReferenceMap = struct
   include Map.Make (Reference)
@@ -76,20 +77,7 @@ module ArgTypes = struct
 
 
 
-  let add_arg_type ~join t ident typ =
-    let modified_typ = weaken_typ typ in
-    let exn_typ = IdentifierMap.find t ident |> Option.value ~default:modified_typ in
-    match exn_typ with
-    | Bottom | Any | Top | Unknown -> t
-    | _ ->
-      IdentifierMap.set ~key:ident ~data:(join modified_typ exn_typ) t
 
-  let join ~type_join left right =
-    IdentifierMap.merge left right ~f:(fun ~key:_ data ->
-      match data with
-      | `Left t | `Right t -> Some t
-      | `Both (t1, t2) -> Some (type_join t1 t2)
-    ) 
 
   let pp format t =
     IdentifierMap.iteri ~f:(fun ~key ~data ->
@@ -186,12 +174,6 @@ module ClassSummary = struct
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
 
-  let join ~type_join left right =
-    {
-      class_var_type = ReferenceMap.join left.class_var_type right.class_var_type ~data_join:type_join;
-      class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
-      usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
-    }
 
   let pp_class_var_type format { class_var_type; _ } =
       Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n" (ReferenceMap.pp ~data_pp:Type.pp) class_var_type 
@@ -218,52 +200,56 @@ module ClassTable = struct
   let find_default t name = ClassMap.find t name |> Option.value ~default:ClassSummary.empty 
 
 
+  (*
   let add ~class_name ~data ~f t =
     let class_info = find_default t class_name in
     ClassMap.set t ~key:class_name ~data:(f class_info data)
+*)
 
-  let add_attribute t class_name attr = add t ~class_name ~data:attr ~f:ClassSummary.add_attribute
+  let add_attribute t class_name attr = 
+    let class_info = find_default t class_name in
+    ClassMap.set t ~key:class_name ~data:(ClassSummary.add_attribute class_info attr)
 
-  let add_property t class_name property = add t ~class_name ~data:property ~f:ClassSummary.add_property
+  let add_property t class_name property = 
+    let class_info = find_default t class_name in
+    ClassMap.set t ~key:class_name ~data:(ClassSummary.add_property class_info property)
 
-  let add_method t class_name meth = add t ~class_name ~data:meth ~f:ClassSummary.add_method
+  let add_method t class_name meth = 
+    let class_info = find_default t class_name in
+    ClassMap.set t ~key:class_name ~data:(ClassSummary.add_method class_info meth)
 
-  let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummary.add_usage_attributes
+  let add_usage_attributes t class_name storage = 
+    let class_info = find_default t class_name in
+    ClassMap.set t ~key:class_name ~data:(ClassSummary.add_usage_attributes class_info storage)
 
   let set_class_info t class_name class_info =
     ClassMap.set t ~key:class_name ~data:class_info
 
+    (*
   let get ~class_name ~f t = 
     let class_info = find_default t class_name in
     f class_info
+  *)
+  let get_class_info t class_name = 
+    let class_info = find_default t class_name in
+    class_info
 
-  let get_class_info t class_name = get t ~class_name ~f:(fun x -> x)
+  let get_class_var_type t class_name = 
+    let class_info = find_default t class_name in
+    ClassSummary.get_class_var_type class_info 
 
-  let get_class_var_type t class_name = get t ~class_name ~f:ClassSummary.get_class_var_type
+  let get_usage_attributes t class_name = 
+    let class_info = find_default t class_name in
+    ClassSummary.get_usage_attributes class_info 
 
-  let get_usage_attributes t class_name = get t ~class_name ~f:ClassSummary.get_usage_attributes
 
-  let join ~type_join left right =
-    ClassMap.join left right ~data_join:(ClassSummary.join ~type_join)
 
   let pp format t =
     ClassMap.iteri ~f:(fun ~key ~data ->
       Format.fprintf format "[[[ Class : %a ]]] \n%a\n" Reference.pp key ClassSummary.pp data
     ) t
 
-  let get_analysis_set ~get_functions prev next =
-    ClassMap.fold2 prev next ~init:ReferenceSet.empty ~f:(fun ~key ~data ref_set ->
-      match data with
-      | `Right _ -> 
-        get_functions key |> ReferenceSet.union ref_set
-      | `Both (prev, next) -> 
-        (
-        if not (ClassSummary.equal prev next)
-        then get_functions key
-        else ReferenceSet.empty
-        ) |> ReferenceSet.union ref_set 
-      | `Left _ -> failwith "Why prev is bigger?"
-    )
+
 end
 
 module type FunctionSummary = sig
@@ -274,7 +260,7 @@ module type FunctionSummary = sig
     return_type: Type.t; (* Function의 Return Type *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
-    usedef_tables: UsedefStruct.t option;
+    (*usedef_tables: UsedefStruct.t option;*)
   }
 
   val add_return_var_type : t -> Reference.t -> Type.t -> t
@@ -289,7 +275,7 @@ module FunctionSummary = struct
     return_type: Type.t; (* Function의 Return Type *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
-    usedef_tables: UsedefStruct.t option;
+    (*usedef_tables: UsedefStruct.t option;*)
   } [@@deriving sexp, equal]
 
   let empty = {
@@ -299,11 +285,10 @@ module FunctionSummary = struct
     return_type=Type.Unknown;
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
-    usedef_tables=None;
+    (*usedef_tables=None;*)
   }
 
-  let add_arg_types ~join ({arg_types; _} as t) arg_typ_list =
-    { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg typ) }
+
 
   let add_usage_attributes ({usage_attributes; _ } as t) storage =
     let x = { t with usage_attributes=AttributeStorage.join usage_attributes storage} in
@@ -316,7 +301,7 @@ module FunctionSummary = struct
     { t with callers=(CallerSet.add callers caller); }
   
 
-    let set_arg_types t arg_types = 
+  let set_arg_types t arg_types = 
     { t with arg_types }
 
   let set_arg_annotation t arg_annotation = 
@@ -328,10 +313,12 @@ module FunctionSummary = struct
   let set_return_type t return_type =
     { t with return_type }
 
+    (*
   let set_usedef_tables t usedef_tables =
     { t with usedef_tables; }
 
   let get_usedef_tables {usedef_tables; _} = usedef_tables
+    *)
 
   let get_arg_types { arg_types; _ } = arg_types
 
@@ -343,32 +330,13 @@ module FunctionSummary = struct
   let get_usage_attributes { usage_attributes; _ } = usage_attributes
   let get_return_type {return_type; _} = return_type
 
-  let join ~type_join left right = 
-    let usedef_tables = 
-      (match left.usedef_tables, right.usedef_tables with
-      | None, None -> None
-      | Some t1, Some t2 -> 
-        if UsedefStruct.equal t1 t2 then Some t1 else raise NotEqualException
-      | Some t, None | None, Some t -> Some t
-      )
-    in
-    
-  {
-    arg_types=ArgTypes.join ~type_join left.arg_types right.arg_types;
-    arg_annotation=ArgTypes.join ~type_join left.arg_annotation right.arg_annotation;
-    return_var_type=ReferenceMap.join ~data_join:type_join left.return_var_type right.return_var_type;
-    return_type=type_join left.return_type right.return_type;
-    callers=CallerSet.union left.callers right.callers;
-    usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes;
-    usedef_tables=usedef_tables;
-  }
 
-  let join_return_type ~type_join ({return_type=origin; _} as t) return_type =
-    { t with return_type=type_join origin return_type; }
 
-  let pp_reference_set ~data_pp format t =
+
+
+  let pp_reference_set format t =
       ReferenceSet.iter ~f:(fun data ->
-        Format.fprintf format "%a, " data_pp data
+        Format.fprintf format "%a, " Reference.pp data
       ) t
 
   let pp format {arg_types; return_var_type; return_type; usage_attributes; callers; _} =
@@ -378,7 +346,7 @@ module FunctionSummary = struct
      (ReferenceMap.pp ~data_pp:Type.pp) return_var_type 
      Type.pp return_type 
      AttributeStorage.pp usage_attributes
-     (pp_reference_set ~data_pp:Reference.pp) callers
+     pp_reference_set callers
 
   let get_analysis_set prev next =
     let should_analysis = 
@@ -399,6 +367,8 @@ end
 
 module type FunctionTable = sig
   type t = FunctionSummary.t FunctionMap.t
+
+  val get_functions = FunctionSummary.t FunctionMap.t -> 
 end
 
 module FunctionTable = struct
@@ -406,10 +376,6 @@ module FunctionTable = struct
 
   let empty = FunctionMap.empty
 
-  let add_arg_types ~join t reference arg_typ_list =
-    let func_summary = FunctionMap.find t reference |> Option.value ~default:FunctionSummary.empty in
-    let func_summary = FunctionSummary.add_arg_types ~join func_summary arg_typ_list in
-    FunctionMap.set ~key:reference ~data:func_summary t
 
 
 
@@ -437,6 +403,7 @@ module FunctionTable = struct
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set ~key:func ~data:(FunctionSummary.set_return_type func_summary return_type) t
 
+    (*
   let set_usedef_tables t func usedef_tables =
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set ~key:func ~data:(FunctionSummary.set_usedef_tables func_summary usedef_tables) t
@@ -444,6 +411,7 @@ module FunctionTable = struct
   let get_usedef_tables t func_name =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_usedef_tables func_summary
+    *)
 
   let get_arg_types t func_name =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -469,12 +437,6 @@ module FunctionTable = struct
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_usage_attributes func_summary
 
-  let join ~type_join left right =
-    ReferenceMap.join left right ~data_join:(FunctionSummary.join ~type_join)
-
-  let join_return_type ~type_join t func return_type =
-    let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
-    FunctionMap.set ~key:func ~data:(FunctionSummary.join_return_type ~type_join func_summary return_type) t
 
   let pp format table =
     FunctionMap.iteri ~f:(fun ~key ~data ->
@@ -531,17 +493,6 @@ module OurSummary = struct
     function_table=FunctionTable.empty;
   }
 
-  let join ~type_join left right = 
-    {
-      class_table = ClassTable.join ~type_join left.class_table right.class_table;
-      function_table = FunctionTable.join ~type_join left.function_table right.function_table;
-    }
-
-  let join_return_type ~type_join ({function_table; _} as t) func_name return_type =
-    { t with function_table = FunctionTable.join_return_type ~type_join function_table func_name return_type }
-
-  let add_arg_types ~join ({ function_table; _} as t) reference arg_typ_list =
-    { t with function_table = FunctionTable.add_arg_types ~join function_table reference arg_typ_list }
 
 
 
@@ -574,14 +525,16 @@ module OurSummary = struct
 
   let set_return_type ({function_table; _} as t) func_name return_type =
     { t with function_table=FunctionTable.set_return_type function_table func_name return_type }
+    (*
   let set_usedef_tables ({function_table; _} as t) func_name usedef_tables =
     { t with function_table=FunctionTable.set_usedef_tables function_table func_name usedef_tables }
 
-
+*)
   let get_class_table { class_table; _ } = class_table
-
+(*
   let get_usedef_tables {function_table; _} func_name = 
     FunctionTable.get_usedef_tables function_table func_name
+    *)
   
   let get_arg_types {function_table; _} func_name =
     FunctionTable.get_arg_types function_table func_name
@@ -629,34 +582,15 @@ module OurSummary = struct
   let pp formatter t =
     Format.fprintf formatter "%a\n\n%a" pp_class t pp_func t
 
-  let get_analysis_set prev next =
-    let get_functions =
-      FunctionTable.get_functions next.function_table
-    in
-    ReferenceSet.union
-      (ClassTable.get_analysis_set ~get_functions prev.class_table next.class_table)
-      (FunctionTable.get_analysis_set prev.function_table next.function_table)
 
-  let get_skip_set prev next =
-    let analysis_set = get_analysis_set prev next in
-    let get_all_functions = FunctionTable.get_all_functions next.function_table in
-    ReferenceSet.diff get_all_functions analysis_set
+
+
 
   
 
 end
 
-let global_summary = "Pyinder.finalSummary"
-let check_dir : string -> bool 
-= fun path ->
-  match Sys.is_directory path with
-  | `Yes -> true
-  | _ -> false
 
-let check_and_make_dir : string -> unit
-= fun path ->
-  if check_dir path then ()
-  else Unix.mkdir path
 
 
 
@@ -668,27 +602,23 @@ match Sys.file_exists path with
 | _ -> false
   *)
   
-let data_path = ref ""
 
-let is_func_model_exist () = check_dir !data_path
 
-let set_data_path (configuration: Configuration.Analysis.t) =
-  if String.equal !data_path "" then
-    data_path :=
-      (List.nth_exn configuration.source_paths 0 
-      |> SearchPath.get_root
-      |> PyrePath.show) ^ "/pyinder_analysis"
+
 
 
 
 let our_model = ref (OurSummary.empty);;
 
-let cache = ref false;;
+let our_summary = ref (OurSummary.empty);;
+
+
 
 let is_search_mode = String.equal "search"
 
 let is_inference_mode = String.equal "inference"
 
+(*
 let save_mode (mode: string) =
   check_and_make_dir !data_path;
   let target_path = !data_path ^ "/mode" ^ ".marshalled" in
@@ -785,28 +715,8 @@ let rec load_global_summary_cache () =
       
   )
 
-let load_all_summary ?(use_cache=true) ~type_join ~skip_set prev_model =
-  if use_cache && !cache then
-    ()
-  else
-  (
-    cache := true;
-    let list_files = Sys.readdir !data_path |> Array.to_list in 
-    our_model := List.fold list_files ~init:prev_model ~f:(fun summary file -> 
-      if (String.equal file "mode.marshalled") || 
-        (Reference.Set.exists skip_set ~f:(fun ref -> String.is_prefix file ~prefix:(Reference.show ref)))
-      then (
-        summary
-      )
-      else
-      (
-        let data_in = open_in (!data_path ^ "/" ^ file) in
-        let other_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
-        close_in data_in;
-        OurSummary.join ~type_join summary other_summary
-      )
-    )
-  )
+
+
 
 let load_specific_file () =
   let list_files = [
@@ -825,3 +735,5 @@ let select_our_model func_name =
     load_summary func_name
   else 
     !our_model
+
+*)

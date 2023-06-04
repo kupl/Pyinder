@@ -147,6 +147,8 @@ module EnvironmentTable : sig
 
       val get : t -> ?dependency:SharedMemoryKeys.DependencyKey.registered -> In.Key.t -> In.Value.t
 
+      val add : t -> In.Key.t -> In.Value.t
+
       val upstream_environment : t -> In.PreviousEnvironment.ReadOnly.t
 
       val unannotated_global_environment : t -> UnannotatedGlobalEnvironment.ReadOnly.t

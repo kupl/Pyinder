@@ -6,7 +6,7 @@
  *)
 
  open Ast
-open Usedef
+(*open Usedef*)
 open Core
 open AttributeAnalysis
 
@@ -32,6 +32,7 @@ module ClassAttributes: sig
     methods: AttrsSet.t;
   }
 
+  val join : t -> t -> t
   val is_used_attr : t -> string -> bool
 
   val is_subset_with_total_attributes : t -> AttrsSet.t -> bool
@@ -42,7 +43,7 @@ module ClassSummary: sig
     class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
-  }
+  } [@@deriving equal]
 
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
 
@@ -61,10 +62,6 @@ module ClassTable: sig
   type t = ClassSummary.t ClassMap.t 
 
   val find_default : t -> Reference.t -> ClassSummary.t
-
-  val add : class_name:Reference.t -> data:'a -> f:(ClassSummary.t -> 'a -> ClassSummary.t) -> t -> t
-
-  val get : class_name:Reference.t -> f:(ClassSummary.t -> 'a) -> t -> 'a
 
   val get_class_var_type : t -> Reference.t -> Type.t FunctionMap.t
 
@@ -96,7 +93,7 @@ module type FunctionSummary = sig
     return_type: Type.t; (* Function의 Return Type *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
-    usedef_tables: UsedefStruct.t option;
+    (*usedef_tables: UsedefStruct.t option;*)
   }
 
   val add_return_var_type : t -> Reference.t -> Type.t -> t
@@ -110,7 +107,7 @@ module FunctionSummary : sig
     return_type : Type.t;
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
-    usedef_tables : UsedefStruct.t option;
+    (*usedef_tables : UsedefStruct.t option;*)
   }
 
   val empty : t
@@ -167,13 +164,14 @@ module OurSummary : sig
   val set_return_var_type : t -> Reference.t -> Type.t FunctionMap.t -> t
 
   val set_return_type : t -> Reference.t -> Type.t -> t
-
+(*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
-
+*)
   val get_class_table : t -> ClassTable.t
 
+  (*
   val get_usedef_tables : t -> Reference.t -> UsedefStruct.t option
-
+*)
   val get_arg_types : t -> Reference.t -> ArgTypes.t
 
   val get_arg_annotation : t -> Reference.t -> ArgTypes.t
@@ -210,6 +208,8 @@ val is_func_model_exist : unit -> bool
 val set_data_path : Configuration.Analysis.t -> unit
 
 val our_model : OurSummary.t ref
+
+val our_summary : OurSummary.t ref
 
 val is_search_mode : string -> bool
 

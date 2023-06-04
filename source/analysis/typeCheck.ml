@@ -14,6 +14,7 @@ open Statement
 open TypeCheckUtil
 
 module OurSummaryResolution = OurTypeSet.OurSummaryResolution
+module OurSummary = OurDomain.OurSummary
 module StatementDefine = Define
 module Error = AnalysisError
 
@@ -13015,10 +13016,12 @@ end
 
 module CheckResult = struct
   type t = {
+    our_summary: OurSummary.t;
     errors: Error.t list option;
     local_annotations: LocalAnnotationMap.ReadOnly.t option;
   }
 
+  let our_summary { our_summary; _ } = our_summary
   let errors { errors; _ } = errors
 
   let local_annotations { local_annotations; _ } = local_annotations
@@ -13747,6 +13750,7 @@ let filter_errors (module Context : Context) ~global_resolution errors =
     Error.filter ~resolution:global_resolution errors
     |> Error.filter_type_error
 
+    (*
 let exit_state_origin ~resolution (module Context : Context) =
   let module State = State (Context) in
   let module Fixpoint = Fixpoint.Make (State) in
@@ -13816,6 +13820,7 @@ let exit_state_origin ~resolution (module Context : Context) =
           |> filter_errors (module Context) ~global_resolution
     in
     errors, Some local_annotations, Some callees)
+*)
 
 let exit_state ~resolution (module Context : Context) =
   let module PossibleState = PossibleState (Context) in
@@ -13825,6 +13830,8 @@ let exit_state ~resolution (module Context : Context) =
     Context.define
   in
 
+  (* our_summary 업데이트 시 여기 바꾸기 *)
+  let our_summary = !OurDomain.our_summary in
   let global_resolution = Resolution.global_resolution resolution in
   (*
   let _ = our_model in
@@ -13847,7 +13854,7 @@ let exit_state ~resolution (module Context : Context) =
   *)
 
   let initial = PossibleState.initial ~resolution in
-  let initial = 
+  let initial, our_summary = 
     if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
     then (
       let update_resolution resolution =
@@ -13971,12 +13978,9 @@ let exit_state ~resolution (module Context : Context) =
           |> update_resolution_of_self ~final_model 
           |> update_resolution_from_attributes ~final_model
         in
-        
-        let our_model = OurDomain.load_summary name in
-        let our_model = OurDomain.OurSummary.set_arg_annotation our_model name 
+
+        let our_summary = OurDomain.OurSummary.set_arg_annotation our_summary name 
           (OurTypeSet.ArgTypesResolution.import_from_resolution ~join:(GlobalResolution.join global_resolution) resolution_updated_attributes) in 
-      
-        OurDomain.save_summary our_model name;
         
 
         
@@ -13985,7 +13989,7 @@ let exit_state ~resolution (module Context : Context) =
           |> update_resolution_from_arg_types ~final_model name
         in
         
-        resolution
+        resolution, our_summary
       in
 
       (*
@@ -13999,32 +14003,37 @@ let exit_state ~resolution (module Context : Context) =
       let at_type = initial.at_type in
       
 
-      let rt_type =
+      let rt_type, our_summary =
         match initial.rt_type with
-        | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type
+        | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type, our_summary
         | Value resolution ->
-          let x = 
-            update_resolution resolution 
+          let resolution, our_summary = 
+            let resolution, our_summary = update_resolution resolution in
+            resolution
             |> Resolution.top_to_bottom
             |> Resolution.add_unknown
-
+            , our_summary
           in
           (*
           Log.dump "Result : %a" Resolution.pp x;
           *)
           Value (
-            x
-          )
+            resolution
+          ),
+          our_summary
       in
 
       {
         PossibleState.at_type;
         rt_type;
-      }
+      },
+      our_summary
 
     ) (*PossibleState.top_to_bottom initial*)
-    else initial
+    else initial, our_summary
   in
+
+  OurDomain.our_summary := our_summary;
   (*
   Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
   *)
@@ -14036,7 +14045,8 @@ let exit_state ~resolution (module Context : Context) =
         ~message:"analysis context has no error map"
         (Context.error_map >>| LocalErrorMap.all_errors >>| Error.deduplicate)
     in
-    ( emit_errors_on_exit (module Context) ~errors_sofar ~resolution ()
+    ( 
+      emit_errors_on_exit (module Context) ~errors_sofar ~resolution ()
       |> filter_errors (module Context) ~global_resolution,
       None,
       None
@@ -14051,25 +14061,25 @@ let exit_state ~resolution (module Context : Context) =
 
     let cfg = Cfg.create define in
 
+    
+    let our_summary = !OurDomain.our_summary in
+    (*
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
+    let our_summary = OurDomain.OurSummary.set_usedef_tables our_summary name (Some usedef_tables) in 
+    *)
     
+    (*
+    let our_model = OurDomain.OurSummary.set_cfg our_model name (Some cfg) in
+    *)
+    let return_annotation =
+      match PossibleState.return_annotation ~global_resolution with
+      | Type.Any -> Type.Unknown
+      | t -> t
+    in
     
+    let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name return_annotation in
+    OurDomain.our_summary := our_summary;
 
-    if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-      let our_model = OurDomain.load_summary name in
-      let our_model = OurDomain.OurSummary.set_usedef_tables our_model name (Some usedef_tables) in 
-      (*
-      let our_model = OurDomain.OurSummary.set_cfg our_model name (Some cfg) in
-      *)
-      let return_annotation =
-        match PossibleState.return_annotation ~global_resolution with
-        | Type.Any -> Type.Unknown
-        | t -> t
-      in
-      let our_model = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_model name return_annotation in
-      
-      OurDomain.save_summary our_model name;
-    else ();
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
     let exit = PossibleFixpoint.exit fixpoint in
 
@@ -14137,8 +14147,7 @@ let exit_state ~resolution (module Context : Context) =
          (Cfg.to_dot ~precondition:(precondition fixpoint) ~single_line:true cfg));
 
       
-    (if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-      let our_model = OurDomain.load_summary name in
+
       (*
       let last_possible_state = Hashtbl.find fixpoint.possibleconditions Cfg.exit_index in
       (* Possible Condition 등록 *)
@@ -14166,40 +14175,39 @@ let exit_state ~resolution (module Context : Context) =
         )
       in
       *)
-
-      (* Arg Return Types 등록 *)
-      let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
-      let our_model = 
-        (match last_state with
-        | Some state ->
-          (match state.rt_type with
-          | Value v ->
-            
-            let our_model = OurTypeSet.OurSummaryResolution.store_to_return_var_type our_model name (Resolution.get_annotation_store v) in
-            
-            let our_model = 
-              (match parent, List.nth parameters 0 with
-              | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-                
-                OurDomain.OurSummary.set_class_table our_model (
-                  OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
-                    (OurDomain.OurSummary.get_class_table our_model) class_name class_param (Resolution.annotation_store v)
-                )
-              | _ -> our_model
+    
+      Log.dump "333";
+    (* Arg Return Types 등록 *)
+    let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
+    let our_summary = !OurDomain.our_summary in
+    let our_summary = 
+      (match last_state with
+      | Some state ->
+        (match state.rt_type with
+        | Value v ->
+          
+          let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name (Resolution.get_annotation_store v) in
+          
+          let our_summary = 
+            (match parent, List.nth parameters 0 with
+            | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+              
+              OurDomain.OurSummary.set_class_table our_summary (
+                OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
+                  (OurDomain.OurSummary.get_class_table our_summary) class_name class_param (Resolution.annotation_store v)
               )
-            in
-            our_model
+            | _ -> our_summary
+            )
+          in
+          our_summary
 
-          | Unreachable -> our_model
-          )
-        | None -> our_model
+        | Unreachable -> our_summary
         )
-      in
-      
-      OurDomain.save_summary our_model name
-    else ()
-    )
-    ;
+      | None -> our_summary
+      )
+    in
+
+    OurDomain.our_summary := our_summary;
 
     let callees = Context.Builder.get_all_callees () in
     let local_annotations =
@@ -14252,6 +14260,7 @@ let compute_local_annotations ~global_environment name =
   >>= (fun (_, local_annotations, _) -> local_annotations)
   >>| LocalAnnotationMap.read_only
 
+  (*
 let check_define_origin
     ~type_check_controls:
       {
@@ -14265,7 +14274,7 @@ let check_define_origin
     ~qualifier
     ({ Node.location; value = { Define.signature = { name; _ }; _ } as define } as define_node)
   =
-  let errors, local_annotations, callees =
+  let our_summary, errors, local_annotations, callees =
     try
       let module Context = struct
         let qualifier = qualifier
@@ -14283,7 +14292,7 @@ let check_define_origin
         module Builder = Builder
       end
       in
-      let type_errors, local_annotations, callees = exit_state_origin ~resolution (module Context) in
+      let our_summary, type_errors, local_annotations, callees = exit_state_origin ~resolution (module Context) in
       let errors =
         if include_type_errors then
           let uninitialized_local_errors =
@@ -14296,7 +14305,7 @@ let check_define_origin
         else
           None
       in
-      errors, local_annotations, callees
+      our_summary, errors, local_annotations, callees
     with
     | ClassHierarchy.Untracked annotation ->
         Statistics.event
@@ -14313,7 +14322,7 @@ let check_define_origin
             ~kind:(Error.AnalysisFailure (UnexpectedUndefinedType annotation))
             ~define:define_node
         in
-        Some [undefined_error], None, None
+        OurSummary.empty, Some [undefined_error], None, None
   in
   (if not (Define.is_overloaded_function define) then
      let caller =
@@ -14332,8 +14341,8 @@ let check_define_origin
     else
       None
   in
-  { CheckResult.errors; local_annotations; }
-
+  { CheckResult.our_summary; errors; local_annotations; }
+*)
 let check_define
     ~type_check_controls:
       {
@@ -14408,17 +14417,17 @@ let check_define
       Callgraph.set ~caller ~callees);
       (
       if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-        let our_model = OurDomain.load_summary name in
-        let our_model =
-          Option.fold callees ~init:our_model ~f:(fun our_model callees -> 
-              List.fold callees ~init:our_model ~f:(fun our_model callee ->
-                OurDomain.OurSummary.add_caller our_model (
+        let our_summary = !OurDomain.our_summary in
+        let our_summary =
+          Option.fold callees ~init:our_summary ~f:(fun our_summary callees -> 
+              List.fold callees ~init:our_summary ~f:(fun our_summary callee ->
+                OurDomain.OurSummary.add_caller our_summary (
                   Callgraph.get_callee_name ~callee:callee.callee
                 ) ~caller:name
               )
           )
         in
-        OurDomain.save_summary our_model name;
+        OurDomain.our_summary := our_summary;
       );
   );
   let local_annotations =
@@ -14429,8 +14438,9 @@ let check_define
     else
       None
   in
-  { CheckResult.errors; local_annotations; }
+  { CheckResult.our_summary=OurSummary.empty; errors; local_annotations; }
 
+  (*
 let check_function_definition_origin
     ~type_check_controls
     ~call_graph_builder
@@ -14474,7 +14484,7 @@ let check_function_definition_origin
     ~integers:["number of lines", number_of_lines]
     ();
   result
-
+*)
 let check_function_definition
     ~type_check_controls
     ~call_graph_builder
@@ -14493,10 +14503,10 @@ let check_function_definition
       |> List.fold ~init:(Some []) ~f:(Option.map2 ~f:List.append)
     in
     match body with
-    | None -> { CheckResult.errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> { CheckResult.our_summary = !OurDomain.our_summary; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ({ CheckResult.local_annotations; _ } as body_result) = check_define define_node in
-        { errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
+        { our_summary = !OurDomain.our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 
   let number_of_lines =
@@ -14517,7 +14527,7 @@ let check_function_definition
     ~integers:["number of lines", number_of_lines]
     ();
   result
-
+(*
 let check_define_by_name_origin
     ~type_check_controls
     ~call_graph_builder
@@ -14530,7 +14540,7 @@ let check_define_by_name_origin
   let resolution = resolution global_resolution (module DummyContext) in
   GlobalResolution.function_definition global_resolution name
   >>| check_function_definition_origin ~type_check_controls ~call_graph_builder ~resolution ~name
-
+*)
 let check_define_by_name
     ~type_check_controls
     ~call_graph_builder
@@ -14546,6 +14556,7 @@ let check_define_by_name
   >>| check_function_definition ~type_check_controls ~call_graph_builder ~resolution ~name
 
 
+(*
 let search_define
     ~type_check_controls:
       {
@@ -14795,3 +14806,4 @@ let search_define_by_name
   let resolution = resolution global_resolution (module DummyContext) in
   GlobalResolution.function_definition global_resolution name
   >>| search_function_definition ~type_check_controls ~call_graph_builder ~resolution ~name ~our_model:OurDomain.our_model
+  *)

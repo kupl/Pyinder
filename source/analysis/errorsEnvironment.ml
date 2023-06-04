@@ -265,8 +265,8 @@ let check_and_preprocess ~scheduler environment =
   Profiling.track_shared_memory_usage ~name:"After checking and preprocessing" ();
   ()
 
-let type_check ~scheduler ~skip_set environment =
-  type_environment environment |> TypeEnvironment.populate_for_project_modules ~scheduler ~skip_set
+let type_check ~scheduler ~type_join ~skip_set environment =
+  type_environment environment |> TypeEnvironment.populate_for_project_modules ~scheduler ~skip_set ~type_join
 
 let get_errors  ~scheduler environment =
   populate_all_errors ~scheduler environment

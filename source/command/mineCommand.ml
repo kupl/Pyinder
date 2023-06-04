@@ -133,43 +133,50 @@
  let do_check configuration =
    Scheduler.with_scheduler ~configuration ~f:(fun scheduler ->
        with_performance_tracking ~debug:configuration.debug (fun () ->
+
+
            let environment =
-             let read_write_environment =
-               Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
-               |> Analysis.ErrorsEnvironment.create
-             in
+            let read_write_environment =
+              Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+              |> Analysis.ErrorsEnvironment.create
+            in
+             
+            let global_resolution =
+              Analysis.TypeEnvironment.ReadOnly.global_resolution
+              (Analysis.ErrorsEnvironment.ReadOnly.type_environment (Analysis.ErrorsEnvironment.read_only read_write_environment))
+            in
+            let type_join = Analysis.GlobalResolution.join global_resolution in
 
              let rec fixpoint n environment prev_model skip_set =
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
           
-              Analysis.ErrorsEnvironment.type_check ~scheduler ~skip_set environment;
+              Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
               
-              let global_resolution =
-                Analysis.TypeEnvironment.ReadOnly.global_resolution
-                (Analysis.ErrorsEnvironment.ReadOnly.type_environment (Analysis.ErrorsEnvironment.read_only read_write_environment))
-              in
+              Log.dump "555";
               (*
               Analysis.OurDomain.load_specific_file ();
               *)
+              (*
               Log.dump "Load all summary...";
-              let type_join = Analysis.GlobalResolution.join global_resolution in
+              
               Analysis.OurDomain.load_all_summary ~type_join ~skip_set ~use_cache:false prev_model;
               Log.dump "Done";
+              *)
               let our_model = !Analysis.OurDomain.our_model in
               
               (*Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model;*)
               if (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
               then Analysis.ErrorsEnvironment.get_errors ~scheduler environment
               else (
-                let environment =
-                    Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
-                    |> Analysis.ErrorsEnvironment.create
-                in
                 let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
                 let n =
                   if Ast.Reference.Set.equal skip_set next_skip_set 
                   then n+1
                   else 0
+                in
+                let environment =
+                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+                  |> Analysis.ErrorsEnvironment.create
                 in
                 fixpoint n environment our_model next_skip_set
               )

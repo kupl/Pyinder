@@ -115,16 +115,20 @@ val compute_local_annotations
 
 module CheckResult : sig
   type t = {
+    our_summary: OurDomain.OurSummary.t;
     errors: Error.t list option;
     local_annotations: LocalAnnotationMap.ReadOnly.t option;
   }
   [@@deriving equal]
+
+  val our_summary : t -> OurDomain.OurSummary.t
 
   val errors : t -> Error.t list option
 
   val local_annotations : t -> LocalAnnotationMap.ReadOnly.t option
 end
 
+(*
 val check_define_by_name_origin
   :  type_check_controls:EnvironmentControls.TypeCheckControls.t ->
   call_graph_builder:(module Callgraph.Builder) ->
@@ -132,6 +136,7 @@ val check_define_by_name_origin
   dependency:SharedMemoryKeys.DependencyKey.registered option ->
   Ast.Reference.t ->
   CheckResult.t option
+*)
 
 val check_define_by_name
   :  type_check_controls:EnvironmentControls.TypeCheckControls.t ->
@@ -141,7 +146,7 @@ val check_define_by_name
   Ast.Reference.t ->
   CheckResult.t option
 
-
+(*
 val search_define_by_name
   :  type_check_controls:EnvironmentControls.TypeCheckControls.t ->
   call_graph_builder:(module Callgraph.Builder) ->
@@ -149,3 +154,4 @@ val search_define_by_name
   dependency:SharedMemoryKeys.DependencyKey.registered option ->
   Ast.Reference.t ->
   CheckResult.t option
+*)

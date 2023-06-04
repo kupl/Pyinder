@@ -81,6 +81,13 @@ module ClassSummaryResolution = struct
     x
   *)
 
+  let join ~type_join left right =
+    {
+      class_var_type = ReferenceMap.join left.class_var_type right.class_var_type ~data_join:type_join;
+      class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
+      usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
+    }
+
   let get_type_of_class_attribute ~attribute { class_var_type; _ } =
     let name = Reference.create attribute in
     ReferenceMap.find class_var_type name |> Option.value ~default:Type.Unknown
@@ -158,11 +165,20 @@ end
 module ClassTableResolution = struct
   include ClassTable
 
-  let add_parent_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummaryResolution.add_parent_attributes
+  let join ~type_join left right =
+    ClassMap.join left right ~data_join:(ClassSummary.join ~type_join)
 
-  let get_type_of_class_attribute t class_name attribute = get t ~class_name ~f:(ClassSummaryResolution.get_type_of_class_attribute ~attribute)
+  let add_parent_attributes t class_name storage = 
+    let class_info = find_default t class_name in
+    ClassMap.set t ~key:class_name ~data:(ClassSummaryResolution.add_parent_attributes class_info storage)
 
-  let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_self_attributes_tree
+  let get_type_of_class_attribute t class_name attribute = 
+    let class_info = find_default t class_name in
+    ClassSummaryResolution.get_type_of_class_attribute class_info ~attribute
+
+  let get_self_attributes_tree t class_name = 
+    let class_info = find_default t class_name in
+    ClassSummaryResolution.get_self_attributes_tree class_info
 
   let join_with_merge_class_var_type ~type_join t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
@@ -175,10 +191,49 @@ module ClassTableResolution = struct
       then key::candidate_classes
       else candidate_classes  
     )
+
+  let get_analysis_set ~get_functions prev next =
+    ClassMap.fold2 prev next ~init:ReferenceSet.empty ~f:(fun ~key ~data ref_set ->
+      match data with
+      | `Right _ -> 
+        get_functions key |> ReferenceSet.union ref_set
+      | `Both (prev, next) -> 
+        (
+        if not (ClassSummary.equal prev next)
+        then get_functions key
+        else ReferenceSet.empty
+        ) |> ReferenceSet.union ref_set 
+      | `Left _ -> failwith "Why prev is bigger?"
+    )
 end
+
+let weaken_typ typ =
+  let weaken_typ = Type.weaken_literals typ in
+  let weaken_typ =
+    match weaken_typ with
+    | Type.IntExpression _ -> Type.Primitive "int"
+    | _ -> weaken_typ
+  in
+  weaken_typ
 
 module ArgTypesResolution = struct
   include ArgTypes
+
+  let add_arg_type ~join t ident typ =
+    let modified_typ = weaken_typ typ in
+    let exn_typ = IdentifierMap.find t ident |> Option.value ~default:modified_typ in
+    match exn_typ with
+    | Bottom | Any | Top | Unknown -> t
+    | _ ->
+      IdentifierMap.set ~key:ident ~data:(join modified_typ exn_typ) t
+
+  let join ~type_join left right =
+    IdentifierMap.merge left right ~f:(fun ~key:_ data ->
+      match data with
+      | `Left t | `Right t -> Some t
+      | `Both (t1, t2) -> Some (type_join t1 t2)
+    ) 
+
   let import_from_resolution ~join resolution =
     let annotation_store = Resolution.get_annotation_store resolution in
 
@@ -212,6 +267,34 @@ end
 
 module FunctionSummaryResolution = struct
   include FunctionSummary
+
+  let add_arg_types ~join ({arg_types; _} as t) arg_typ_list =
+    { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg typ) }
+
+  let join ~type_join left right = 
+    (*
+    let usedef_tables = 
+      (match left.usedef_tables, right.usedef_tables with
+      | None, None -> None
+      | Some t1, Some t2 -> 
+        if UsedefStruct.equal t1 t2 then Some t1 else raise NotEqualException
+      | Some t, None | None, Some t -> Some t
+      )
+    in
+    *)
+    
+  {
+    arg_types=ArgTypesResolution.join ~type_join left.arg_types right.arg_types;
+    arg_annotation=ArgTypesResolution.join ~type_join left.arg_annotation right.arg_annotation;
+    return_var_type=ReferenceMap.join ~data_join:type_join left.return_var_type right.return_var_type;
+    return_type=type_join left.return_type right.return_type;
+    callers=CallerSet.union left.callers right.callers;
+    usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes;
+    (*usedef_tables=usedef_tables;*)
+  }
+
+  let join_return_type ~type_join ({return_type=origin; _} as t) return_type =
+    { t with return_type=type_join origin return_type; }
 
   let store_to_return_var_type ({ return_var_type; _ } as t) (store: Refinement.Store.t) =
     (* parameter만 *)
@@ -280,6 +363,20 @@ end
 module FunctionTableResolution = struct
   include FunctionTable
 
+  let add_arg_types ~join t reference arg_typ_list =
+    let func_summary = FunctionMap.find t reference |> Option.value ~default:FunctionSummary.empty in
+    let func_summary = FunctionSummaryResolution.add_arg_types ~join func_summary arg_typ_list in
+    FunctionMap.set ~key:reference ~data:func_summary t
+
+  let join ~type_join left right =
+    ReferenceMap.join left right ~data_join:(FunctionSummaryResolution.join ~type_join)
+
+  let join_return_type ~type_join t func return_type =
+    let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionMap.set ~key:func ~data:(FunctionSummaryResolution.join_return_type ~type_join func_summary return_type) t
+
+
+
   let store_to_return_var_type t func_name (store: Refinement.Store.t) =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type func_summary store)
@@ -292,6 +389,31 @@ end
 
 module OurSummaryResolution = struct
   include OurSummary
+
+  let join ~type_join left right = 
+    {
+      class_table = ClassTableResolution.join ~type_join left.class_table right.class_table;
+      function_table = FunctionTableResolution.join ~type_join left.function_table right.function_table;
+    }
+
+  let join_return_type ~type_join ({function_table; _} as t) func_name return_type =
+    { t with function_table = FunctionTable.join_return_type ~type_join function_table func_name return_type }
+
+  let add_arg_types ~join ({ function_table; _} as t) reference arg_typ_list =
+    { t with function_table = FunctionTable.add_arg_types ~join function_table reference arg_typ_list }
+
+  let get_analysis_set prev next =
+    let get_functions =
+      FunctionTable.get_functions next.function_table
+    in
+    ReferenceSet.union
+      (ClassTable.get_analysis_set ~get_functions prev.class_table next.class_table)
+      (FunctionTable.get_analysis_set prev.function_table next.function_table)
+    
+  let get_skip_set prev next =
+    let analysis_set = get_analysis_set prev next in
+    let get_all_functions = FunctionTable.get_all_functions next.function_table in
+    ReferenceSet.diff get_all_functions analysis_set
 
   let store_to_return_var_type ({ function_table; _ } as t) func_name store = 
     { t with function_table=FunctionTableResolution.store_to_return_var_type function_table func_name store; }
@@ -360,4 +482,50 @@ module OurSummaryResolution = struct
   let find_class_of_attributes { class_table; function_table; } func_name parent_usage_attributes  =
     FunctionTableResolution.find_class_of_attributes ~class_table function_table func_name parent_usage_attributes
 end
+(*
+let global_summary = "Pyinder.finalSummary"
+let check_dir : string -> bool 
+= fun path ->
+  match Sys.is_directory path with
+  | `Yes -> true
+  | _ -> false
 
+let check_and_make_dir : string -> unit
+= fun path ->
+  if check_dir path then ()
+  else Unix.mkdir path
+let data_path = ref ""
+
+let is_func_model_exist () = check_dir !data_path
+
+let set_data_path (configuration: Configuration.Analysis.t) =
+  if String.equal !data_path "" then
+    data_path :=
+      (List.nth_exn configuration.source_paths 0 
+      |> SearchPath.get_root
+      |> PyrePath.show) ^ "/pyinder_analysis"
+let cache = ref false;;
+
+let load_all_summary ?(use_cache=true) ~type_join ~skip_set prev_model =
+  if use_cache && !cache then
+    ()
+  else
+  (
+    cache := true;
+    let list_files = Sys.readdir !data_path |> Array.to_list in 
+    our_model := List.fold list_files ~init:prev_model ~f:(fun summary file -> 
+      if (String.equal file "mode.marshalled") || 
+        (Reference.Set.exists skip_set ~f:(fun ref -> String.is_prefix file ~prefix:(Reference.show ref)))
+      then (
+        summary
+      )
+      else
+      (
+        let data_in = open_in (!data_path ^ "/" ^ file) in
+        let other_summary = OurSummary.t_of_sexp (Marshal.from_channel data_in) in
+        close_in data_in;
+        OurSummary.join ~type_join summary other_summary
+      )
+    )
+  )
+*)

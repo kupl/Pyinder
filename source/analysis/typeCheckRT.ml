@@ -2293,10 +2293,13 @@ module TypeCheckRT (Context : Context) = struct
                               OurDomain.ReferenceMap.find ret_var_type param_reference |> Option.value ~default:Type.Unknown
                             in
 
+                            let new_arg_type = update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type in
+                            (*
                             let usedef_tables = 
                               OurDomain.OurSummary.get_usedef_tables our_model callee_name 
                               |> Option.value ~default:Usedef.UsedefStruct.empty
-                            in            
+                            in
+                                      
                             let new_arg_type =
                               match Usedef.UsedefStruct.normal_exit usedef_tables with
                               | Some usedef_state -> 
@@ -2305,6 +2308,9 @@ module TypeCheckRT (Context : Context) = struct
                                 else update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
                               | _ -> update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
                             in
+                             *) 
+
+
                             (*
                             Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Expression.pp exp Type.pp new_arg_type;
                             *)
@@ -2331,10 +2337,10 @@ module TypeCheckRT (Context : Context) = struct
                   
                   
                   if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-                    let { StatementDefine.Signature.name; _ } = define_signature in
-                    let our_model = OurDomain.load_summary name in
+                    (*let { StatementDefine.Signature.name; _ } = define_signature in*)
+                    let our_model = !OurDomain.our_summary in
                     let our_model = OurDomain.OurSummary.add_arg_types ~join:(GlobalResolution.join global_resolution) our_model reference param_type_list in
-                    OurDomain.save_summary our_model name
+                    OurDomain.our_summary := our_model;
                   else ();
 
                   resolution
@@ -5757,9 +5763,9 @@ module TypeCheckRT (Context : Context) = struct
         
         if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
-          let our_model = OurDomain.load_summary name in
-          let our_model = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_model name actual in
-          OurDomain.save_summary our_model name;
+          let our_summary = !OurDomain.our_summary in
+          let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name actual in
+          OurDomain.our_summary := our_summary;
         else ();
         (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
@@ -5840,11 +5846,11 @@ module TypeCheckRT (Context : Context) = struct
 
         (* Class 에 모든 define body가 담겨 있음 *)
         if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-          let { StatementDefine.Signature.name; _ } = define_signature in
+          (*let { StatementDefine.Signature.name; _ } = define_signature in*)
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
             | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; _ }; _ } ->
-              let our_model = OurDomain.load_summary name in
+              let our_model = !OurDomain.our_summary in
               let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
               let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
               
@@ -5876,7 +5882,7 @@ module TypeCheckRT (Context : Context) = struct
                 | _ -> 
                   OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage
               in
-              OurDomain.save_summary our_model name;
+              OurDomain.our_summary := our_model;
               ()
             | _ -> ()
           )
@@ -5945,11 +5951,11 @@ module TypeCheckRT (Context : Context) = struct
         in
 
         if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-          let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+          (*let { StatementDefine.Signature.name=define_name; _ } = define_signature in*)
           let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_statement.name)) in
           (match class_summary with
           | Some { Node.value = class_summary; _ } ->
-            let our_model = OurDomain.load_summary define_name in
+            let our_model = !OurDomain.our_summary in
             let class_attrs = ClassSummary.attributes class_summary in
             let our_model =
               Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } our_model -> 
@@ -5962,7 +5968,7 @@ module TypeCheckRT (Context : Context) = struct
                   OurDomain.OurSummary.add_class_method our_model class_statement.name name
               ) class_attrs our_model
             in
-            OurDomain.save_summary our_model define_name
+            OurDomain.our_summary := our_model;
           | _ -> ()
           );
             (*

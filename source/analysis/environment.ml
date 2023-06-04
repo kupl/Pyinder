@@ -156,6 +156,8 @@ module EnvironmentTable = struct
 
       val get : t -> ?dependency:SharedMemoryKeys.DependencyKey.registered -> In.Key.t -> In.Value.t
 
+      val add : t -> In.Key.t -> In.Value.t
+
       val upstream_environment : t -> In.PreviousEnvironment.ReadOnly.t
 
       val unannotated_global_environment : t -> UnannotatedGlobalEnvironment.ReadOnly.t
@@ -226,13 +228,13 @@ module EnvironmentTable = struct
     module ReadOnly = struct
       type t = {
         get: ?dependency:SharedMemoryKeys.DependencyKey.registered -> In.Key.t -> In.Value.t;
-        update: ?dependency:SharedMemoryKeys.DependencyKey.registered -> ?value_join:(In.Value.t -> In.Value.t -> In.Value.t) -> In.Key.t -> In.Value.t;
+        add: In.Key.t -> In.Value.t;
         upstream_environment: In.PreviousEnvironment.ReadOnly.t;
       }
 
       let get { get; _ } = get
 
-      let update { update; _ } = update
+      let add { add; _ } = add
 
       let upstream_environment { upstream_environment; _ } = upstream_environment
 
@@ -288,21 +290,17 @@ module EnvironmentTable = struct
             Table.add table key value;
             value
 
-      let update { table; upstream_environment } ?dependency ?value_join key =
-        let _ = value_join in
-        match Table.get table ?dependency key with
-        | Some hit -> hit
-        | None ->
-            let trigger = In.key_to_trigger key in
-            let dependency = In.trigger_to_dependency trigger in
-            let dependency = Some (SharedMemoryKeys.DependencyKey.Registry.register dependency) in
-            let value = In.produce_value upstream_environment trigger ~dependency in
-            Table.add table key value;
-            value
+      let add { table; upstream_environment } key =
+        let trigger = In.key_to_trigger key in
+        let dependency = In.trigger_to_dependency trigger in
+        let dependency = Some (SharedMemoryKeys.DependencyKey.Registry.register dependency) in
+        let value = In.produce_value upstream_environment trigger ~dependency in
+        Table.add table key value;
+        value
 
 
       let read_only ({ upstream_environment; _ } as this_environment) =
-        { ReadOnly.get = get this_environment; update = update this_environment; upstream_environment; }
+        { ReadOnly.get = get this_environment; add = add this_environment; upstream_environment; }
 
 
       module TriggerMap = Map.Make (struct
@@ -535,15 +533,15 @@ module EnvironmentTable = struct
           else
             ReadOnly.get parent ?dependency key
         in
-        let update ?dependency ?value_join key =
+        let add key =
           if overlay_owns_key environment key then
-            ReadOnly.update this_read_only ?dependency ?value_join key
+            ReadOnly.add this_read_only key
           else
-            ReadOnly.update parent ?dependency ?value_join key
+            ReadOnly.add parent key
         in
         {
           ReadOnly.get;
-          update;
+          add;
           upstream_environment = In.PreviousEnvironment.Overlay.read_only upstream_environment;
         }
     end
