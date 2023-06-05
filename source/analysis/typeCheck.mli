@@ -6,7 +6,7 @@
  *)
 
 open Ast
-
+open Core
 open TypeCheckUtil
 
 module Error = AnalysisError
@@ -115,13 +115,13 @@ val compute_local_annotations
 
 module CheckResult : sig
   type t = {
-    our_summary: OurDomain.OurSummary.t;
+    our_summary: Sexp.t;
     errors: Error.t list option;
     local_annotations: LocalAnnotationMap.ReadOnly.t option;
   }
   [@@deriving equal]
 
-  val our_summary : t -> OurDomain.OurSummary.t
+  val our_summary : t -> Sexp.t
 
   val errors : t -> Error.t list option
 

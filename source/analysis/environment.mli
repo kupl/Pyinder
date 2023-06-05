@@ -179,6 +179,8 @@ module EnvironmentTable : sig
 
     val create : EnvironmentControls.t -> t
 
+    val set_environment : t -> EnvironmentControls.t -> t 
+
     val create_for_testing : EnvironmentControls.t -> (Ast.ModulePath.t * string) list -> t
 
     val ast_environment : t -> AstEnvironment.t

@@ -188,6 +188,8 @@ module EnvironmentTable = struct
 
     val create : EnvironmentControls.t -> t
 
+    val set_environment : t -> EnvironmentControls.t -> t 
+
     val create_for_testing : EnvironmentControls.t -> (Ast.ModulePath.t * string) list -> t
 
     val ast_environment : t -> AstEnvironment.t
@@ -278,6 +280,8 @@ module EnvironmentTable = struct
       }
 
       let create upstream_environment = { table = Table.create (); upstream_environment }
+
+      let set_environment t upstream_environment = { t with upstream_environment }
 
       let get { table; upstream_environment } ?dependency key =
         match Table.get table ?dependency key with
@@ -400,8 +404,18 @@ module EnvironmentTable = struct
             In.PreviousEnvironment.read_only upstream_environment |> FromReadOnlyUpstream.create;
         }
 
+      let set_upstream_environment ~from_read_only_upstream upstream_environment =
+        {
+          upstream_environment;
+          from_read_only_upstream =
+            In.PreviousEnvironment.read_only upstream_environment |> FromReadOnlyUpstream.set_environment from_read_only_upstream;
+        }
+
 
       let create controls = In.PreviousEnvironment.create controls |> from_upstream_environment
+
+      let set_environment { from_read_only_upstream; _ } controls = 
+        In.PreviousEnvironment.create controls |> set_upstream_environment ~from_read_only_upstream
 
       let create_for_testing controls module_path_code_pairs =
         In.PreviousEnvironment.create_for_testing controls module_path_code_pairs

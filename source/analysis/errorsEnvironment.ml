@@ -257,6 +257,14 @@ let create controls =
   Statistics.performance ~name:"full environment built" ~timer ();
   environment
 
+let set_environment environment controls =
+  let timer = Timer.start () in
+  EnvironmentControls.configuration controls |> Configuration.Analysis.validate_paths;
+  Profiling.track_shared_memory_usage ~name:"Before module tracking" ();
+  Log.info "Creating environment...";
+  let environment = set_environment environment controls in
+  Statistics.performance ~name:"full environment built" ~timer ();
+  environment
 
 let check_and_preprocess ~scheduler environment =
   type_environment environment |> TypeEnvironment.populate_for_project_modules ~scheduler;

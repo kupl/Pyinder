@@ -13016,7 +13016,7 @@ end
 
 module CheckResult = struct
   type t = {
-    our_summary: OurSummary.t;
+    our_summary: Sexp.t;
     errors: Error.t list option;
     local_annotations: LocalAnnotationMap.ReadOnly.t option;
   }
@@ -14176,7 +14176,7 @@ let exit_state ~resolution (module Context : Context) =
       in
       *)
     
-      Log.dump "333";
+
     (* Arg Return Types 등록 *)
     let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
     let our_summary = !OurDomain.our_summary in
@@ -14371,6 +14371,8 @@ let check_define
 
         let error_map = Some (LocalErrorMap.empty ())
 
+        let our_summary = OurDomain.OurSummary.t ref
+
         module Builder = Builder
       end
       in
@@ -14438,7 +14440,7 @@ let check_define
     else
       None
   in
-  { CheckResult.our_summary=OurSummary.empty; errors; local_annotations; }
+  { CheckResult.our_summary=OurDomain.OurSummary.sexp_of_t OurSummary.empty; errors; local_annotations; }
 
   (*
 let check_function_definition_origin
@@ -14494,6 +14496,23 @@ let check_function_definition
   =
   let timer = Timer.start () in
 
+  (*
+  if List.length siblings > 1 then
+    let s = List.fold siblings ~init:"" ~f:(fun acc x ->
+        let { Node.value; _ } = x.body in
+        acc ^ "\n" ^ Define.show value
+      )
+    in
+    Log.dump ">>> %s" s;
+  ;
+  *)
+
+  (*
+  if not (OurDomain.OurSummary.equal !OurDomain.our_summary OurDomain.OurSummary.empty) then (
+    Log.dump "Check %a ===>\n %a\n" Reference.pp name OurDomain.OurSummary.pp !OurDomain.our_summary;
+  );
+  *)
+
   let check_define = check_define ~type_check_controls ~resolution ~qualifier ~call_graph_builder in
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
@@ -14503,10 +14522,10 @@ let check_function_definition
       |> List.fold ~init:(Some []) ~f:(Option.map2 ~f:List.append)
     in
     match body with
-    | None -> { CheckResult.our_summary = !OurDomain.our_summary; errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t !OurDomain.our_summary; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ({ CheckResult.local_annotations; _ } as body_result) = check_define define_node in
-        { our_summary = !OurDomain.our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
+        { our_summary = OurDomain.OurSummary.sexp_of_t !OurDomain.our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 
   let number_of_lines =

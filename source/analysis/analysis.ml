@@ -70,6 +70,7 @@ module WeakenMutableLiterals = WeakenMutableLiterals
 module WeakTopologicalOrder = WeakTopologicalOrder
 module OurTypeSet = OurTypeSet
 module OurDomain = OurDomain
+module OurErrorDomain = OurErrorDomain
 module PossibleFixpoint = PossibleFixpoint
 module Usedef = Usedef
 module AttributeAnalysis = AttributeAnalysis

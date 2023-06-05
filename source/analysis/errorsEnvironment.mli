@@ -87,6 +87,8 @@ module Testing : sig
   end
 end
 
+val set_environment : t -> EnvironmentControls.t -> t
+
 val check_and_preprocess : scheduler:Scheduler.t -> t -> unit
 
 val type_check : scheduler:Scheduler.t -> type_join:(Type.t -> Type.t -> Type.t) -> skip_set:Reference.Set.t -> t -> unit

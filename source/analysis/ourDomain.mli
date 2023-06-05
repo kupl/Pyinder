@@ -13,7 +13,7 @@ open AttributeAnalysis
 module ReferenceMap : sig
   include Map.S with type Key.t = Reference.t
 
-  val join : data_join:('a -> 'a -> 'a) -> 'a t -> 'a t -> 'a t
+  val join : data_join:('a -> 'a -> 'a) -> equal:('a -> 'a -> bool) -> 'a t -> 'a t -> 'a t
 end
 
 module ReferenceSet = Reference.Set
@@ -32,7 +32,6 @@ module ClassAttributes: sig
     methods: AttrsSet.t;
   }
 
-  val join : t -> t -> t
   val is_used_attr : t -> string -> bool
 
   val is_subset_with_total_attributes : t -> AttrsSet.t -> bool
@@ -43,7 +42,7 @@ module ClassSummary: sig
     class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
-  } [@@deriving equal]
+  }
 
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
 
@@ -62,6 +61,10 @@ module ClassTable: sig
   type t = ClassSummary.t ClassMap.t 
 
   val find_default : t -> Reference.t -> ClassSummary.t
+
+  val add : class_name:Reference.t -> data:'a -> f:(ClassSummary.t -> 'a -> ClassSummary.t) -> t -> t
+
+  val get : class_name:Reference.t -> f:(ClassSummary.t -> 'a) -> t -> 'a
 
   val get_class_var_type : t -> Reference.t -> Type.t FunctionMap.t
 

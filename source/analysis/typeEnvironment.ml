@@ -24,7 +24,7 @@ end
 
 
 let produce_check_results global_environment define_name ~dependency =
-  Log.dump "111";
+
   let type_check_controls, call_graph_builder, dependency =
     let controls = AnnotatedGlobalEnvironment.ReadOnly.controls global_environment in
     let configuration = EnvironmentControls.configuration controls in
@@ -45,7 +45,7 @@ let produce_check_results global_environment define_name ~dependency =
     in
     type_check_controls, call_graph_builder, dependency
   in
-  Log.dump "222";
+
   let x = TypeCheck.check_define_by_name
     ~type_check_controls
     ~call_graph_builder
@@ -88,7 +88,7 @@ let produce_check_results global_environment define_name ~dependency =
     )
   in
   *)
-  Log.dump "444";
+
   x
 
 
@@ -147,6 +147,7 @@ let populate_for_definitions ~scheduler environment defines =
         List.iter (Option.value errors ~default:[]) ~f:(fun e -> Log.dump "In HERE! : %a" Error.pp e)
       | _ -> ());
       *)
+      
       let () = ReadOnly.add read_only name |> ignore in
       number_defines + 1
     in
@@ -175,8 +176,6 @@ let populate_for_definitions ~scheduler environment defines =
       ~inputs:defines
       ()
   in
-
-  Log.dump "666";
 
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
@@ -210,39 +209,61 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       ~inputs:qualifiers
       ()
   in
+
+
   let filtered_defines =
     List.filter all_defines ~f:(fun name ->
       not (Reference.Set.exists skip_set ~f:(Reference.equal name))
     )
   in
-
-  Log.dump "???";
-
-
+  
+  (*
   if List.length filtered_defines < 20 then
     List.iter filtered_defines ~f:(fun r -> Log.dump "Analysis: %a" Reference.pp r);
+  *)
   populate_for_definitions ~scheduler environment filtered_defines;
 
+  let _ = type_join in
   
   let read_only = read_only environment in
   (
   match type_join with
   | Some type_join ->
-    let our_summary =
-      List.fold filtered_defines ~init:(!OurDomain.our_model) ~f:(fun our_model define ->
+    let our_summary, our_errors =
+      List.fold filtered_defines ~init:(!OurDomain.our_model, !OurErrorDomain.our_errors) ~f:(fun (our_model, our_errors) define ->
+        let timer = Timer.start () in
+        
         let result = ReadOnly.get read_only define in
+        
+        let x = 
         (match result with
         | Some t -> 
-          let cur_summary =TypeCheck.CheckResult.our_summary t in
-          OurDomain.OurSummary.join ~type_join our_model cur_summary
-        | _ -> our_model
+          let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
+          let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
+          let our_model = OurDomain.OurSummary.join ~type_join our_model cur_summary in
+          let our_errors = OurErrorDomain.OurErrorList.set ~key:define ~data:errors our_errors in
+
+          let total_time = Timer.stop_in_sec timer in
+          if Float.(<.) total_time 0.001 then (
+            Log.dump "O %f" total_time;
+          ) else (
+            Log.dump "X %f" total_time;
+          );
+
+          our_model, our_errors
+        | _ -> our_model, our_errors
         )
+        in
+        
+        x
       )
     in
-    OurDomain.our_model := our_summary
+    OurDomain.our_model := our_summary;
+    OurErrorDomain.our_errors := our_errors;
   | _ -> Log.dump "No Join"
   )
   ;
+  
 
 
   Statistics.event

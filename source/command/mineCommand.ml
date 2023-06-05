@@ -152,7 +152,6 @@
           
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
               
-              Log.dump "555";
               (*
               Analysis.OurDomain.load_specific_file ();
               *)
@@ -174,10 +173,12 @@
                   then n+1
                   else 0
                 in
+                
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
-                  |> Analysis.ErrorsEnvironment.create
+                  |> Analysis.ErrorsEnvironment.set_environment environment
                 in
+                
                 fixpoint n environment our_model next_skip_set
               )
              in
@@ -228,8 +229,9 @@
    Log.dump "%s" "Type Inferecne...";
    Analysis.OurDomain.save_mode "inference";
 
+   (*
    Analysis.OurDomain.our_model := Analysis.OurDomain.load_global_summary ();
-
+  *)
    
    
    (*let _, _ = fixpoint configuration 1 in*)

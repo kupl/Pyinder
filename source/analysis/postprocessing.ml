@@ -221,30 +221,40 @@ let run_on_qualifier environment ~dependency qualifier =
       let unannotated_global_environment =
         TypeEnvironment.ReadOnly.unannotated_global_environment environment
       in
+      (*
       let timer = Timer.start () in
       let defines_timer = Timer.start () in
-
+      *)
       let defines = 
         UnannotatedGlobalEnvironment.ReadOnly.get_define_names
           ?dependency
           unannotated_global_environment
           qualifier
       in
-
+      (*
       let defines_time = Timer.stop_in_sec defines_timer in
+      *)
 
+      (*
       let errors_by_define =
         defines |> List.map ~f:(TypeEnvironment.ReadOnly.get_errors ?dependency environment)
       in
+      *)
+      let our_errors = !OurErrorDomain.our_errors in
+      let errors_by_define =
+        defines |> List.map ~f:(fun define -> (OurErrorDomain.OurErrorList.get our_errors ~key:define) |> Option.value ~default:[])
+      in
 
+      (*
       let time = Timer.stop_in_sec timer in
       if Float.(>.) time 1.0 then
         Log.dump "Defines %i consume %f\nQualifier %a consume %f (%i)" 
           (List.length defines) defines_time
           Reference.pp qualifier time (List.fold errors_by_define ~init:0 ~f:(fun acc x -> acc + List.length x));
-      
+      *)
 
       run_on_source ~environment ~source errors_by_define
+      |> Error.deduplicate
       
   in
 
