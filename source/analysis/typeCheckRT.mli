@@ -46,4 +46,4 @@ module type RTSignature = sig
   include PossibleFixpoint.PossibleState with type t := t
 end
 
-module TypeCheckRT (Context : Context) : RTSignature
+module TypeCheckRT (Context : OurContext) : RTSignature

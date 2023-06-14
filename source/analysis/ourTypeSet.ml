@@ -169,11 +169,29 @@ module ClassTableResolution = struct
     let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join class_summary class_param method_postcondition in
     ClassMap.set ~key:class_name ~data t
 
-  let find_classes_from_attributes t attributes =
-    ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes; _ } candidate_classes ->
-      if ClassAttributes.is_subset_with_total_attributes class_attributes attributes
-      then key::candidate_classes
-      else candidate_classes  
+  let find_classes_from_attributes t { AttributeStorage.attribute_set; call_set; } =
+    let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
+
+    ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
+      let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+      let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+      let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+        flag &&  
+        (match data with
+        | `Both (left, right) ->
+          CallSet.fold left ~init:true ~f:(fun flag call_info -> 
+            flag &&  
+            CallSet.exists right ~f:(fun signature -> CallInfo.is_corresponding ~signature call_info)
+          )
+        | `Right _ -> true
+        | `Left _ -> false
+        )
+      )
+      in
+
+      if field_flag && method_flag
+      then (key::candidate_classes)
+    else candidate_classes
     )
 end
 
@@ -213,7 +231,8 @@ end
 module FunctionSummaryResolution = struct
   include FunctionSummary
 
-  let store_to_return_var_type ({ return_var_type; _ } as t) (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param ({ return_var_type; _ } as t) (store: Refinement.Store.t) =
+    let class_param = class_param |> Option.value ~default:"" |> Reference.create in
     (* parameter만 *)
     let rec attribute_fold ~base_reference ~attributes return_var_type =
       Identifier.Map.Tree.fold ~init:return_var_type ~f:(fun ~key ~data return_var_type ->
@@ -222,7 +241,10 @@ module FunctionSummaryResolution = struct
     
     and unit_fold ~unit ~base_reference return_var_type =
       let typ = unit |> Refinement.Unit.base >>| Annotation.annotation |> Option.value ~default:Type.Unknown in
-      let return_var_type = ReferenceMap.set return_var_type ~key:base_reference ~data:typ in
+      let return_var_type = 
+        if Reference.equal class_param base_reference then return_var_type
+        else ReferenceMap.set return_var_type ~key:base_reference ~data:typ 
+      in
       attribute_fold ~base_reference ~attributes:(unit |> Refinement.Unit.attributes) return_var_type
     in 
     
@@ -248,9 +270,6 @@ module FunctionSummaryResolution = struct
     FunctionSummary.{ t with return_var_type; }
 
   let find_class_of_attributes ~class_table { usage_attributes; _ } parent_usage_attributes =
-    let identifier_to_string t =
-      Identifier.Set.fold t ~init:AttrsSet.empty ~f:(fun set attr -> AttrsSet.add set attr)
-    in
 
     (* have to make proper filter *)
     let extract_class classes =
@@ -265,7 +284,6 @@ module FunctionSummaryResolution = struct
     
     AttributeStorage.map usage_attributes ~f:(fun attributes -> 
         attributes
-        |> identifier_to_string
         |> ClassTableResolution.find_classes_from_attributes class_table
         |> extract_class
     )
@@ -280,9 +298,9 @@ end
 module FunctionTableResolution = struct
   include FunctionTable
 
-  let store_to_return_var_type t func_name (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param t func_name (store: Refinement.Store.t) =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type func_summary store)
+    FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary store)
 
   let find_class_of_attributes ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -293,8 +311,8 @@ end
 module OurSummaryResolution = struct
   include OurSummary
 
-  let store_to_return_var_type ({ function_table; _ } as t) func_name store = 
-    { t with function_table=FunctionTableResolution.store_to_return_var_type function_table func_name store; }
+  let store_to_return_var_type ?class_param ({ function_table; _ } as t) func_name store = 
+    { t with function_table=FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name store; }
 
   let get_type_of_class_attribute { class_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute class_table class_name attribute
   

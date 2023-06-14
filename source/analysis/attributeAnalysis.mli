@@ -13,11 +13,37 @@ end
 *)
 module SkipMap = LocInsensitiveExpMap
 
+module CallInfo : sig
+  type t = {
+    position: int;
+    default: Identifier.Set.t;
+    star: bool;
+    double_star: bool;
+  } [@@deriving sexp, equal, compare]
+
+  val empty : t
+
+  val of_arguments : Call.Argument.t list -> t
+
+  val of_parameters : Parameter.t list -> t
+
+  val is_corresponding : signature:t -> t -> bool
+end
+
+module CallSet : Set.S with type Elt.t = CallInfo.t
+
 module AttributeStorage :
   sig
-    type t = Identifier.Set.t LocInsensitiveExpMap.t [@@deriving sexp, equal]
+    type data_set = {
+      attribute_set : Identifier.Set.t;
+      call_set : CallSet.t Identifier.Map.t;
+    } [@@deriving sexp, equal, compare]
+    
+    type t = data_set LocInsensitiveExpMap.t
+    [@@deriving sexp, equal]
+
     val empty : t
-    val map : t -> f:(Identifier.Set.t -> 'a) -> 'a LocInsensitiveExpMap.t
+    val map : t -> f:(data_set -> 'a) -> 'a LocInsensitiveExpMap.t
     val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit
     val pp :
@@ -31,7 +57,6 @@ module AttributeStorage :
     val filter_by_prefix : t -> prefix:Reference.t -> t
     val filter_class_var : t -> prefix:Reference.t -> t
     val join : t -> t -> t
-    val join_without_merge : origin:t -> t -> t
   end
 val forward_expression_list :
   (AttributeStorage.t * String.Set.t SkipMap.t) ->

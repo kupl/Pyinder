@@ -1919,10 +1919,18 @@ let is_set = function
   | Parametric { name = "set"; _ } -> true
   | _ -> false
 
+let is_defaultdict = function
+  | Parametric { name = "collections.defaultdict" | "typing.DefaultDict"; _ } -> true
+  | _ -> false
+
+let is_frozenset = function
+  | Parametric { name = "frozenset" | "typing.FrozenSet"; _ } -> true
+  | _ -> false
+
+
 let is_meta = function
   | Parametric { name = "type"; _ } -> true
   | _ -> false
-
 
 let is_none = function
   | NoneType -> true
@@ -1974,6 +1982,7 @@ let is_tuple = function
   | Tuple _ -> true
   | Parametric { name = "typing.Tuple" | "Tuple"; _ } -> true
   | _ -> false
+
 
 
 let is_type_alias = function
@@ -2707,6 +2716,15 @@ let rec expression annotation =
   Node.create_with_default_location value
 
 
+let rec filter_unknown t =
+  match t with
+  | Union t_list ->
+    let new_t_list = (List.filter t_list ~f:(fun t -> not (is_unknown t)) |> List.map ~f:filter_unknown) in
+    if List.length new_t_list = 1
+    then List.nth_exn new_t_list 0
+    else Union new_t_list 
+  | _ -> t
+
 let union_join left right =
   let dedup =
     List.dedup_and_sort ~compare:(fun l r ->
@@ -2805,6 +2823,10 @@ let narrow_union ~join ~less_or_equal t =
     *)
     if List.length narrow_result = 1
     then List.nth_exn narrow_result 0 
+    else if false
+    then (
+      Top
+    )
     else
       (Union narrow_result)
   | _ -> t
@@ -4678,7 +4700,9 @@ let elements annotation =
 let is_untyped = function
   | Any
   | Bottom
-  | Top ->
+  | Top 
+  | Unknown
+  ->
       true
   | _ -> false
 
@@ -7116,26 +7140,46 @@ let rec get_dict_value_type ?(with_key = None) t =
   )
   | _ -> Any  
 
-let is_iterable t =
+
+let is_possible_recursive t =
   is_iterable t ||
   is_dict t ||
   is_list t ||
   is_set t ||
-  is_tuple t
+  is_tuple t ||
+  is_defaultdict t ||
+  is_frozenset t
 
+let deep_to_any annotation =
+  match annotation with
+  | Parametric { name = "typing.Iterable"; _ } ->
+    iterable Any
+  | Parametric { name = "list"; _ } ->
+    list Any
+  | Parametric { name = "set" | "frozenset" | "typing.FrozenSet" ; _ } ->
+    set Any
+  | Tuple _ 
+  | Parametric { name = "typing.Tuple" | "Tuple"; _ } 
+  ->
+    tuple [Any]
+  | Parametric { name = "typing.Mapping" | "dict" | "collections.defaultdict" | "typing.DefaultDict"; _ } 
+  | OurTypedDictionary _
+  ->
+    dictionary ~key:Any ~value:Any
+  | _ -> annotation
 
 let rec get_depth parent_annotation =
   let module InstantiateTransform = Transform.Make (struct
     type state = int
 
-    let visit_children_before _ annotation = (equal parent_annotation annotation) || not (is_iterable annotation)
+    let visit_children_before _ annotation = (equal parent_annotation annotation) || not (is_possible_recursive annotation)
 
     let visit_children_after = false
 
     let visit state annotation = 
 
       let new_state = 
-        if (not (equal parent_annotation annotation)) && is_iterable annotation
+        if (not (equal parent_annotation annotation)) && is_possible_recursive annotation
         then (
           let depth = get_depth annotation in
           Int.max state depth
@@ -7164,31 +7208,14 @@ let rec get_depth parent_annotation =
   
       let visit _ annotation = 
         let depth =
-          if is_iterable annotation
+          if is_possible_recursive annotation
           then get_depth annotation
           else 0
         in
 
         let annotation =
-          if depth >= 3 
-          then (
-            match annotation with
-            | Parametric { name = "typing.Iterable"; _ } ->
-              iterable Any
-            | Parametric { name = "list"; _ } ->
-              list Any
-            | Parametric { name = "set"; _ } ->
-              set Any
-            | Tuple _ 
-            | Parametric { name = "typing.Tuple" | "Tuple"; _ } 
-            ->
-              tuple [Any]
-            | Parametric { name = "typing.Mapping" | "dict"; _ } 
-            | OurTypedDictionary _
-            ->
-              dictionary ~key:Any ~value:Any
-            | _ -> annotation
-          )
+          if depth >= 3
+          then deep_to_any annotation
           else annotation
         in
         

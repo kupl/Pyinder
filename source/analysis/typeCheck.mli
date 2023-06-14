@@ -90,9 +90,9 @@ val unpack_callable_and_self_argument
 
 module State (Context : Context) : Signature
 
-module PossibleState (Context : Context) : OurSignature
+module PossibleState (Context : OurContext) : OurSignature
 
-module DummyContext : Context
+module DummyContext : OurContext
 
 val resolution
   :  GlobalResolution.t ->

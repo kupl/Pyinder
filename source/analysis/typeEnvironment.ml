@@ -46,6 +46,8 @@ let produce_check_results global_environment define_name ~dependency =
     type_check_controls, call_graph_builder, dependency
   in
 
+  
+
   let x = TypeCheck.check_define_by_name
     ~type_check_controls
     ~call_graph_builder
@@ -216,7 +218,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       not (Reference.Set.exists skip_set ~f:(Reference.equal name))
     )
   in
-  
+
   (*
   if List.length filtered_defines < 20 then
     List.iter filtered_defines ~f:(fun r -> Log.dump "Analysis: %a" Reference.pp r);
@@ -232,9 +234,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     let our_summary, our_errors =
       List.fold filtered_defines ~init:(!OurDomain.our_model, !OurErrorDomain.our_errors) ~f:(fun (our_model, our_errors) define ->
         let timer = Timer.start () in
-        
+        let _ = timer in
         let result = ReadOnly.get read_only define in
-        
         let x = 
         (match result with
         | Some t -> 
@@ -242,14 +243,13 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
           let our_model = OurDomain.OurSummary.join ~type_join our_model cur_summary in
           let our_errors = OurErrorDomain.OurErrorList.set ~key:define ~data:errors our_errors in
-
+          
           let total_time = Timer.stop_in_sec timer in
-          if Float.(<.) total_time 0.001 then (
-            Log.dump "O %f" total_time;
-          ) else (
-            Log.dump "X %f" total_time;
-          );
-
+          if Float.(>.) total_time 0.2 then (
+            Log.dump "%a" OurDomain.OurSummary.pp cur_summary;
+            Log.dump "O %.5f" total_time;
+          );  
+          
           our_model, our_errors
         | _ -> our_model, our_errors
         )

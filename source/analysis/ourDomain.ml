@@ -11,6 +11,18 @@ module ReferenceMap = struct
   include Map.Make (Reference)
 
    
+  let join_type ~type_join left right =
+    merge left right ~f:(fun ~key:_ data ->
+      match data with
+      | `Both (left, right) -> if Type.equal left right then Some left else (
+        try
+          Some (type_join left right)
+        with
+        | ClassHierarchy.Untracked _ -> Log.dump "%a\n%a\n" Type.pp left Type.pp right; Some (Type.union_join left right)
+      )
+      | `Left data | `Right data -> Some data
+    )
+
   let join ~data_join ~equal left right =
     merge left right ~f:(fun ~key:_ data ->
       match data with
@@ -55,6 +67,8 @@ module FunctionMap = ReferenceMap
 
 module AttrsSet = StringSet
 
+module MethodMap = Map.Make (Identifier)
+
 module IdentifierMap = Map.Make (Identifier)
 
 let weaken_typ typ =
@@ -89,7 +103,11 @@ module ArgTypes = struct
     IdentifierMap.merge left right ~f:(fun ~key:_ data ->
       match data with
       | `Left t | `Right t -> Some t
-      | `Both (t1, t2) -> Some (type_join t1 t2)
+      | `Both (t1, t2) -> 
+        try
+          Some (type_join t1 t2)
+        with
+        | ClassHierarchy.Untracked _ -> Log.dump "%a\n%a\n" Type.pp t1 Type.pp t2; Some (Type.union_join t1 t2)
     ) 
 
   let pp format t =
@@ -106,18 +124,25 @@ module ClassAttributes = struct
   type t = {
     attributes: AttrsSet.t;
     properties: AttrsSet.t;
-    methods: AttrsSet.t;
+    methods: AttributeAnalysis.CallSet.t Identifier.Map.t;
   } [@@deriving sexp, equal]
 
   let empty = {
     attributes=AttrsSet.empty;
     properties=AttrsSet.empty;
-    methods=AttrsSet.empty;
+    methods=Identifier.Map.empty;
   }
   
   let pp_attrs_set format attrs_set =
     let attrs_string = (AttrsSet.fold attrs_set ~init:"{" ~f:(fun acc attr ->
       acc ^ ", " ^ attr
+    )) ^ "}"
+  in
+  Format.fprintf format "%s" attrs_string
+
+  let pp_method_set format method_set =
+    let attrs_string = (Identifier.Map.fold method_set ~init:"{" ~f:(fun ~key:method_ ~data:_ acc ->
+      acc ^ ", " ^ method_
     )) ^ "}"
   in
   Format.fprintf format "%s" attrs_string
@@ -128,13 +153,17 @@ module ClassAttributes = struct
       [[ Properties ]]\n%a\n
       [[ Methods ]]\n%a\n
     "
-    pp_attrs_set attributes pp_attrs_set properties pp_attrs_set methods
+    pp_attrs_set attributes pp_attrs_set properties pp_method_set methods
 
   let join left right =
     {
       attributes=AttrsSet.union left.attributes right.attributes;
       properties=AttrsSet.union left.properties right.properties;
-      methods=AttrsSet.union left.methods right.methods;
+      methods=Identifier.Map.merge left.methods right.methods ~f:(fun ~key:_ data ->
+        match data with
+        | `Both (left, right) -> Some (AttributeAnalysis.CallSet.union left right)
+        | `Left v | `Right v -> Some v
+      );
     }
 
   let add_attribute ({ attributes; _} as t) attr =
@@ -143,17 +172,24 @@ module ClassAttributes = struct
   let add_property ({ properties; _} as t) prop =
     { t with properties=AttrsSet.add properties prop }
 
-  let add_method ({ methods; _} as t) meth =
-    { t with methods=AttrsSet.add methods meth }
+  let add_method ~call_info ({ methods; _} as t) meth =
+    let call_set = 
+      Identifier.Map.find methods meth 
+      |> Option.value ~default:AttributeAnalysis.CallSet.empty
+    in
+    { t with methods=Identifier.Map.set methods ~key:meth ~data:(AttributeAnalysis.CallSet.add call_set call_info) }
 
+  let is_used_attr { attributes; properties; methods; } attr =
+    let methods = AttrsSet.of_list (Identifier.Map.keys methods) in
+    AttrsSet.exists (AttrsSet.union_list [attributes; properties; methods;]) ~f:(fun elem -> String.equal elem attr)
+    (*
   let total_attributes { attributes; properties; methods; } =
     AttrsSet.union_list [attributes; properties; methods;]
 
-  let is_used_attr { attributes; properties; methods; } attr =
-    AttrsSet.exists (AttrsSet.union_list [attributes; properties; methods]) ~f:(fun elem -> String.equal elem attr)
 
   let is_subset_with_total_attributes t attributes =
     AttrsSet.is_subset attributes ~of_:(total_attributes t)
+    *)
 end 
 
 module ClassSummary = struct
@@ -180,8 +216,8 @@ module ClassSummary = struct
     let class_attributes = ClassAttributes.add_property class_attributes property in
     { t with class_attributes }
 
-  let add_method ({ class_attributes; _} as t) meth =
-    let class_attributes = ClassAttributes.add_method class_attributes meth in
+  let add_method ~call_info ({ class_attributes; _} as t) meth =
+    let class_attributes = ClassAttributes.add_method class_attributes ~call_info meth in
     { t with class_attributes }
 
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
@@ -189,7 +225,7 @@ module ClassSummary = struct
 
   let join ~type_join left right =
     {
-      class_var_type = ReferenceMap.join left.class_var_type right.class_var_type ~equal:Type.equal ~data_join:type_join;
+      class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join;
       class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
       usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
     }
@@ -227,7 +263,7 @@ module ClassTable = struct
 
   let add_property t class_name property = add t ~class_name ~data:property ~f:ClassSummary.add_property
 
-  let add_method t class_name meth = add t ~class_name ~data:meth ~f:ClassSummary.add_method
+  let add_method ~call_info t class_name meth = add t ~class_name ~data:meth ~f:(ClassSummary.add_method ~call_info)
 
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummary.add_usage_attributes
 
@@ -357,14 +393,21 @@ module FunctionSummary = struct
       )
     in
     *)
-    
+
+    let arg_types=ArgTypes.join ~type_join left.arg_types right.arg_types in
+    let arg_annotation=ArgTypes.join ~type_join left.arg_annotation right.arg_annotation in
+    let return_var_type=ReferenceMap.join_type ~type_join left.return_var_type right.return_var_type in
+    let return_type=type_join left.return_type right.return_type in
+    let callers=CallerSet.union left.callers right.callers in
+    let usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes in
+
   {
-    arg_types=ArgTypes.join ~type_join left.arg_types right.arg_types;
-    arg_annotation=ArgTypes.join ~type_join left.arg_annotation right.arg_annotation;
-    return_var_type=ReferenceMap.join ~equal:Type.equal ~data_join:type_join left.return_var_type right.return_var_type;
-    return_type=type_join left.return_type right.return_type;
-    callers=CallerSet.union left.callers right.callers;
-    usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes;
+    arg_types;
+    arg_annotation;
+    return_var_type;
+    return_type;
+    callers;
+    usage_attributes;
     (*usedef_tables=usedef_tables;*)
   }
 
@@ -622,8 +665,8 @@ module OurSummary = struct
   let add_class_property ({class_table; _} as t) parent property =
     { t with class_table = ClassTable.add_property class_table parent property }
 
-  let add_class_method ({class_table; _} as t) parent meth =
-    { t with class_table = ClassTable.add_method class_table parent meth }
+  let add_class_method ({class_table; _} as t) parent call_info meth =
+    { t with class_table = ClassTable.add_method ~call_info class_table parent meth }
 
   let set_class_summary ({ class_table; _ } as t) class_name class_info =
     { t with class_table = ClassTable.set_class_info class_table class_name class_info }

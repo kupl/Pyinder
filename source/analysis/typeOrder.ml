@@ -133,7 +133,6 @@ module OrderImplementation = struct
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) right
       in
-
       let union = Type.union_join left right in
 
       if Type.equal left right then
@@ -162,7 +161,7 @@ module OrderImplementation = struct
         Type.OurTypedDictionary { general=right_general; typed_dict=right_typed_dict; } ->
           let x = Type.OurTypedDictionary {
             general=join order left_general right_general;
-            typed_dict=Type.OurTypedDictionary.join ~join:Type.union_join left_typed_dict right_typed_dict;
+            typed_dict=Type.OurTypedDictionary.join ~join:(join order) left_typed_dict right_typed_dict;
           }
           in
           (*
@@ -206,20 +205,21 @@ module OrderImplementation = struct
             else
               Type.union [left; right]
         (* n: A_n = B_n -> Union[A_i] <= Union[B_i]. *)
-        (*
-        | Type.Union left, Type.Union right -> Type.Union (left@right)
-        *)
         
+        | Type.Union left, Type.Union right -> Type.Union (left@right)
+        
+        
+        (*
         | Type.Union _, Type.Union right ->
 
             List.fold right ~init:left ~f:(fun acc right_t ->
               join order acc right_t
             )
-          
+        *)
         | (Type.Union elements as union), other
         | other, (Type.Union elements as union) ->
-          (*
-          if List.length elements > 10 then (
+          
+          (* if List.length elements > 20 then (
             Log.dump "<<< Join Heavy Type : %i >>>" (List.length elements);
             
             let _ = List.fold elements ~init:Type.Bottom ~f:(fun acc t -> 
@@ -228,8 +228,9 @@ module OrderImplementation = struct
             ) in
             Log.dump "[[[ With ]]]\n%a\n" Type.pp other;
             
-          );
-          *)
+          ); *)
+          
+          
             if always_less_or_equal order ~left:other ~right:union && not (Type.contains_any other) && not (Type.contains_unknown other)
             then (
               union

@@ -6305,7 +6305,7 @@ module State (Context : Context) = struct
 end
 
 
-module PossibleState (Context : Context) = struct
+module PossibleState (Context : OurContext) = struct
   module TypeCheckAT = TypeCheckAT.TypeCheckAT (Context)
   module TypeCheckRT = TypeCheckRT.TypeCheckRT (Context)
 
@@ -13050,6 +13050,8 @@ module DummyContext = struct
 
   let error_map = None
 
+  let our_summary = ref OurDomain.OurSummary.empty
+
   module Builder = Callgraph.NullBuilder
 end
 
@@ -13822,7 +13824,7 @@ let exit_state_origin ~resolution (module Context : Context) =
     errors, Some local_annotations, Some callees)
 *)
 
-let exit_state ~resolution (module Context : Context) =
+let exit_state ~resolution (module Context : OurContext) =
   let module PossibleState = PossibleState (Context) in
   let module PossibleFixpoint = PossibleFixpoint.Make (PossibleState) in
   
@@ -13831,7 +13833,7 @@ let exit_state ~resolution (module Context : Context) =
   in
 
   (* our_summary 업데이트 시 여기 바꾸기 *)
-  let our_summary = !OurDomain.our_summary in
+  let our_summary = !Context.our_summary in
   let global_resolution = Resolution.global_resolution resolution in
   (*
   let _ = our_model in
@@ -13882,6 +13884,15 @@ let exit_state ~resolution (module Context : Context) =
 
             let rec update_parent_of_self class_name resolution =
               let self_attributes_tree = OurTypeSet.OurSummaryResolution.get_self_attributes_tree final_model class_name in
+
+              (* Log.dump "[[[ LET GO ]]]";
+
+              Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data ->
+                Log.dump "TEST : %s\n%a" key Refinement.Unit.pp data 
+              );
+
+              Log.dump "Resolution : %a" Resolution.pp resolution; *)
+
               let resolution = Resolution.update_self_attributes_tree ~global_resolution resolution self_attributes_tree (Reference.create class_param) in
 
               let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_name)) in
@@ -13901,7 +13912,7 @@ let exit_state ~resolution (module Context : Context) =
 
            
             let x = update_parent_of_self class_name resolution in
-            (*Log.dump "FINAL %a" Resolution.pp x;*)
+            (* Log.dump "FINAL %a" Resolution.pp x; *)
             x
             
             
@@ -13946,15 +13957,27 @@ let exit_state ~resolution (module Context : Context) =
 
               let total_usage_attributes = AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes in
 
+              (*
+              Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
+              *)
               OurTypeSet.OurSummaryResolution.find_class_of_attributes final_model name total_usage_attributes
             | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes final_model name parameter_usage_attributes
             )
           in  
-          LocInsensitiveExpMap.fold func_attrs ~init:resolution ~f:(fun ~key:{ Node.value; _ } ~data resolution ->
+          LocInsensitiveExpMap.fold func_attrs ~init:resolution ~f:(fun ~key:({ Node.value; _ } as expression) ~data resolution ->
             match value with
-            | Name name -> 
-              let annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
-              
+            | Name name 
+              when Type.is_unknown (Resolution.resolve_expression_to_type resolution expression) -> 
+              let duck_annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
+              let annotation = 
+                Resolution.get_local_with_attributes resolution ~name 
+                |> (function
+                | None  -> duck_annotation
+                | Some origin -> 
+                  Annotation.join ~type_join:(GlobalResolution.join global_resolution) origin duck_annotation 
+                )
+              in
+                 
               let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
 
               (*
@@ -13975,8 +13998,8 @@ let exit_state ~resolution (module Context : Context) =
 
         let resolution_updated_attributes = 
           resolution 
-          |> update_resolution_of_self ~final_model 
           |> update_resolution_from_attributes ~final_model
+          |> update_resolution_of_self ~final_model 
         in
 
         let our_summary = OurDomain.OurSummary.set_arg_annotation our_summary name 
@@ -14033,7 +14056,7 @@ let exit_state ~resolution (module Context : Context) =
     else initial, our_summary
   in
 
-  OurDomain.our_summary := our_summary;
+  Context.our_summary := our_summary;
   (*
   Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
   *)
@@ -14062,7 +14085,7 @@ let exit_state ~resolution (module Context : Context) =
     let cfg = Cfg.create define in
 
     
-    let our_summary = !OurDomain.our_summary in
+    let our_summary = !Context.our_summary in
     (*
     let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
     let our_summary = OurDomain.OurSummary.set_usedef_tables our_summary name (Some usedef_tables) in 
@@ -14076,12 +14099,20 @@ let exit_state ~resolution (module Context : Context) =
       | Type.Any -> Type.Unknown
       | t -> t
     in
-    
-    let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name return_annotation in
-    OurDomain.our_summary := our_summary;
+
+    if not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then (
+      let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name return_annotation in
+      Context.our_summary := our_summary
+    );
+
+
+    (* Log.dump "%a GO" Reference.pp name; *)
 
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
     let exit = PossibleFixpoint.exit fixpoint in
+
+
+    (* og.dump "%a STOP" Reference.pp name; *)
 
     (*
     (match PossibleFixpoint.exit_possible fixpoint with
@@ -14179,24 +14210,26 @@ let exit_state ~resolution (module Context : Context) =
 
     (* Arg Return Types 등록 *)
     let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
-    let our_summary = !OurDomain.our_summary in
+    let our_summary = !Context.our_summary in
     let our_summary = 
       (match last_state with
       | Some state ->
         (match state.rt_type with
         | Value v ->
-          
-          let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name (Resolution.get_annotation_store v) in
-          
+
           let our_summary = 
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-              
+                        
+              let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name (Resolution.get_annotation_store v) in
+          
               OurDomain.OurSummary.set_class_table our_summary (
                 OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
                   (OurDomain.OurSummary.get_class_table our_summary) class_name class_param (Resolution.annotation_store v)
               )
-            | _ -> our_summary
+            | _ ->           
+              let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name (Resolution.get_annotation_store v) in
+              our_summary
             )
           in
           our_summary
@@ -14207,7 +14240,7 @@ let exit_state ~resolution (module Context : Context) =
       )
     in
 
-    OurDomain.our_summary := our_summary;
+    Context.our_summary := our_summary;
 
     let callees = Context.Builder.get_all_callees () in
     let local_annotations =
@@ -14249,9 +14282,12 @@ let compute_local_annotations ~global_environment name =
 
       let error_map = Some (LocalErrorMap.empty ())
 
+      let our_summary = ref OurDomain.OurSummary.empty
+
       module Builder = Callgraph.NullBuilder
     end
     in
+
     let type_errors, local_annotations, callees = exit_state ~resolution (module Context) in
     type_errors, local_annotations, callees
   in
@@ -14356,7 +14392,7 @@ let check_define
     ~qualifier
     ({ Node.location; value = { Define.signature = { name; _ }; _ } as define } as define_node)
   =
-  let errors, local_annotations, callees =
+  let errors, local_annotations, callees, our_summary =
     try
       let module Context = struct
         let qualifier = qualifier
@@ -14371,11 +14407,15 @@ let check_define
 
         let error_map = Some (LocalErrorMap.empty ())
 
-        let our_summary = OurDomain.OurSummary.t ref
+        let our_summary = ref OurDomain.OurSummary.empty
 
         module Builder = Builder
       end
       in
+      if not (OurDomain.OurSummary.equal !Context.our_summary OurDomain.OurSummary.empty) then (
+        Log.dump "Check Not Equal %a ===>\n %a\n" Reference.pp name OurDomain.OurSummary.pp !Context.our_summary;
+      );
+
       let type_errors, local_annotations, callees = exit_state ~resolution (module Context) in
       let errors =
         if include_type_errors then
@@ -14389,7 +14429,7 @@ let check_define
         else
           None
       in
-      errors, local_annotations, callees
+      errors, local_annotations, callees, !Context.our_summary
     with
     | ClassHierarchy.Untracked annotation ->
         Statistics.event
@@ -14406,20 +14446,20 @@ let check_define
             ~kind:(Error.AnalysisFailure (UnexpectedUndefinedType annotation))
             ~define:define_node
         in
-        Some [undefined_error], None, None
+        Some [undefined_error], None, None, OurDomain.OurSummary.empty
   in
-  (if not (Define.is_overloaded_function define) then
-     let caller =
-       if Define.is_property_setter define then
-         Callgraph.PropertySetterCaller name
-       else
-         Callgraph.FunctionCaller name
-     in
-     Option.iter callees ~f:(fun callees -> 
-      Callgraph.set ~caller ~callees);
-      (
+  let our_summary =
+    if not (Define.is_overloaded_function define) then
+      let caller =
+        if Define.is_property_setter define then
+          Callgraph.PropertySetterCaller name
+        else
+          Callgraph.FunctionCaller name
+      in
+      Option.iter callees ~f:(fun callees -> 
+        Callgraph.set ~caller ~callees
+      );
       if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-        let our_summary = !OurDomain.our_summary in
         let our_summary =
           Option.fold callees ~init:our_summary ~f:(fun our_summary callees -> 
               List.fold callees ~init:our_summary ~f:(fun our_summary callee ->
@@ -14429,9 +14469,14 @@ let check_define
               )
           )
         in
-        OurDomain.our_summary := our_summary;
-      );
-  );
+        our_summary
+      else (
+        our_summary
+      )
+    else (
+      our_summary
+    )
+  in
   let local_annotations =
     if include_local_annotations then
       Some
@@ -14440,7 +14485,7 @@ let check_define
     else
       None
   in
-  { CheckResult.our_summary=OurDomain.OurSummary.sexp_of_t OurSummary.empty; errors; local_annotations; }
+  (our_summary, errors, local_annotations)
 
   (*
 let check_function_definition_origin
@@ -14517,15 +14562,22 @@ let check_function_definition
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
   let result =
+    let global_resolution = Resolution.global_resolution resolution in
     let aggregate_errors results =
-      List.map results ~f:CheckResult.errors
+      List.map results ~f:(fun (_, errors, _) -> errors)
       |> List.fold ~init:(Some []) ~f:(Option.map2 ~f:List.append)
     in
+    let aggregate_our_summary results =
+      List.map results ~f:(fun (our_summary, _, _) -> our_summary)
+      |> List.fold ~init:OurDomain.OurSummary.empty ~f:(fun acc our_summary ->
+          OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) acc our_summary
+        )
+    in
     match body with
-    | None -> { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t !OurDomain.our_summary; errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t (aggregate_our_summary sibling_results); errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
-        let ({ CheckResult.local_annotations; _ } as body_result) = check_define define_node in
-        { our_summary = OurDomain.OurSummary.sexp_of_t !OurDomain.our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
+        let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
+        { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 
   let number_of_lines =

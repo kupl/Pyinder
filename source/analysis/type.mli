@@ -1098,6 +1098,8 @@ val variable
 
 val is_concrete : t -> bool
 
+val filter_unknown : t -> t
+
 val union_join : t -> t -> t
 
 val narrow_union : join:(t -> t -> t) -> less_or_equal:(left:t -> right:t-> bool) -> t -> t

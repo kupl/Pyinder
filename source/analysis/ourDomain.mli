@@ -29,12 +29,14 @@ module ClassAttributes: sig
   type t = {
     attributes: AttrsSet.t;
     properties: AttrsSet.t;
-    methods: AttrsSet.t;
+    methods: AttributeAnalysis.CallSet.t Identifier.Map.t;
   }
 
+  
   val is_used_attr : t -> string -> bool
-
+  (*
   val is_subset_with_total_attributes : t -> AttrsSet.t -> bool
+  *)
 end
 
 module ClassSummary: sig
@@ -191,7 +193,7 @@ module OurSummary : sig
 
   val add_class_property : t -> Reference.t -> string -> t
 
-  val add_class_method : t -> Reference.t -> string -> t
+  val add_class_method : t -> Reference.t -> AttributeAnalysis.CallInfo.t -> string -> t
 
   val set_class_summary : t -> Reference.t -> ClassSummary.t -> t
 

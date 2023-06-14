@@ -7,9 +7,78 @@ open Statement
 
 module SkipMap = LocInsensitiveExpMap
 
+module CallInfo = struct
+  type t = {
+    position: int;
+    default: Identifier.Set.t;
+    star: bool;
+    double_star: bool;
+  } [@@deriving sexp, equal, compare]
+
+  let empty = {
+    position=0; 
+    default=Identifier.Set.empty;
+    star=false;
+    double_star=false;
+  }
+
+  let of_arguments arguments =
+    List.fold arguments ~init:empty ~f:(fun call argument ->
+      let _, t = Call.Argument.unpack argument in
+      match t with
+      | Positional -> { call with position=call.position + 1 }
+      | Named name -> { call with default=Identifier.Set.add call.default (Node.value name)  }
+      | SingleStar -> { call with star=true }
+      | DoubleStar -> { call with double_star=true }
+    )
+
+  let of_parameters parameters =
+    (* TODO : have to position -1? (because of self) *)
+    List.fold parameters ~init:{ empty with position = -1 } ~f:(fun call (param: Parameter.t) ->
+      let param = Node.value param in
+      if String.is_substring ~substring:"**" param.name
+      then { call with double_star=true }
+      else if String.is_substring ~substring:"*" param.name
+      then { call with star=true }
+      else (
+        match param.value with
+        | Some _ -> { call with default=Identifier.Set.add call.default param.name }
+        | _ -> { call with position=call.position + 1 }
+      )
+    )
+
+  let is_corresponding ~signature target =
+    (* TODO: do more accurate *)
+    if (not signature.star) && (not signature.double_star)
+    then (
+      (target.position >= signature.position)
+      && (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
+      && (Identifier.Set.is_subset target.default ~of_:signature.default)
+    ) else if (signature.star) && (not signature.double_star) then (
+      (Identifier.Set.is_subset target.default ~of_:signature.default)
+    ) else (
+      true
+    )
+
+end
+
+module CallSet = Set.Make (CallInfo)
+
 module AttributeStorage = struct
-  type t = (Identifier.Set.t) LocInsensitiveExpMap.t
+  type data_set = {
+    attribute_set : Identifier.Set.t;
+    call_set : CallSet.t Identifier.Map.t;
+  } [@@deriving sexp, equal, compare]
+  
+  type t = data_set LocInsensitiveExpMap.t
   [@@deriving sexp, equal]
+
+  
+
+  let empty_data_set = { 
+    attribute_set=Identifier.Set.empty;
+    call_set=Identifier.Map.empty;
+  }
 
   let empty = LocInsensitiveExpMap.empty
 
@@ -30,24 +99,59 @@ module AttributeStorage = struct
       ^ ")"
     in
     Format.fprintf formatter "%s" msg
+
+  let pp_call_set formatter call_set =
+    let msg = 
+      Identifier.Map.fold call_set ~init:"(" ~f:(fun ~key:ident ~data:_ msg ->
+        msg ^ ", " ^ ident
+      )
+      ^ ")"
+    in
+    Format.fprintf formatter "%s" msg
+
+  let pp_data_set formatter data_set =
+    Format.fprintf formatter "[[ Attribute ]]\n%a\n[[ Method ]]\n%a\n"
+      pp_identifier_set data_set.attribute_set pp_call_set data_set.call_set
   
   let pp formatter t = 
     LocInsensitiveExpMap.iteri t ~f:(fun ~key ~data ->
-      Format.fprintf formatter "%s ==> %a \n" (LocInsensitiveExp.show key) pp_identifier_set data
+      Format.fprintf formatter "%s ==> %a \n" (LocInsensitiveExp.show key) pp_data_set data
     )
     
 
   let add_attribute target attribute storage =
-    let attribute =
-      let data =
+    let data =
+      let data_set =
         if LocInsensitiveExpMap.mem storage target
         then (LocInsensitiveExpMap.find_exn storage target)
-        else (Identifier.Set.empty)
+        else empty_data_set
       in 
-      Identifier.Set.add data attribute
+      { data_set with attribute_set=Identifier.Set.add data_set.attribute_set attribute }
     in
-    LocInsensitiveExpMap.set storage ~key:target ~data:attribute
+    LocInsensitiveExpMap.set storage ~key:target ~data
     
+  let add_call target callee arguments storage =
+    let call = 
+      CallInfo.of_arguments arguments
+    in
+
+    let data =
+      let data_set =
+        if LocInsensitiveExpMap.mem storage target
+        then (LocInsensitiveExpMap.find_exn storage target)
+        else empty_data_set
+      in 
+      let call_set =
+        Identifier.Map.find data_set.call_set callee
+        |> Option.value ~default:CallSet.empty
+      in
+
+      let call_set = CallSet.add call_set call in
+
+      { data_set with call_set=Identifier.Map.set ~key:callee ~data:call_set data_set.call_set }
+    in
+    LocInsensitiveExpMap.set storage ~key:target ~data
+
   let add_prefix storage ~prefix =
     fold storage ~init:empty ~f:(fun ~key ~data new_storage ->
       match get_identifier_base key with
@@ -130,14 +234,29 @@ module AttributeStorage = struct
       | _ -> false
     )
 
+  let call_set_join left right =
+    Identifier.Map.merge left right ~f:(fun ~key:_ data ->
+      match data with  
+      | `Both (left, right) ->
+        Some (CallSet.union left right)
+      | `Left data | `Right data -> Some data 
+    )
+
+  let data_set_join left right =
+    {
+      attribute_set = Identifier.Set.union left.attribute_set right.attribute_set;
+      call_set = call_set_join left.call_set right.call_set;
+    }
+
   let join left right =
     LocInsensitiveExpMap.merge left right ~f:(fun ~key:_ data ->
       match data with
       | `Both (left, right) ->
-        Some (Identifier.Set.union left right)
+        Some (data_set_join left right)
       | `Left data | `Right data -> Some data 
     )
 
+    (*
   let join_without_merge ~origin other =
     LocInsensitiveExpMap.merge origin other ~f:(fun ~key:_ data ->
       match data with
@@ -146,8 +265,8 @@ module AttributeStorage = struct
       | `Left data -> Some data 
       | `Right _ -> None
     )
+    *)
 
-  
 end
 
 let is_in_skip_set skip_map base attribute =
@@ -184,21 +303,26 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
     )
   in
 
-  match value with
-  | Expression.Name (Attribute { base; attribute; _ } as name) ->
-    (
+  let add_attribute ?arguments base attribute name =
     match name_to_reference name with
     | Some reference when (Reference.is_local reference || Reference.is_parameter reference)  ->
       if (not is_assign) && (is_in_skip_set skip_map base attribute)
       then
         (storage, skip_map) 
       else
-        (storage
-        |> AttributeStorage.add_attribute base attribute,
-        skip_map)
-        |> forward_expression ~expression:base
-    | _ -> (storage, skip_map) |> forward_expression ~expression:base
-    )
+        let storage =
+          (match arguments with
+          | Some arguments -> AttributeStorage.add_call base attribute arguments storage
+          | _ -> AttributeStorage.add_attribute base attribute storage
+          )
+        in
+        (storage, skip_map)
+    | _ -> (storage, skip_map) 
+  in
+
+  match value with
+  | Expression.Name (Attribute { base; attribute; _ } as name) ->
+    add_attribute base attribute name |> forward_expression ~expression:base
   | Name (Identifier _) -> (storage, skip_map)
   | Await expression -> forward_expression (storage, skip_map) ~expression
   | BooleanOperator { left; right; _ }
@@ -206,6 +330,12 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
     (storage, skip_map)
     |> forward_expression ~expression:left
     |> forward_expression ~expression:right
+  | Call { callee={ Node.value=Expression.Name (Attribute { base; attribute; _ } as name); _ }; arguments; } ->
+    add_attribute ~arguments base attribute name 
+    |> forward_expression ~expression:base
+    |> (fun (storage, skip_map) -> 
+      List.fold arguments ~init:(storage, skip_map) ~f:(fun (storage, skip_map) { value; _ } -> forward_expression (storage, skip_map) ~expression:value)
+    )
   | Call { callee; arguments; } ->
     (storage, skip_map)
     |> forward_expression ~expression:callee

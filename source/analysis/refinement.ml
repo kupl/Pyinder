@@ -279,6 +279,25 @@ module Unit = struct
       in
       { base; attributes }
 
+  let rec add_new_attribute ~global_resolution left right =
+    if equal left top || equal right top then
+      top
+    else
+      let base, attributes =
+        match left.base, right.base with
+        | Some left_base, Some right_base when Annotation.equal left_base right_base ->
+            (
+              Some left_base,
+              IdentifierMap.merge_with ~merge_one:(add_new_attribute ~global_resolution) left.attributes right.attributes
+            )
+        | Some left_base, _ -> Some left_base, left.attributes
+        | None, Some right_base -> Some right_base, right.attributes
+        | None, None ->
+            (* you only want to continue the nested join should both attribute trees exist *)
+            None, IdentifierMap.empty
+      in
+      { base; attributes }
+
 
   let rec meet ~global_resolution left right =
     let should_recurse, base =
@@ -740,7 +759,7 @@ module Store = struct
     }
 
   let update_self_attributes_tree ~global_resolution { annotations; temporary_annotations; } self_attributes_tree class_param =
-    let merge_one = Unit.join_with_merge ~global_resolution in
+    let merge_one = Unit.add_new_attribute ~global_resolution in
     
     let annotations =
       match (ReferenceMap.find annotations class_param) with

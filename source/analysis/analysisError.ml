@@ -4364,6 +4364,8 @@ let filter_type_error errors =
       | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
       | IncompatibleReturnType _
       | InvalidOverride _
+      | InvalidType _
+      | InconsistentOverride _
         -> false
       | _ -> true
       )

@@ -240,11 +240,13 @@ let run_on_qualifier environment ~dependency qualifier =
         defines |> List.map ~f:(TypeEnvironment.ReadOnly.get_errors ?dependency environment)
       in
       *)
+
+      
       let our_errors = !OurErrorDomain.our_errors in
       let errors_by_define =
         defines |> List.map ~f:(fun define -> (OurErrorDomain.OurErrorList.get our_errors ~key:define) |> Option.value ~default:[])
       in
-
+      
       (*
       let time = Timer.stop_in_sec timer in
       if Float.(>.) time 1.0 then

@@ -40,6 +40,26 @@ module type Context = sig
   module Builder : Callgraph.Builder
 end
 
+module type OurContext = sig
+  val qualifier : Reference.t
+
+  val debug : bool
+
+  val constraint_solving_style : Configuration.Analysis.constraint_solving_style
+
+  val define : Define.t Node.t
+
+  (* Where to store local annotations during the fixpoint. `None` discards them. *)
+  val resolution_fixpoint : LocalAnnotationMap.t option
+
+  (* Where to store errors found during the fixpoint. `None` discards them. *)
+  val error_map : LocalErrorMap.t option
+
+  val our_summary : OurDomain.OurSummary.t ref
+
+  module Builder : Callgraph.Builder
+end
+
 (*
 module type OurSignature = sig
   type t =

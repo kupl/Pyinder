@@ -147,7 +147,7 @@
             in
             let type_join = Analysis.GlobalResolution.join global_resolution in
 
-             let rec fixpoint n environment prev_model skip_set =
+             let rec fixpoint n k environment prev_model skip_set =
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
           
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
@@ -163,8 +163,8 @@
               *)
               let our_model = !Analysis.OurDomain.our_model in
               
-              (*Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model;*)
-              if (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
+              (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
+              if (k >= 20) || (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
               then Analysis.ErrorsEnvironment.get_errors ~scheduler environment
               else (
                 let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
@@ -179,12 +179,12 @@
                   |> Analysis.ErrorsEnvironment.set_environment environment
                 in
                 
-                fixpoint n environment our_model next_skip_set
+                fixpoint n (k+1) environment our_model next_skip_set
               )
              in
 
             let () =
-              fixpoint 0 read_write_environment !Analysis.OurDomain.our_model Ast.Reference.Set.empty
+              fixpoint 0 0 read_write_environment !Analysis.OurDomain.our_model Ast.Reference.Set.empty
             in
              
              (*

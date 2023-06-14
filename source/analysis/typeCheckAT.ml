@@ -5673,7 +5673,10 @@ module TypeCheckAT (Context : Context) = struct
                 | Property _ ->
                   OurDomain.OurSummary.add_class_property our_model class_statement.name name
                 | Method _ ->
+                  our_model
+                  (*
                   OurDomain.OurSummary.add_class_method our_model class_statement.name name
+                  *)
               ) class_attrs our_model
             in
             OurDomain.save_summary our_model define_name
