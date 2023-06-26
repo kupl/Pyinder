@@ -128,8 +128,12 @@ let filter_errors
   let mode = Source.mode ~configuration ~local_mode in
   let filter errors =
     let keep_error error = not (Error.suppress ~mode ~ignore_codes error) in
-    Error.filter_type_error errors
-    |> List.filter ~f:keep_error 
+
+    let x =
+      Error.filter_type_error errors
+      |> List.filter ~f:keep_error 
+    in
+    x
   in
   let x =
     List.map errors_by_define ~f:(fun errors -> filter errors |> List.sort ~compare:Error.compare)
@@ -146,14 +150,14 @@ let run_on_source
     errors_by_define
   =
 
-  let timer = Timer.start () in
-
   let global_resolution = TypeEnvironment.ReadOnly.global_resolution environment in
   let configuration =
     TypeEnvironment.ReadOnly.controls environment |> EnvironmentControls.configuration
   in
   let x = filter_errors ~configuration ~global_resolution ~typecheck_flags errors_by_define in
+
   let x = add_local_mode_errors ~define:(Source.top_level_define_node source) source x in
+
   let x = 
   x
   |> handle_ignores_and_fixmes ~qualifier source
@@ -164,11 +168,6 @@ let run_on_source
     )
   |> List.sort ~compare:Error.compare
   in
-
-  let time = Timer.stop_in_sec timer in
-
-  if Float.(>.) time 1.0 then
-    Log.dump "%a consume %f" Reference.pp qualifier time;
   x
 
 
@@ -241,10 +240,15 @@ let run_on_qualifier environment ~dependency qualifier =
       in
       *)
 
-      
-      let our_errors = !OurErrorDomain.our_errors in
+      let our_errors_read_only = 
+        TypeEnvironment.ReadOnly.controls environment
+        |> EnvironmentControls.our_errors 
+      in
       let errors_by_define =
-        defines |> List.map ~f:(fun define -> (OurErrorDomain.OurErrorList.get our_errors ~key:define) |> Option.value ~default:[])
+        defines |> List.map ~f:(fun define -> 
+          let x = (OurErrorDomain.get_errors our_errors_read_only ~key:define) in
+          x
+        )
       in
       
       (*
@@ -255,8 +259,11 @@ let run_on_qualifier environment ~dependency qualifier =
           Reference.pp qualifier time (List.fold errors_by_define ~init:0 ~f:(fun acc x -> acc + List.length x));
       *)
 
-      run_on_source ~environment ~source errors_by_define
-      |> Error.deduplicate
+      let x =
+        run_on_source ~environment ~source errors_by_define
+      in
+
+      x |> Error.deduplicate
       
   in
 

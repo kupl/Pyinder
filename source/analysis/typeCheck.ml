@@ -1307,7 +1307,7 @@ module State (Context : Context) = struct
       let unpack_callable_and_self_argument =
         unpack_callable_and_self_argument
           ~signature_select:
-            (GlobalResolution.signature_select
+            (GlobalResolution.our_signature_select
                ~global_resolution
                ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution))
           ~global_resolution
@@ -1419,7 +1419,7 @@ module State (Context : Context) = struct
                       {
                         callable_data with
                         selected_return_annotation =
-                          GlobalResolution.signature_select
+                          GlobalResolution.our_signature_select
                             ~arguments
                             ~global_resolution:(Resolution.global_resolution resolution)
                             ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
@@ -1695,7 +1695,7 @@ module State (Context : Context) = struct
               in
               let arguments = List.rev reversed_arguments in
               let selected_return_annotation =
-                GlobalResolution.signature_select
+                GlobalResolution.our_signature_select
                   ~global_resolution
                   ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
                   ~arguments
@@ -1743,7 +1743,7 @@ module State (Context : Context) = struct
                   ({ callable = { TypeOperation.callable; self_argument }; arguments; _ } as
                   callable_data) ->
                   let selected_return_annotation =
-                    GlobalResolution.signature_select
+                    GlobalResolution.our_signature_select
                       ~global_resolution
                       ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution)
                       ~arguments
@@ -13860,7 +13860,6 @@ let exit_state ~resolution (module Context : OurContext) =
     if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
     then (
       let update_resolution resolution =
-        
         let final_model = !OurDomain.our_model in
 
         (*
@@ -13926,6 +13925,8 @@ let exit_state ~resolution (module Context : OurContext) =
               OurDomain.OurSummary.get_usage_attributes_from_func final_model name
             in
 
+            let successors = GlobalResolution.successors ~resolution:global_resolution in
+
             let parent_usage_attributes = AttributeAnalysis.AttributeStorage.empty in
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
@@ -13957,17 +13958,18 @@ let exit_state ~resolution (module Context : OurContext) =
 
               let total_usage_attributes = AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes in
 
-              (*
-              Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
-              *)
-              OurTypeSet.OurSummaryResolution.find_class_of_attributes final_model name total_usage_attributes
-            | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes final_model name parameter_usage_attributes
+              
+              (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
+               *)
+              OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
+            | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name parameter_usage_attributes
             )
           in  
           LocInsensitiveExpMap.fold func_attrs ~init:resolution ~f:(fun ~key:({ Node.value; _ } as expression) ~data resolution ->
+            let expression_type = Resolution.resolve_expression_to_type resolution expression in
             match value with
             | Name name 
-              when Type.is_unknown (Resolution.resolve_expression_to_type resolution expression) -> 
+              when Type.is_unknown expression_type || Type.is_top expression_type || Type.is_any expression_type -> 
               let duck_annotation = Annotation.create_mutable (Type.Primitive (Reference.show data)) in
               let annotation = 
                 Resolution.get_local_with_attributes resolution ~name 
@@ -13977,14 +13979,14 @@ let exit_state ~resolution (module Context : OurContext) =
                   Annotation.join ~type_join:(GlobalResolution.join global_resolution) origin duck_annotation 
                 )
               in
-                 
+              
               let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
 
-              (*
-              Log.dump "[ Before Resolution ] \n%a" Resolution.pp resolution;
+              
+              (* Log.dump "[ Before Resolution ] \n%a" Resolution.pp resolution;
               Log.dump "Name : %a ===> %a" Expression.pp_expression value Annotation.pp annotation;
-              Log.dump "[ After Resolution ] \n%a" Resolution.pp last_resolution;
-              *)
+              Log.dump "[ After Resolution ] \n%a" Resolution.pp last_resolution; *)
+              
               last_resolution
             | _ -> resolution
           )
@@ -14002,8 +14004,12 @@ let exit_state ~resolution (module Context : OurContext) =
           |> update_resolution_of_self ~final_model 
         in
 
+        (* Log.dump "%a >>> \n%a\n" Reference.pp name Resolution.pp resolution;
+        let t = (OurTypeSet.ArgTypesResolution.import_from_resolution ~join:(GlobalResolution.join global_resolution) resolution) in
+        Log.dump "WOWOWOW \n%a\n" OurDomain.ArgTypes.pp t; *)
+
         let our_summary = OurDomain.OurSummary.set_arg_annotation our_summary name 
-          (OurTypeSet.ArgTypesResolution.import_from_resolution ~join:(GlobalResolution.join global_resolution) resolution_updated_attributes) in 
+          (OurTypeSet.ArgTypesResolution.import_from_resolution ~join:(GlobalResolution.join global_resolution) resolution) in 
         
 
         
@@ -14033,7 +14039,7 @@ let exit_state ~resolution (module Context : OurContext) =
           let resolution, our_summary = 
             let resolution, our_summary = update_resolution resolution in
             resolution
-            |> Resolution.top_to_bottom
+            |> Resolution.top_to_unknown
             |> Resolution.add_unknown
             , our_summary
           in
@@ -14081,8 +14087,9 @@ let exit_state ~resolution (module Context : OurContext) =
     Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
     Log.dump "\n\n [[[ TEST ]]] \n%a" PossibleState.pp initial;
     *)
-
+    let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
     let cfg = Cfg.create define in
+
 
     
     let our_summary = !Context.our_summary in
@@ -14107,7 +14114,6 @@ let exit_state ~resolution (module Context : OurContext) =
 
 
     (* Log.dump "%a GO" Reference.pp name; *)
-
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
     let exit = PossibleFixpoint.exit fixpoint in
 
@@ -14261,6 +14267,9 @@ let exit_state ~resolution (module Context : OurContext) =
           emit_errors_on_exit (module Context) ~errors_sofar:errors ~resolution ()
           |> filter_errors (module Context) ~global_resolution
     in
+
+    (* List.iter errors ~f:(fun e -> Log.dump ">> %a" Error.pp e); *)
+
     errors, Some local_annotations, Some callees)
 
 

@@ -433,6 +433,7 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.Annotated left, _ -> solve_less_or_equal order ~constraints ~left ~right
     | _, Type.Annotated right -> solve_less_or_equal order ~constraints ~left ~right
     | Type.Any, other -> [add_fallbacks other]
+    | Type.Unknown, _ -> [constraints]
     | Type.Variable left_variable, Type.Variable right_variable
       when Type.Variable.Unary.is_free left_variable && Type.Variable.Unary.is_free right_variable
       ->
@@ -462,7 +463,6 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.Top, _ ->
         impossible
     | Type.Bottom, _ -> [constraints]
-    | Type.Unknown, other | other, Type.Unknown -> [add_fallbacks other]
     | _, Type.NoneType -> impossible
     | _, Type.RecursiveType recursive_type ->
         if
@@ -723,6 +723,22 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.Tuple _, _
     | _, Type.Tuple _ ->
         impossible
+    | (Type.Callable { implementation=other_implementation; _ },
+        (Type.Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }))
+        when Reference.equal name (Reference.create "__pyinder_any__") 
+          ->
+          let { Type.Callable.parameters; _ } = callable_implementation in
+          if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+          then [constraints]
+          else impossible
+    | (Type.Callable { implementation=other_implementation; _ },
+        (Type.Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }))
+        when Reference.equal name (Reference.create "__pyinder_any__") 
+          ->
+          let { Type.Callable.parameters; _ } = callable_implementation in
+          if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+          then [constraints]
+          else impossible
     | ( Type.Callable { Callable.kind = Callable.Named left; _ },
         Type.Callable { Callable.kind = Callable.Named right; _ } ) ->
         if Reference.equal left right then
@@ -766,6 +782,9 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.TypeOperation _, _
     | _, Type.TypeOperation _ ->
         impossible
+    | _, Type.Unknown -> [constraints]
+    
+      
 
 
   and solve_ordered_types_less_or_equal order ~left ~right ~constraints =

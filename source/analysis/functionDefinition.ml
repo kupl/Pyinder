@@ -193,5 +193,5 @@ let collect_defines ({ Source.module_path = { ModulePath.qualifier; _ }; _ } as 
     (* Take into account module toplevel *)
     Source.top_level_define_node source :: all_defines
   in
-  List.iter all_defines ~f:process_define;
+  List.iter (all_defines |> List.rev) ~f:process_define;
   Hashtbl.fold table ~init:[] ~f:collect_definition

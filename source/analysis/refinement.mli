@@ -119,7 +119,7 @@ module Store : sig
 
   val fold_map : f:(key:Reference.t -> data:Unit.t -> Unit.t Reference.Map.t -> Unit.t Reference.Map.t) -> t -> t -> t
 
-  val update_from_top_to_bottom : t -> t
+  val update_from_top_to_unknown : t -> t
 
   val update_possible : global_resolution:GlobalResolution.t -> t -> t -> t
 
@@ -127,7 +127,7 @@ module Store : sig
 
   val make_map_function_of_types : t -> (Annotation.t option -> 'a list option) -> (string list * 'a option) list
 
-  val top_to_bottom : t -> t
+  val top_to_unknown : t -> t
 
   val add_unknown : t -> t
 

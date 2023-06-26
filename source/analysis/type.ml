@@ -440,6 +440,17 @@ module Record = struct
           (* TODO(T84854853). *)
           None
 
+    let our_concatenate ~narrow ~left ~right =
+      match left, right with
+      | Concrete left, Concrete right -> Some (Concrete ((left @ right) |> narrow))
+      | Concrete left, Concatenation ({ prefix; _ } as concatenation) ->
+          Some (Concatenation { concatenation with prefix = left @ prefix |> narrow})
+      | Concatenation ({ suffix; _ } as concatenation), Concrete right ->
+          Some (Concatenation { concatenation with suffix = suffix @ right |> narrow})
+      | Concatenation _, Concatenation _ ->
+          (* TODO(T84854853). *)
+          None
+
 
     (** Pair matching elements of the prefixes and suffixes.
 
@@ -1912,11 +1923,11 @@ let is_iterator = function
 
 
 let is_list = function
-  | Parametric { name = "list"; _ } -> true
+  | Parametric { name = "list" | "typing.List"; _ } -> true
   | _ -> false
 
 let is_set = function
-  | Parametric { name = "set"; _ } -> true
+  | Parametric { name = "set" | "typing.Set"; _ } -> true
   | _ -> false
 
 let is_defaultdict = function
@@ -2760,77 +2771,6 @@ let union_join left right =
   | _ -> union_result
 
 
-let narrow_union ~join ~less_or_equal t =
-  let _ = join in
-  match t with
-  | Union t_list ->
-    let dedup =
-      List.dedup_and_sort ~compare:(fun l r ->
-        if (equal l r) then 0
-        else compare l r  
-      )
-    in
-  
-    let rec loose_union acc t =
-      match t with
-      | Union t_list ->
-        List.fold t_list ~init:acc ~f:loose_union
-      | _ -> t::acc
-    in
-  
-    let loose_t_list =
-        dedup (List.fold t_list ~init:[] ~f:loose_union)
-    in
-
-    let unknown =
-      List.find loose_t_list ~f:(fun t -> equal Unknown t)
-    in
-
-    let loose_t_list_except_unknown =
-      List.filter loose_t_list ~f:(fun t -> not (equal Unknown t))
-    in
-
-    let check_join left right =
-      less_or_equal ~left ~right || less_or_equal ~left:right ~right:left
-    in
-
-    let rec narrow t_list =
-      match t_list with
-      | hd::tl ->
-        let join_cand, others = List.partition_tf tl ~f:(fun t -> check_join hd t) in
-        if List.length join_cand > 0 then (
-          let join_result, temp = List.fold join_cand ~init:(hd, []) ~f:(fun (acc, temp) t -> 
-            if check_join t acc then (join t acc, temp)
-            else (acc, t::temp)
-          ) in
-          narrow (join_result::(others@temp))
-        ) else (
-          hd::(narrow tl)
-        )
-      | _ -> []
-    in
-
-    let narrow_list = dedup (narrow loose_t_list_except_unknown) in
-    let narrow_result = 
-      (match unknown with
-      | Some u -> u::narrow_list
-      | _ -> narrow_list
-      )
-    in
-    (*
-    if (List.length loose_t_list) > (List.length narrow_result)
-      then Log.dump "[[ Before : %i ]]\n%a\n[[ After : %i ]]\n%a\n" (List.length loose_t_list) pp (Union loose_t_list) (List.length narrow_result) pp (Union narrow_result);
-    *)
-    if List.length narrow_result = 1
-    then List.nth_exn narrow_result 0 
-    else if false
-    then (
-      Top
-    )
-    else
-      (Union narrow_result)
-  | _ -> t
-
 
 
 
@@ -3057,11 +2997,35 @@ let add_unknown annotation =
   let module InstantiateTransform = Transform.Make (struct
     type state = unit
 
+    let visit_children_before _ annotation = 
+      match annotation with
+      | Callable _ 
+      | Parametric { name = "BoundMethod"; _ }
+        -> false
+      | _ ->
+      true
+
+    let visit_children_after = false
+
+    let visit _ _ = 
+      { Transform.transformed_annotation = union_join annotation Unknown; new_state = () }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
+
+let top_to_unknown annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
+
     let visit_children_before _ _ = true
 
     let visit_children_after = false
 
-    let visit _ annotation = { Transform.transformed_annotation = union_join annotation Unknown; new_state = () }
+    let visit _ annotation = { 
+      Transform.transformed_annotation = 
+      (match annotation with
+      | Top -> Unknown
+      | _ -> annotation); new_state = () }
   end)
   in
   snd (InstantiateTransform.visit () annotation)
@@ -4759,7 +4723,7 @@ let type_parameters_for_bounded_tuple_union = function
 
 let single_parameter = function
   | Parametric { parameters = [Single parameter]; _ } -> parameter
-  | _ -> failwith "Type does not have single parameter"
+  | t -> Log.dump "Type : %a" pp t; failwith "Type does not have single parameter"
 
 
 let weaken_literals annotation =
@@ -6410,11 +6374,11 @@ module OurTypedDictionary = struct
   let get_field_annotation t name =
     match List.find t ~f:(fun record -> String.equal record.name name) with
     | Some record ->
-        record.annotation
-    | _ -> Any
+        Some record.annotation
+    | _ -> None
 
   let add_bottom_in_fields t =
-    List.map t ~f:(fun record -> {record with annotation=union_join record.annotation Bottom})
+    List.map t ~f:(fun record -> {record with annotation=union_join Unknown record.annotation})
 
   let join ~join (left: 'annotation record) (right: 'annotation record) =
     List.fold right ~init:left ~f:(fun acc field ->
@@ -6432,7 +6396,9 @@ module OurTypedDictionary = struct
         let new_acc = new_field::acc in
         List.remove_consecutive_duplicates ~which_to_keep:`First new_acc ~equal:(fun left right -> String.equal left.name right.name)
         *)
-      | None -> field::acc
+      | None -> 
+        let new_field = { field with annotation=join field.annotation Unknown } in
+        new_field::acc
     )
 
   let rec update_dict_field ~join_f target_type name annotation =
@@ -7131,11 +7097,13 @@ let rec get_dict_value_type ?(with_key = None) t =
   | Parametric { name = "dict"; parameters } -> (
       match parameters with
       | [_; Single value_parameter] -> value_parameter
-      | _ -> Log.dump "HMM??"; Any
+      | _ -> Log.dump "HMM??"; Unknown
   )
   | OurTypedDictionary { general; typed_dict } -> (
       match with_key with
-      | Some key -> OurTypedDictionary.get_field_annotation typed_dict key
+      | Some key -> 
+        OurTypedDictionary.get_field_annotation typed_dict key
+        |> Option.value ~default:(get_dict_value_type general)
       | _ -> get_dict_value_type general
   )
   | _ -> Any  
@@ -7202,9 +7170,9 @@ let rec get_depth parent_annotation =
     let module InstantiateTransform = Transform.Make (struct
       type state = unit
   
-      let visit_children_before _ _ = false
+      let visit_children_before _ _ = true
   
-      let visit_children_after = true
+      let visit_children_after = false
   
       let visit _ annotation = 
         let depth =
@@ -7214,7 +7182,7 @@ let rec get_depth parent_annotation =
         in
 
         let annotation =
-          if depth >= 3
+          if depth > 3
           then deep_to_any annotation
           else annotation
         in
@@ -7227,3 +7195,245 @@ let rec get_depth parent_annotation =
     in
     snd (InstantiateTransform.visit () annotation)
   
+
+let rec can_union ~f t =
+  match t with
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_union ~f t))
+  | _ -> f t
+
+let can_unknown t =
+  can_union ~f:is_unknown t
+(*   match t with
+  | Unknown -> true
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_unknown t))
+  | _ -> false *)
+
+let rec can_top t =
+  match t with
+  | Top -> true
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_top t))
+  | _ -> false
+
+let rec union_update ~f t =
+  match t with
+  | Union t_list -> Union (List.map t_list ~f:(union_update ~f))
+  | _ -> f t
+
+let rec union_fold_with_filter ~f t =
+  match t with
+  | Union t_list -> 
+    let new_t_list =
+      ((List.fold t_list ~init:[] ~f:(fun acc t ->
+          match (union_fold_with_filter ~f t) with
+          | Some t -> t::acc
+          | None -> acc
+        )
+      ) 
+      |> List.rev)
+    in
+    if List.length new_t_list = 0 then None else Some (Union new_t_list)
+  | _ -> f t
+
+let count_named_without_default params =
+  List.filter params ~f:(fun param ->
+    match param with
+    | CallableParameter.Named { default; _ } when not default -> true
+    | _ -> false
+  )
+  |> List.length
+
+let count_defined_without_default params =
+    match params with
+    | Defined params -> count_named_without_default params
+    | _ -> 0
+
+
+let rec narrow_callable ~join t =
+  let count_named_without_default params =
+    List.filter params ~f:(fun param ->
+      match param with
+      | CallableParameter.Named { default; _ } when not default -> true
+      | _ -> false
+    )
+    |> List.length
+  in
+  (* TODO: upgrade with num of named *)
+  let get_matched_callables ~target:{ implementation={ parameters=target_parameters; _ }; _ } callables =
+    List.partition_tf callables ~f:(fun { implementation={ parameters; _ }; _ } ->
+      match target_parameters, parameters with
+      | Defined target_params, Defined params ->
+        let target_named_num = count_named_without_default target_params in
+        let named_num = count_named_without_default params in
+        target_named_num = named_num
+      | ParameterVariadicTypeVariable _, ParameterVariadicTypeVariable _ 
+      | Undefined, Undefined ->
+        true
+      | _ -> false
+    )
+  in
+
+  let abstract_callables ~target:{ implementation={ annotation; parameters; }; _ } callables =
+    let base_parameters =
+      match parameters with
+      | Defined params ->
+        Defined ((List.fold params ~init:[] ~f:(fun acc param ->
+          match param with
+          | CallableParameter.Named _ -> CallableParameter.Named { name = "__any__"; annotation=Top; default=false }::acc
+          | _ -> acc
+        )) |> List.rev)
+      | ParameterVariadicTypeVariable _
+      | Undefined -> parameters
+    in
+    let base_callable =
+      Callable.create ~name:(Reference.create "__pyinder_any__") ~parameters:base_parameters ~annotation ()
+      |> (function 
+        | Callable t -> t
+        | _ -> failwith "Why base is not Callable?"
+      )
+    in
+
+    List.fold callables ~init:base_callable ~f:(fun abc { implementation={ annotation; _ }; _ } ->
+      Callable.map_annotation abc ~f:(join annotation)
+    )
+  in
+
+  match t with
+  | Union t_list ->
+    let t_list = List.map t_list ~f:(narrow_callable ~join) in
+    let callables, other_types = List.partition_tf t_list ~f:(function 
+      | Callable _ -> true
+      | _ -> false
+    ) 
+    in
+
+    let dettached_callable callables =
+      List.map callables ~f:(fun t -> 
+        match t with
+        | Callable t -> t
+        | _ -> failwith "Why is not Callable?"
+      )
+    in
+
+    let rec get_abstract_callables callables =
+      match callables with
+      | hd::tl ->
+        let matched_callables, other_callables = get_matched_callables ~target:hd tl in
+        if List.length matched_callables > 3
+        then (
+          Callable (abstract_callables ~target:hd matched_callables)::(get_abstract_callables other_callables)
+        ) else (
+          Callable hd::(get_abstract_callables tl)
+        )
+      | [] -> []
+    in
+
+    Union ((get_abstract_callables (dettached_callable callables))@other_types)
+  | _ -> t 
+
+
+let rec narrow_boundmethod ~join t =
+  match t with
+  | Union t_list ->
+    let t_list = List.map t_list ~f:(narrow_boundmethod ~join) in
+    let boundmethods, other = List.partition_tf t_list ~f:(function 
+      | Parametric { name = "BoundMethod"; parameters = [Single (Callable _); _] } -> true
+      | _ -> false
+    ) in
+    if List.length boundmethods > 3
+    then (
+      let callables =
+        List.map boundmethods ~f:(fun bound -> 
+          match bound with
+          | Parametric { name = "BoundMethod"; parameters = [Single c; _] } -> c
+          | _ -> failwith "Why is not BoundMEthod?"
+        )
+      in
+      let abstract_callables = narrow_callable ~join (Union callables) in
+      let abstract_boundmethods = 
+        (match abstract_callables with
+        | Union t_list ->
+          (List.map t_list ~f:(fun t -> Parametric { name = "BoundMethod"; parameters = [Single t; Single Top]}))
+        | _ -> failwith "Why is not Union??"
+        )
+      in
+      
+      Union (abstract_boundmethods@other)
+    )
+    
+    else Union t_list 
+  | _ -> t 
+  
+let narrow_union ~join ~less_or_equal t =
+  let _ = join in
+  match t with
+  | Union t_list ->
+    let t_list = List.map t_list ~f:(fun t -> if is_bottom t then Unknown else t) in
+    let dedup =
+      List.dedup_and_sort ~compare:(fun l r ->
+        if (equal l r) then 0
+        else compare l r  
+      )
+    in
+  
+    let rec loose_union acc t =
+      match t with
+      | Union t_list ->
+        List.fold t_list ~init:acc ~f:loose_union
+      | _ -> t::acc
+    in
+  
+    let loose_t_list =
+        dedup (List.fold t_list ~init:[] ~f:loose_union)
+    in
+
+    let unknown =
+      List.find loose_t_list ~f:(fun t -> equal Unknown t)
+    in
+
+    let loose_t_list_except_unknown =
+      List.filter loose_t_list ~f:(fun t -> not (equal Unknown t))
+    in
+
+    let check_join left right =
+      less_or_equal ~left ~right || less_or_equal ~left:right ~right:left
+    in
+
+    let rec narrow t_list =
+      match t_list with
+      | hd::tl ->
+        let join_cand, others = List.partition_tf tl ~f:(fun t -> check_join hd t) in
+        if List.length join_cand > 0 then (
+          let join_result, temp = List.fold join_cand ~init:(hd, []) ~f:(fun (acc, temp) t -> 
+            if check_join t acc then (join t acc, temp)
+            else (acc, t::temp)
+          ) in
+          narrow (join_result::(others@temp))
+        ) else (
+          hd::(narrow tl)
+        )
+      | _ -> []
+    in
+
+    let narrow_list = 
+      dedup (narrow loose_t_list_except_unknown) 
+    in
+    let narrow_result = 
+      (match unknown with
+      | Some u -> u::narrow_list
+      | _ -> narrow_list
+      )
+    in
+    (*
+    if (List.length loose_t_list) > (List.length narrow_result)
+      then Log.dump "[[ Before : %i ]]\n%a\n[[ After : %i ]]\n%a\n" (List.length loose_t_list) pp (Union loose_t_list) (List.length narrow_result) pp (Union narrow_result);
+    *)
+    if List.length narrow_result = 1
+    then List.nth_exn narrow_result 0 
+    else if false
+    then (
+      Top
+    )
+    else
+      (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join
+  | _ -> t
+

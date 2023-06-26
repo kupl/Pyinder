@@ -254,9 +254,9 @@ let attribute_from_class_name
         with
         | Some _ ->
             AnnotatedAttribute.create
-              ~annotation:Type.Top
-              ~original_annotation:Type.Top
-              ~uninstantiated_annotation:(Some Type.Top)
+              ~annotation:Type.Unknown
+              ~original_annotation:Type.Unknown
+              ~uninstantiated_annotation:(Some Type.Unknown)
               ~abstract:false
               ~async_property:false
               ~class_variable:false
@@ -417,8 +417,53 @@ let resolve_define ~resolution:({ dependency; _ } as resolution) =
   AttributeResolution.ReadOnly.resolve_define ?dependency (attribute_resolution resolution)
 
 
-let signature_select ~global_resolution:({ dependency; _ } as resolution) =
-  AttributeResolution.ReadOnly.signature_select ?dependency (attribute_resolution resolution)
+let signature_select ~global_resolution:({ dependency; _ } as resolution) ~resolve_with_locals ~arguments ~callable ~self_argument =
+  AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution)
+  |> (function
+    | SignatureSelectionTypes.Found { selected_return_annotation } ->
+      (match selected_return_annotation with
+      | Type.Callable t -> (* TODO : Modify Resolution of callable *)
+      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      let type_join = join resolution in
+      let final_model = !OurDomain.our_model in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
+      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
+      | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
+      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      let type_join = join resolution in
+      let final_model = !OurDomain.our_model in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
+      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
+      | _ -> SignatureSelectionTypes.Found { selected_return_annotation }
+      )
+    | t -> t
+  )
+
+let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~resolve_with_locals ~arguments ~callable ~self_argument =
+  AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
+  |> (function
+    | SignatureSelectionTypes.Found { selected_return_annotation } ->
+      (match selected_return_annotation with
+      | Type.Callable t -> (* TODO : Modify Resolution of callable *)
+      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      let type_join = join resolution in
+      let final_model = !OurDomain.our_model in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
+      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
+      | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
+      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      let type_join = join resolution in
+      let final_model = !OurDomain.our_model in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
+      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
+      | _ -> SignatureSelectionTypes.Found { selected_return_annotation }
+      )
+    | t -> t
+  )
 
 
 let legacy_resolve_exports ({ dependency; _ } as resolution) ~reference =

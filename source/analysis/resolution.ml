@@ -413,7 +413,7 @@ let fallback_attribute
             } ->
             let return_annotation =
               match
-                GlobalResolution.signature_select
+                GlobalResolution.our_signature_select
                   ~global_resolution
                   ~resolve_with_locals:(resolve_expression_to_type_with_locals resolution)
                   ~arguments:
@@ -447,8 +447,8 @@ let fallback_attribute
   | Some backup when AnnotatedAttribute.defined backup -> Some backup
   | _ -> getattr_backup ()
 
-let top_to_bottom ({ annotation_store; _ } as t) =
-  { t with annotation_store = Refinement.Store.top_to_bottom annotation_store }
+let top_to_unknown ({ annotation_store; _ } as t) =
+  { t with annotation_store = Refinement.Store.top_to_unknown annotation_store }
 
 let add_unknown ({ annotation_store; _ } as t) =
   { t with annotation_store = Refinement.Store.add_unknown annotation_store }

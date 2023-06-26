@@ -135,7 +135,7 @@ val fallback_attribute
   Type.Primitive.t ->
   AnnotatedAttribute.instantiated option
 
-val top_to_bottom : t -> t
+val top_to_unknown : t -> t
 
 val add_unknown : t -> t
 

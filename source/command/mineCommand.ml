@@ -165,7 +165,15 @@
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
               if (k >= 20) || (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
-              then Analysis.ErrorsEnvironment.get_errors ~scheduler environment
+              then (
+                Log.dump "Done";
+                let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in
+                let environment =
+                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_errors configuration
+                  |> Analysis.ErrorsEnvironment.set_environment environment
+                in
+                Analysis.ErrorsEnvironment.get_errors ~scheduler environment
+              )
               else (
                 let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
                 let n =
@@ -240,6 +248,9 @@
    Analysis.OurDomain.load_specific_file ();
    Unix.sleep(10);
    *)
+
+   
+   
    
    let errors, ast_environment, _ = do_check configuration in
     

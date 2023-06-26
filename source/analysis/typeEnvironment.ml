@@ -46,7 +46,7 @@ let produce_check_results global_environment define_name ~dependency =
     type_check_controls, call_graph_builder, dependency
   in
 
-  
+  (* Log.dump "Start %a" Reference.pp define_name; *)
 
   let x = TypeCheck.check_define_by_name
     ~type_check_controls
@@ -55,6 +55,8 @@ let produce_check_results global_environment define_name ~dependency =
     ~dependency
     define_name
   in
+
+  (* Log.dump "End %a" Reference.pp define_name; *)
   (*
   let mode = OurDomain.load_mode () in
   let x = 
@@ -242,13 +244,48 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
           let our_model = OurDomain.OurSummary.join ~type_join our_model cur_summary in
-          let our_errors = OurErrorDomain.OurErrorList.set ~key:define ~data:errors our_errors in
-          
-          let total_time = Timer.stop_in_sec timer in
-          if Float.(>.) total_time 0.2 then (
-            Log.dump "%a" OurDomain.OurSummary.pp cur_summary;
+          let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
+
+           (* if String.is_substring (Reference.show define) ~substring:"salt.grains.core.os_data"
+            then (
+              Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+            ); *)
+            
+          (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi.MultiIndex.format"
+            then (
+              Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+              List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
+            ); *)
+
+            (* if String.is_substring (Reference.show define) ~substring:"io.stata._cast_to_stata_types"
+              then (
+                Log.dump "%a >>> %a" Reference.pp define OurDomain.OurSummary.pp cur_summary;
+                List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
+              ); *)
+
+            (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi._sparsify"
+              then (
+                Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+                List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
+              );
+ *)
+          (* if String.equal (Reference.show define) "pandas.util._decorators.make_signature"
+          then (
+            Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+            List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
+          );
+
+          if String.equal (Reference.show define) "pandas.compat.signature"
+            then (
+              Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+              List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
+          ); *)
+
+          (* let total_time = Timer.stop_in_sec timer in
+          if Float.(>.) total_time 0.5 then (
+            (* Log.dump "%a" OurDomain.OurSummary.pp cur_summary; *)
             Log.dump "O %.5f" total_time;
-          );  
+          );   *)
           
           our_model, our_errors
         | _ -> our_model, our_errors

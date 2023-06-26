@@ -47,6 +47,6 @@ module OurSummaryResolution : sig
 (*
   val search_suspicious_variable : t -> store_combine:(Store.t -> Unit.t Reference.Map.t) -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 *)
-  val find_class_of_attributes : t -> Reference.t -> AttributeStorage.t -> Reference.t LocInsensitiveExpMap.t 
+  val find_class_of_attributes : successors:(string -> string list) -> t -> Reference.t -> AttributeStorage.t -> Reference.t LocInsensitiveExpMap.t 
 end
 

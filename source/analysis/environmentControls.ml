@@ -9,9 +9,11 @@ type t = {
   configuration: Configuration.Analysis.t;
   populate_call_graph: bool;
   our_summary: OurDomain.OurSummary.t;
+  our_errors: OurErrorDomainReadOnly.OurErrorListReadOnly.t;
 }
 
-let create ?(populate_call_graph = false) ?(our_summary = OurDomain.OurSummary.empty) configuration = { configuration; populate_call_graph; our_summary}
+let create ?(populate_call_graph = false) ?(our_summary = OurDomain.OurSummary.empty) ?(our_errors = OurErrorDomainReadOnly.OurErrorListReadOnly.empty) configuration = 
+  { configuration; populate_call_graph; our_summary; our_errors; }
 
 let create_for_overlay parent = { parent with populate_call_graph = false }
 
@@ -20,6 +22,8 @@ let configuration { configuration; _ } = configuration
 let populate_call_graph { populate_call_graph; _ } = populate_call_graph
 
 let our_summary { our_summary; _} = our_summary
+
+let our_errors { our_errors; _ } = our_errors
 
 let set_our_summary t our_summary = { t with our_summary; }
 

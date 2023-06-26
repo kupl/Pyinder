@@ -1284,6 +1284,160 @@ let replace_version_specific_code ~major_version ~minor_version ~micro_version s
 
     let statement _ ({ Node.location; value } as statement) =
       match value with
+      | Statement.Assign { target; value=expression_value; annotation } -> 
+        let is_system_version_expression = function
+          | {
+              Node.value =
+                Expression.Name
+                  (Name.Attribute
+                    {
+                      base = { Node.value = Expression.Name (Name.Identifier "sys"); _ };
+                      attribute = "version_info";
+                      _;
+                    });
+              _;
+            } ->
+              true
+          | _ -> false
+        in
+        let is_system_version_attribute_access_expression ~attribute = function
+          | {
+              Node.value =
+                Expression.Name
+                  (Name.Attribute
+                    {
+                      base =
+                        {
+                          Node.value =
+                            Expression.Name
+                              (Name.Attribute
+                                {
+                                  base =
+                                    { Node.value = Expression.Name (Name.Identifier "sys"); _ };
+                                  attribute = "version_info";
+                                  _;
+                                });
+                          _;
+                        };
+                      attribute = version_attribute;
+                      _;
+                    });
+              _;
+            }
+            when String.equal attribute version_attribute ->
+              true
+          | _ -> false
+        in
+        let is_system_version_tuple_access_expression ?index = function
+          | {
+              Node.value =
+                Expression.Call
+                  {
+                    Call.callee =
+                      {
+                        Node.value =
+                          Expression.Name
+                            (Name.Attribute
+                              {
+                                base =
+                                  {
+                                    Node.value =
+                                      Expression.Name
+                                        (Name.Attribute
+                                          {
+                                            base =
+                                              {
+                                                Node.value =
+                                                  Expression.Name (Name.Identifier "sys");
+                                                _;
+                                              };
+                                            attribute = "version_info";
+                                            _;
+                                          });
+                                    _;
+                                  };
+                                attribute = "__getitem__";
+                                special = true;
+                              });
+                        _;
+                      };
+                    arguments = [argument];
+                  };
+              _;
+            } -> (
+              match index, argument with
+              | None, _ -> true
+              | ( Some expected_index,
+                  {
+                    Call.Argument.value =
+                      { Node.value = Expression.Constant (Constant.Integer actual_index); _ };
+                    _;
+                  } )
+                when Int.equal expected_index actual_index ->
+                  true
+              | _ -> false)
+          | _ -> false
+        in
+
+        let make_integer ~location version =
+          Node.create ~location (Expression.Constant (Integer version))
+        in
+
+        let make_tuple ~location versions =
+          let start_location = Location.start location in
+          Node.create ~location (Expression.Tuple (List.mapi versions ~f:(fun i v -> 
+            let start_column = start_location.column + (i*3)+1 in
+            let stop_column = start_location.column + ((i+1)*3) in
+            let new_start_location = { start_location with column=start_column } in
+            let new_stop_location = { start_location with column=stop_column } in
+            let location = { Location.start=new_start_location; stop=new_stop_location } in
+
+            make_integer ~location v))
+          )
+        in
+
+        let rec new_expression_value ({Node.value; location;} as expression_value) =
+          (match value with
+          | _ when is_system_version_expression expression_value ->
+            let x = make_tuple ~location [major_version; minor_version; micro_version] in
+            x
+
+          | _ when is_system_version_attribute_access_expression ~attribute:"major" expression_value ->
+            make_integer ~location major_version
+
+          | _ when is_system_version_attribute_access_expression ~attribute:"minor" expression_value ->
+            make_integer ~location minor_version
+
+          | _ when is_system_version_attribute_access_expression ~attribute:"micro" expression_value ->
+            make_integer ~location micro_version
+
+          | _ when is_system_version_tuple_access_expression ~index:0 expression_value ->
+            make_integer ~location major_version
+
+          | _ when is_system_version_tuple_access_expression ~index:1 expression_value ->
+            make_integer ~location minor_version
+
+          | _ when is_system_version_tuple_access_expression ~index:2 expression_value ->
+            make_integer ~location micro_version
+
+          | Expression.ComparisonOperator ({ left; right; _ } as compare) ->
+            let left = new_expression_value left in
+            let right = new_expression_value right in
+            let value = Expression.ComparisonOperator { compare with left; right; } in
+            let x = { expression_value with value; } in
+            x
+
+          | _ -> expression_value
+          )
+        in
+
+        let value = new_expression_value expression_value in
+
+        let new_assign = Statement.Assign { target; value; annotation } in
+
+        (), [{ statement with value=new_assign}]
+
+
       | Statement.If { If.test; body; orelse } -> (
           let extract_comparison { Node.value; _ } =
             match value with
@@ -2710,6 +2864,11 @@ let expand_named_tuples ({ Source.statements; _ } as source) =
               }
       | Define ({ Define.body; _ } as define) ->
           Define { define with Define.body = List.map ~f:expand_named_tuples body }
+      | If ({ If.body; orelse; _ } as if_statement) ->
+        let body = List.map ~f:expand_named_tuples body in
+        let orelse = List.map ~f:expand_named_tuples orelse in
+        If { if_statement with If.body; orelse; }
+
       | _ -> value
     in
     { statement with Node.value }

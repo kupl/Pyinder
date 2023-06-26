@@ -1055,12 +1055,15 @@ module SignatureSelection = struct
             { parameter_argument_mapping_with_reasons with parameter_argument_mapping }
       | ({ kind = Named name; _ } as argument) :: arguments_tail, parameters ->
           (* Labeled argument *)
+          (* TODO: match abstract callable *)
           let rec extract_matching_name searched to_search =
             match to_search with
             | [] -> None, List.rev searched
             | (Parameter.KeywordOnly { name = parameter_name; _ } as head) :: tail
             | (Parameter.Named { name = parameter_name; _ } as head) :: tail
-              when Identifier.equal_sanitized parameter_name name.value ->
+              when Identifier.equal_sanitized parameter_name name.value 
+                || Identifier.equal parameter_name "__any__"
+              ->
                 Some head, List.rev searched @ tail
             | (Parameter.Keywords _ as head) :: tail ->
                 let matching, parameters = extract_matching_name (head :: searched) tail in
@@ -4323,9 +4326,13 @@ class base class_metadata_environment dependency =
                  ~self_argument
                  arguments)
         in
-        signatures
-        |> List.concat_map ~f:check_arguments_against_signature
-        |> SignatureSelection.find_closest_signature
+
+        let x =
+          signatures
+          |> List.concat_map ~f:check_arguments_against_signature
+          |> SignatureSelection.find_closest_signature
+        in
+        x
         >>| SignatureSelection.instantiate_return_annotation ~skip_marking_escapees ~order
         |> Option.value ~default:(SignatureSelection.default_signature callable)
       in

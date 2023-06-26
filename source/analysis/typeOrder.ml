@@ -129,10 +129,12 @@ module OrderImplementation = struct
         right
       =
 
+
       let left, right =
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) right
       in
+
       let union = Type.union_join left right in
 
       if Type.equal left right then
@@ -206,7 +208,9 @@ module OrderImplementation = struct
               Type.union [left; right]
         (* n: A_n = B_n -> Union[A_i] <= Union[B_i]. *)
         
-        | Type.Union left, Type.Union right -> Type.Union (left@right)
+        | Type.Union left, Type.Union right -> 
+          Type.Union (left@right)
+          |> Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order)
         
         
         (*
@@ -219,7 +223,7 @@ module OrderImplementation = struct
         | (Type.Union elements as union), other
         | other, (Type.Union elements as union) ->
           
-          (* if List.length elements > 20 then (
+          (* if List.length elements > 15 then (
             Log.dump "<<< Join Heavy Type : %i >>>" (List.length elements);
             
             let _ = List.fold elements ~init:Type.Bottom ~f:(fun acc t -> 
@@ -228,10 +232,11 @@ module OrderImplementation = struct
             ) in
             Log.dump "[[[ With ]]]\n%a\n" Type.pp other;
             
-          ); *)
+          );  *)
           
           
-            if always_less_or_equal order ~left:other ~right:union && not (Type.contains_any other) && not (Type.contains_unknown other)
+            if always_less_or_equal order ~left:other ~right:union 
+              && not (Type.contains_any other) && not (Type.can_unknown other) && not (Type.can_unknown union)
             then (
               union
             )
@@ -251,18 +256,19 @@ module OrderImplementation = struct
               let x = Type.union (List.fold ~f:flat_join ~init:[] (other :: elements)) in
               x
         | Type.OurTypedDictionary { general; typed_dict }, other ->
+
           let _ = general, typed_dict, other in
           let new_general = join order general other in
           if Type.is_dictionary_or_mapping new_general then
             OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
-          else 
+          else  
             new_general
         | other, Type.OurTypedDictionary { general; typed_dict } ->
           let _ = general, typed_dict, other in
           let new_general = join order other general in
           if Type.is_dictionary_or_mapping new_general then
             OurTypedDictionary { general=new_general; typed_dict=Type.OurTypedDictionary.add_bottom_in_fields typed_dict; }
-          else 
+          else  
             new_general
         | Type.IntExpression (Data polynomial), other when Type.Polynomial.is_base_case polynomial
           ->
@@ -308,14 +314,58 @@ module OrderImplementation = struct
               ]
             }
             *)
+        | Type.Parametric { name="BoundMethod";  parameters=[Single (Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }); Single any_other]},  
+          Type.Parametric { name="BoundMethod"; parameters=[Single (Callable { implementation=other_implementation; _ }); Single other]}
+            when Reference.equal name (Reference.create "__pyinder_any__") 
+              ->
+              let { Type.Callable.annotation; parameters; } = callable_implementation in
+              if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+              then (
+                let new_callable = 
+                  Type.Callable { 
+                    Callable.kind=Callable.Named name; 
+                    implementation=
+                      { annotation=join order annotation other_implementation.annotation; parameters;};
+                    overloads = []
+                    }
+                in
+                let new_other = join order other any_other in
+
+                Type.Parametric { name="BoundMethod"; parameters=[Single new_callable; Single new_other]}
+
+              ) else (
+                Type.union [left; right]
+              )
+        | Type.Parametric { name="BoundMethod"; parameters=[Single (Callable { implementation=other_implementation; _ }); Single other]},
+            Type.Parametric { name="BoundMethod";  parameters=[Single (Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }); Single any_other]}
+            when Reference.equal name (Reference.create "__pyinder_any__") 
+              ->
+              let { Type.Callable.annotation; parameters; } = callable_implementation in
+              if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+              then (
+                let new_callable = 
+                  Type.Callable { 
+                    Callable.kind=Callable.Named name; 
+                    implementation=
+                      { annotation=join order annotation other_implementation.annotation; parameters;};
+                    overloads = []
+                    }
+                in
+                let new_other = join order other any_other in
+
+                Type.Parametric { name="BoundMethod"; parameters=[Single new_callable; Single new_other]}
+
+              ) else (
+                Type.union [left; right]
+              )
         | ( Type.Parametric { name = left_primitive; _ },
             Type.Parametric { name = right_primitive; _ } )
         | Type.Parametric { name = left_primitive; _ }, Type.Primitive right_primitive
         | Type.Primitive left_primitive, Type.Parametric { name = right_primitive; _ } ->
-            if always_less_or_equal order ~left ~right && not (Type.contains_any left) then
+            if always_less_or_equal order ~left ~right && (not (Type.contains_any left)) then
               right
             else if
-              always_less_or_equal order ~left:right ~right:left && not (Type.contains_any right)
+              always_less_or_equal order ~left:right ~right:left && (not (Type.contains_any right))
             then
               left
             else
@@ -342,6 +392,7 @@ module OrderImplementation = struct
                 with
                 | ClassHierarchy.Untracked _ -> None
               in
+
               let handle_target target =
                 let left_parameters = instantiate_successors_parameters ~source:left ~target in
                 let right_parameters = instantiate_successors_parameters ~source:right ~target in
@@ -455,6 +506,39 @@ module OrderImplementation = struct
         | Type.Tuple _, _
         | _, Type.Tuple _ ->
             Type.union [left; right]
+        | ((Type.Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }),
+          Type.Callable { implementation=other_implementation; _ })
+          when Reference.equal name (Reference.create "__pyinder_any__") 
+          ->
+          let { Type.Callable.annotation; parameters; } = callable_implementation in
+          if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+          then (
+          Type.Callable { 
+            Callable.kind=Callable.Named name; 
+            implementation=
+              { annotation=join order annotation other_implementation.annotation; parameters;};
+            overloads = []
+            }
+          ) else (
+            Type.union [left; right]
+          )
+
+        | (Type.Callable { implementation=other_implementation; _ },
+          (Type.Callable { Callable.kind = Callable.Named name; implementation=callable_implementation; _ }))
+          when Reference.equal name (Reference.create "__pyinder_any__") 
+            ->
+            let { Type.Callable.annotation; parameters; } = callable_implementation in
+            if (Type.count_defined_without_default parameters) = (Type.count_defined_without_default other_implementation.parameters)
+            then (
+            Type.Callable { 
+              Callable.kind=Callable.Named name; 
+              implementation=
+                { annotation=join order annotation other_implementation.annotation; parameters;};
+              overloads = []
+              }
+            ) else (
+              Type.union [left; right]
+            )
         | ( (Type.Callable { Callable.kind = Callable.Named left_name; _ } as callable),
             Type.Callable { Callable.kind = Callable.Named right_name; _ } ) ->
             if Reference.equal left_name right_name then

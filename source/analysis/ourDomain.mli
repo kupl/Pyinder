@@ -189,6 +189,8 @@ module OurSummary : sig
 
   val get_usage_attributes_from_func : t -> Reference.t -> AttributeStorage.t
 
+  val get_callable : type_join:(Type.t -> Type.t -> Type.t) -> t -> Type.Callable.t -> Type.Callable.t
+
   val add_class_attribute : t -> Reference.t -> string -> t
 
   val add_class_property : t -> Reference.t -> string -> t

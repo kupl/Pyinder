@@ -2657,7 +2657,8 @@ end)
 
 let due_to_analysis_limitations { kind; _ } =
   let is_due_to_analysis_limitations annotation =
-    Type.contains_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation
+    (* Type.contains_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation *)
+    Type.can_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation || Type.is_unknown annotation
   in
   match kind with
   | IncompatibleAwaitableType actual
@@ -2689,9 +2690,9 @@ let due_to_analysis_limitations { kind; _ } =
   | UnsupportedOperand (Unary { operand; _ }) -> is_due_to_analysis_limitations operand
   | Top -> true
   | UndefinedAttribute { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
-      Type.contains_unknown annotation
+      Type.contains_top annotation
   | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
-      Type.contains_unknown annotation
+      Type.contains_top annotation
   | AnalysisFailure _
   | BroadcastError _
   | ParserFailure _
@@ -3863,8 +3864,10 @@ let filter ~resolution errors =
 
 let suppress ~mode ~ignore_codes error =
   let suppress_in_strict ({ kind; _ } as error) =
-    if due_to_analysis_limitations error then
+    if due_to_analysis_limitations error then (
+      (* Log.dump "WHY?? %a" pp error; *)
       true
+    )
     else
       match kind with
       | IncompleteType _ ->
@@ -4366,6 +4369,7 @@ let filter_type_error errors =
       | InvalidOverride _
       | InvalidType _
       | InconsistentOverride _
+      | IncompleteType _ 
         -> false
       | _ -> true
       )

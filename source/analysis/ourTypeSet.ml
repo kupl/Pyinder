@@ -189,9 +189,10 @@ module ClassTableResolution = struct
       )
       in
 
+
       if field_flag && method_flag
       then (key::candidate_classes)
-    else candidate_classes
+      else candidate_classes
     )
 end
 
@@ -203,14 +204,19 @@ module ArgTypesResolution = struct
     let iter_base annotation arg_types =
       Reference.Map.fold annotation ~init:arg_types ~f:(fun ~key ~data arg_types ->
         match data |> Unit.base with
-        | None -> arg_types
-        | Some annotation -> ArgTypes.add_arg_type ~join arg_types (key |> Reference.show) (Annotation.annotation annotation)
+        | Some annotation when Reference.is_parameter key -> 
+          let x = ArgTypes.add_arg_type ~join arg_types (key |> Reference.show) (Annotation.annotation annotation) in
+          x
+        | _ -> arg_types
       )
     in
 
+    let x =
     ArgTypes.empty
     |> iter_base annotation_store.annotations
     |> iter_base annotation_store.temporary_annotations
+    in
+    x
 
 
   let export_to_resolution t resolution = 
@@ -269,11 +275,57 @@ module FunctionSummaryResolution = struct
 
     FunctionSummary.{ t with return_var_type; }
 
-  let find_class_of_attributes ~class_table { usage_attributes; _ } parent_usage_attributes =
+  let find_class_of_attributes ~successors ~class_table { usage_attributes; _ } parent_usage_attributes =
 
     (* have to make proper filter *)
     let extract_class classes =
-      List.nth classes 0
+      let classes = List.map classes ~f:Reference.show in
+      let filtered_classes =
+        let get_childish classes =
+          let result =
+            List.find classes ~f:(fun cls ->
+              let class_successors = cls::(successors cls) in
+              List.for_all classes ~f:(fun origin -> 
+                List.exists class_successors ~f:(String.equal origin)
+              )
+            )
+          in
+          
+          match result with
+          | Some child -> Some [child]
+          | _ -> None
+        in
+
+        match get_childish classes with
+        | Some c -> c (* Get Childish Class *)
+        | _ -> (* Get Parents *)
+          let parents = 
+            List.fold classes ~init:classes ~f:(fun parents cls ->
+              let class_successors = cls::(successors cls) in
+
+              List.filter parents ~f:(fun parent ->
+                List.exists class_successors ~f:(String.equal parent)  
+              )
+
+              (* List.fold class_successors ~init:false ~f:(fun acc suc ->
+                acc || (List.exists classes ~f:(String.equal suc))  
+              ) |> not *)
+            )
+          in
+          parents
+          |> get_childish
+          |> Option.value ~default:parents
+      in
+
+      if List.length filtered_classes > 1 then (
+        None
+      )
+      else if List.length filtered_classes = 1 then (
+        List.nth_exn filtered_classes 0 |> Reference.create |> Option.some
+      )
+      else (
+       None
+      )
     in
     let usage_attributes =
       parent_usage_attributes
@@ -302,9 +354,9 @@ module FunctionTableResolution = struct
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary store)
 
-  let find_class_of_attributes ~class_table (t: t) func_name parent_usage_attributes =
+  let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionSummaryResolution.find_class_of_attributes ~class_table func_summary parent_usage_attributes
+    FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table func_summary parent_usage_attributes
 
 end
 
@@ -375,7 +427,7 @@ module OurSummaryResolution = struct
     candidates
   *)
 
-  let find_class_of_attributes { class_table; function_table; } func_name parent_usage_attributes  =
-    FunctionTableResolution.find_class_of_attributes ~class_table function_table func_name parent_usage_attributes
+  let find_class_of_attributes ~successors { class_table; function_table; } func_name parent_usage_attributes  =
+    FunctionTableResolution.find_class_of_attributes ~successors ~class_table function_table func_name parent_usage_attributes
 end
 

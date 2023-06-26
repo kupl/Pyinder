@@ -718,6 +718,8 @@ val is_iterator : t -> bool
 
 val is_list : t -> bool
 
+val is_set : t -> bool
+
 val is_meta : t -> bool
 
 val is_none : t -> bool
@@ -804,6 +806,8 @@ val instantiate
 
 val add_unknown : t -> t
 
+val top_to_unknown : t -> t
+
 val any_to_unknown : t -> t
 
 val narrow_iterable : t -> t
@@ -827,6 +831,8 @@ module OrderedTypes : sig
 
   (* Concatenation is only defined for certain members *)
   val concatenate : left:t -> right:t -> t option
+
+  val our_concatenate : narrow:(type_t list -> type_t list) -> left:t -> right:t -> t option
 
   val to_parameters : t -> Parameter.t list
 
@@ -1102,6 +1108,8 @@ val filter_unknown : t -> t
 
 val union_join : t -> t -> t
 
+val count_defined_without_default : t Record.Callable.record_parameters -> int
+
 val narrow_union : join:(t -> t -> t) -> less_or_equal:(left:t -> right:t-> bool) -> t -> t
 
 module OurTypedDictionary : sig
@@ -1114,7 +1122,7 @@ module OurTypedDictionary : sig
     string ->
     t typed_dictionary_field
 
-  val get_field_annotation : type_t typed_dictionary_field list -> string -> type_t
+  val get_field_annotation : type_t typed_dictionary_field list -> string -> type_t option
 
   val add_bottom_in_fields : type_t typed_dictionary_field list -> type_t typed_dictionary_field list
   
@@ -1202,3 +1210,13 @@ val callable_name : t -> Reference.t option
 val top_to_bottom : t -> t
 
 val get_dict_value_type : ?with_key:string option -> type_t -> type_t
+
+val can_union : f:(t -> bool) -> t -> bool
+
+val can_unknown : t -> bool
+
+val can_top : t -> bool
+
+val union_update : f:(t -> t) -> t -> t
+
+val union_fold_with_filter : f:(t -> t option) -> t -> t option

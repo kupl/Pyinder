@@ -95,7 +95,7 @@ module ArgTypes = struct
     let modified_typ = weaken_typ typ in
     let exn_typ = IdentifierMap.find t ident |> Option.value ~default:modified_typ in
     match exn_typ with
-    | Bottom | Any | Top | Unknown -> t
+    | Bottom | Any | Top -> t
     | _ ->
       IdentifierMap.set ~key:ident ~data:(join modified_typ exn_typ) t
 
@@ -419,14 +419,73 @@ module FunctionSummary = struct
         Format.fprintf format "%a, " data_pp data
       ) t
 
-  let pp format {arg_types; return_var_type; return_type; usage_attributes; callers; _} =
+  let pp format {arg_types; arg_annotation; return_var_type; return_type; usage_attributes; callers; _} =
     Format.fprintf format 
-      "<Arg Types>\n%a\n\n<Return Var Type>\n%a\n\n<Return Type> %a\n\n<Usage Attributes>\n%a\n<Callers>\n%a\n" 
+      "<Arg Types>\n%a\n\n<Arg Anno>\n%a\n\n<Return Var Type>\n%a\n\n<Return Type> %a\n\n<Usage Attributes>\n%a\n<Callers>\n%a\n" 
      ArgTypes.pp arg_types 
+     ArgTypes.pp arg_annotation
      (ReferenceMap.pp ~data_pp:Type.pp) return_var_type 
      Type.pp return_type 
      AttributeStorage.pp usage_attributes
      (pp_reference_set ~data_pp:Reference.pp) callers
+
+  let get_implementation ~type_join { arg_types; return_type; _ } callable =
+    (* let arg_callable = 
+      Type.Callable.map_parameters callable ~f:(fun parameter ->
+        match parameter with
+        | Defined parameters ->
+          let new_parameters =
+            List.map parameters ~f:(fun parameter ->
+              match parameter with
+              | Named named ->
+                (match ArgTypes.get_type arg_types named.name with
+                | Type.Unknown -> 
+                  (match named.annotation with
+                  | Type.Top | Any -> Type.Callable.RecordParameter.Named { named with annotation=Type.Unknown }
+                  | _ -> parameter
+                  )
+                | t -> 
+                  (match named.annotation with
+                  | Type.Top | Any -> Named { named with annotation=t }
+                  | anno -> Named { named with annotation=type_join t anno }
+                  )
+                  
+                )
+              | KeywordOnly named ->
+                (match ArgTypes.get_type arg_types named.name with
+                | Type.Unknown ->
+                  (match named.annotation with
+                  | Type.Top | Any -> KeywordOnly { named with annotation=Unknown }
+                  | _ -> parameter
+                  )
+                | t ->
+                  (match named.annotation with
+                  | Type.Top | Any -> KeywordOnly { named with annotation=t }
+                  | anno -> KeywordOnly { named with annotation=type_join t anno }
+                  )
+                )
+              | _ -> parameter  
+            )
+          in
+          Defined new_parameters
+        | _ -> parameter
+      )
+    in *)
+    let _ = arg_types, type_join in
+    let arg_callable = Type.Callable.map_parameters callable ~f:(fun x -> x) in 
+
+    let ret_callable =
+      match return_type with
+      | Type.Unknown -> 
+        (match arg_callable.implementation.annotation with
+        | Type.Top | Any -> Type.Callable.with_return_annotation arg_callable ~annotation:Type.Unknown
+        | _ -> arg_callable
+        )
+      | _ ->
+        Type.Callable.with_return_annotation arg_callable ~annotation:return_type
+    in
+
+    { callable with implementation=ret_callable.implementation }
 
   let get_analysis_set prev next =
     let should_analysis = 
@@ -530,6 +589,14 @@ module FunctionTable = struct
     FunctionMap.iteri ~f:(fun ~key ~data ->
       Format.fprintf format "[[[ Function Info ]]] \n%a \n%a \n" Reference.pp key FunctionSummary.pp data
     ) table
+
+  let get_callable ~type_join t (callable: Type.Callable.t) =
+    match callable.kind with
+    | Named name ->
+      let func_summary = FunctionMap.find t name |> Option.value ~default:FunctionSummary.empty in
+      let callable = FunctionSummary.get_implementation ~type_join func_summary callable in
+      callable
+    | _ -> callable
 
   let get_functions t prefix =
     List.filter (FunctionMap.keys t) ~f:(fun key ->
@@ -658,6 +725,9 @@ module OurSummary = struct
 
   let get_usage_attributes_from_func { function_table; _ } func_name =
     FunctionTable.get_usage_attributes function_table func_name
+
+  let get_callable ~type_join { function_table; _ } callable =
+    FunctionTable.get_callable ~type_join function_table callable
 
   let add_class_attribute ({class_table; _} as t) parent attr =
     { t with class_table = ClassTable.add_attribute class_table parent attr }

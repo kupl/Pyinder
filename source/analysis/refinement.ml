@@ -379,16 +379,16 @@ module Unit = struct
       in
       candidates
 
-  let rec top_to_bottom { base; attributes; } =
+  let rec top_to_unknown { base; attributes; } =
     let new_base =
       match base with
-      | Some anno -> Some (transform_types ~f:Type.top_to_bottom anno)
+      | Some anno -> Some (transform_types ~f:Type.top_to_unknown anno)
       | _ -> base
     in
 
     {
       base = new_base;
-      attributes = Identifier.Map.Tree.map attributes ~f:top_to_bottom
+      attributes = Identifier.Map.Tree.map attributes ~f:top_to_unknown
     }
 
   let rec add_unknown { base; attributes; } =
@@ -678,7 +678,7 @@ module Store = struct
     temporary_annotations = temporary_annotations;
   }
 
-  let update_from_top_to_bottom { annotations; temporary_annotations; } =
+  let update_from_top_to_unknown { annotations; temporary_annotations; } =
     let rec f data:Unit.t =
         let base = Unit.base data in
         let attributes = Unit.attributes data in
@@ -746,10 +746,10 @@ module Store = struct
     result_of_anno@result_of_temp
 
 
-  let top_to_bottom { annotations; temporary_annotations; } =
+  let top_to_unknown { annotations; temporary_annotations; } =
     {
-      annotations = Reference.Map.map annotations ~f:Unit.top_to_bottom;
-      temporary_annotations = Reference.Map.map temporary_annotations ~f:Unit.top_to_bottom;
+      annotations = Reference.Map.map annotations ~f:Unit.top_to_unknown;
+      temporary_annotations = Reference.Map.map temporary_annotations ~f:Unit.top_to_unknown;
     }
 
   let add_unknown { annotations; temporary_annotations; } =
