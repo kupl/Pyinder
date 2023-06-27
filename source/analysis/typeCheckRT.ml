@@ -1463,8 +1463,12 @@ module TypeCheckRT (Context : OurContext) = struct
       
       dump_arguments arguments;
       *)
-      (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in
- *)
+      let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+
+      if String.is_substring (Reference.show define_name) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
+        then (
+          Log.dump "START Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
+        );
 
       (* if String.is_substring (Reference.show define_name) ~substring:"airflow.bin.cli.CLIFactory.$class_toplevel"
         then (
@@ -1657,7 +1661,15 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let rec resolved_dict_getitem callee_resolved =
         match callee_resolved with
-        | Type.Union t_list -> List.fold t_list ~init:Type.Bottom ~f:(fun acc t -> GlobalResolution.join global_resolution acc (resolved_dict_getitem t))
+        | Type.Union t_list ->(*  List.fold t_list ~init:Type.Bottom ~f:(fun acc t -> GlobalResolution.join global_resolution acc (resolved_dict_getitem t)) *)
+          let new_t_list = 
+            List.map t_list ~f:(fun t -> resolved_dict_getitem t)
+            |> List.filter ~f:Option.is_some 
+            |> List.map ~f:(fun t -> Option.value_exn t ~message:"Why is in None?")
+          in
+          if List.length new_t_list = 0 then None
+          else
+            Some (List.fold t_list ~init:Type.Bottom ~f:(fun acc t -> GlobalResolution.join global_resolution acc t))
         | Type.Parametric (* dict.__getitem__ 처리 *)
           { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); Single origin] } 
           when String.equal (Reference.show name) "dict.__getitem__"
@@ -1682,7 +1694,7 @@ module TypeCheckRT (Context : OurContext) = struct
               let value_arg = List.nth_exn arguments 0 in
 
               if Type.can_union ~f:(fun t -> Type.equal t (Primitive "slice")) value_arg.resolved 
-              then callee_resolved
+              then None (* callee_resolved *)
               else (
                 let result = 
                   if Type.contains_literal value_arg.resolved
@@ -1690,7 +1702,7 @@ module TypeCheckRT (Context : OurContext) = struct
                   else Type.get_dict_value_type annotation_type 
                 in
 
-                result
+                Some result
               )
               )
             
@@ -1699,7 +1711,7 @@ module TypeCheckRT (Context : OurContext) = struct
             )
             
 
-        | _ -> callee_resolved
+        | _ -> None
       in
 
       let rec update_dict_setitem resolution callee_resolved =
@@ -1927,7 +1939,11 @@ module TypeCheckRT (Context : OurContext) = struct
             | Name (Name.Attribute { attribute = "__str__"; _}) -> Type.string
             | Name (Name.Attribute { attribute = "__bytes__"; _}) -> Type.bytes
             | Name (Name.Attribute { attribute = "__int__"; _}) -> Type.integer
-            | Name (Name.Attribute { attribute = "__bool__"; _}) -> Type.bool
+            | Name (Name.Attribute { attribute = "__bool__"; _}) 
+            | Name (Name.Attribute { attribute = "__eq__"; _}) 
+            | Name (Name.Attribute { attribute = "__ge__"; _}) 
+            | Name (Name.Attribute { attribute = "__le__"; _}) 
+            -> Type.bool
             | Name (Name.Attribute { attribute = "__float__"; _}) -> Type.float
             | Name (Name.Attribute { attribute = "__list__"; _}) -> 
               Type.list (Type.union resolved_arguments)
@@ -2207,8 +2223,6 @@ module TypeCheckRT (Context : OurContext) = struct
           get_errors resolved_callee (potential_missing_operator_error undefined_attributes)
         in
 
-        
-
         {
           Resolved.resolution;
           errors;
@@ -2217,11 +2231,14 @@ module TypeCheckRT (Context : OurContext) = struct
           base = None;
         }
       in
+      
+        
       let join_return_annotations
           ~resolution
           ~errors
           (found_return_annotations, not_found_return_annotations)
         =
+
         match found_return_annotations, not_found_return_annotations with
         | head :: tail, [] ->
             Some
@@ -2266,7 +2283,6 @@ module TypeCheckRT (Context : OurContext) = struct
               in
               List.fold error_kinds ~init:errors ~f:emit
             in
-
             Some
               {
                 resolution;
@@ -2275,7 +2291,8 @@ module TypeCheckRT (Context : OurContext) = struct
                 resolved_annotation = None;
                 base = None;
               }
-        | _ -> None
+        | _ -> 
+          None
       in
       let check_for_error ({ Resolved.resolved; errors; _ } as input) =
 
@@ -2823,7 +2840,20 @@ module TypeCheckRT (Context : OurContext) = struct
             { resolved with resolved = resolved_zip callee_resolved |> update_resolved_type }
         | _ -> 
           let new_t = resolved_dict_getitem callee_resolved in
-          if Type.equal callee_resolved new_t 
+          match new_t with
+          | Some new_t ->
+            { resolved with resolved = new_t |> update_resolved_type }
+          | None -> 
+            (match resolved.resolved, callee_reference with
+            | Type.Unknown, Some callee_reference when String.is_suffix ~suffix:"$zip" (Reference.show callee_reference) ->
+              let heuristic_callee = 
+                Type.Parametric { name = "type"; parameters=[Single (Primitive "zip")]; }
+              in
+              { resolved with resolved = resolved_zip heuristic_callee |> update_resolved_type }
+            | _ -> resolved
+            )
+            
+          (* if Type.equal callee_resolved new_t 
           then (
             match resolved.resolved, callee_reference with
             | Type.Unknown, Some callee_reference when String.is_suffix ~suffix:"$zip" (Reference.show callee_reference) ->
@@ -2834,10 +2864,9 @@ module TypeCheckRT (Context : OurContext) = struct
             | _ -> resolved
           )
           else (
-            { resolved with resolved = new_t |> update_resolved_type }
-          ) 
+            { resolved with resolved = new_t |> update_resolved_type } 
+          )*)
       in
-
 
       let x = resolved_builtin_functions resolved callee in
 
