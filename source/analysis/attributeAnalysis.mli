@@ -28,6 +28,8 @@ module CallInfo : sig
   val of_parameters : Parameter.t list -> t
 
   val is_corresponding : signature:t -> t -> bool
+
+  val is_more_corresponding : signature:t -> t -> bool
 end
 
 module CallSet : Set.S with type Elt.t = CallInfo.t
@@ -44,6 +46,7 @@ module AttributeStorage :
 
     val empty : t
     val map : t -> f:(data_set -> 'a) -> 'a LocInsensitiveExpMap.t
+    val mapi : t -> f:(key:SkipMap.Key.t -> data:data_set -> 'a) -> 'a LocInsensitiveExpMap.t
     val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit
     val pp :

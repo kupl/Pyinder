@@ -172,28 +172,55 @@ module ClassTableResolution = struct
   let find_classes_from_attributes t { AttributeStorage.attribute_set; call_set; } =
     let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
 
-    ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
-      let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
-      let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
-      let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
-        flag &&  
-        (match data with
-        | `Both (left, right) ->
-          CallSet.fold left ~init:true ~f:(fun flag call_info -> 
-            flag &&  
-            CallSet.exists right ~f:(fun signature -> CallInfo.is_corresponding ~signature call_info)
+    let more_accurate =
+      ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
+        let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+        let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+        let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+          flag &&  
+          (match data with
+          | `Both (left, right) ->
+            CallSet.fold left ~init:true ~f:(fun flag call_info -> 
+              flag &&  
+              CallSet.exists right ~f:(fun signature -> CallInfo.is_more_corresponding ~signature call_info)
+            )
+          | `Right _ -> true
+          | `Left _ -> false
           )
-        | `Right _ -> true
-        | `Left _ -> false
         )
+        in
+  
+  
+        if field_flag && method_flag
+        then (key::candidate_classes)
+        else candidate_classes
       )
-      in
+    in
+
+    if List.is_empty more_accurate then
+      ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
+        let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+        let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+        let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+          flag &&  
+          (match data with
+          | `Both (left, right) ->
+            CallSet.fold left ~init:true ~f:(fun flag call_info -> 
+              flag &&  
+              CallSet.exists right ~f:(fun signature -> CallInfo.is_corresponding ~signature call_info)
+            )
+          | `Right _ -> true
+          | `Left _ -> false
+          )
+        )
+        in
 
 
-      if field_flag && method_flag
-      then (key::candidate_classes)
-      else candidate_classes
-    )
+        if field_flag && method_flag
+        then (key::candidate_classes)
+        else candidate_classes
+      )
+    else more_accurate
 end
 
 module ArgTypesResolution = struct
@@ -275,8 +302,9 @@ module FunctionSummaryResolution = struct
 
     FunctionSummary.{ t with return_var_type; }
 
-  let find_class_of_attributes ~successors ~class_table { usage_attributes; _ } parent_usage_attributes =
+  let find_class_of_attributes ~successors ~class_table ?(debug=false) { usage_attributes; _ } parent_usage_attributes =
 
+    let _ = debug in
     (* have to make proper filter *)
     let extract_class classes =
       let classes = List.map classes ~f:Reference.show in
@@ -334,10 +362,12 @@ module FunctionSummaryResolution = struct
     
     
     
-    AttributeStorage.map usage_attributes ~f:(fun attributes -> 
+    AttributeStorage.mapi usage_attributes ~f:(fun ~key ~data:attributes -> 
+        let _ = key in
         attributes
         |> ClassTableResolution.find_classes_from_attributes class_table
         |> extract_class
+
     )
     |> LocInsensitiveExpMap.filter_map ~f:(fun v -> 
       match v with
@@ -356,7 +386,10 @@ module FunctionTableResolution = struct
 
   let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table func_summary parent_usage_attributes
+    let debug = 
+      String.is_substring (Reference.show func_name) ~substring:"_write_col_header"
+    in
+    FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table ~debug func_summary parent_usage_attributes
 
 end
 

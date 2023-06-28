@@ -1463,12 +1463,12 @@ module TypeCheckRT (Context : OurContext) = struct
       
       dump_arguments arguments;
       *)
-      let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+      (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in *)
 
-      if String.is_substring (Reference.show define_name) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
+      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
         then (
           Log.dump "START Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
-        );
+        ); *)
 
       (* if String.is_substring (Reference.show define_name) ~substring:"airflow.bin.cli.CLIFactory.$class_toplevel"
         then (
@@ -4378,9 +4378,10 @@ module TypeCheckRT (Context : OurContext) = struct
 
   and refine_resolution_for_assert ~resolution ~at_resolution test =
     let global_resolution = Resolution.global_resolution resolution in
-    let annotation_less_or_equal =
+    let annotation_less_or_equal ~left ~right =
+      Type.is_unknown (Annotation.annotation right) ||
       Annotation.less_or_equal
-        ~type_less_or_equal:(GlobalResolution.less_or_equal global_resolution)
+        ~type_less_or_equal:(GlobalResolution.less_or_equal global_resolution) ~left ~right
     in
     let parse_refinement_annotation annotation =
       let parse_meta annotation =
@@ -4408,8 +4409,8 @@ module TypeCheckRT (Context : OurContext) = struct
             List.map ~f:parse_meta elements |> fun elements -> Type.Union elements
         | _ -> parse_meta annotation
       in
-      (*
-      Log.dump "Parse Refinement %a" Type.pp x;
+      
+      (* Log.dump "Parse Refinement %a" Type.pp x;
       *)
       x
     in
@@ -4735,12 +4736,12 @@ module TypeCheckRT (Context : OurContext) = struct
           right;
         }
       when is_simple_name name -> (
+        
         let { Resolved.resolved = refined; _ } = forward_expression ~resolution ~at_resolution right in
         let refined = Annotation.create_mutable refined in
         
         match existing_annotation name with
         | Some previous ->
-          (*Log.dump "Prev : %a Refined : %a" Annotation.pp previous Annotation.pp refined;*)
             if annotation_less_or_equal ~left:refined ~right:previous then
               Value (refine_local ~name refined)
             else
@@ -4757,6 +4758,7 @@ module TypeCheckRT (Context : OurContext) = struct
         }
       when is_simple_name name -> (
         let reference = name_to_reference_exn name in
+        
         let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
         match
           GlobalResolution.extract_type_parameters
@@ -6258,7 +6260,12 @@ module TypeCheckRT (Context : OurContext) = struct
         
         if OurDomain.is_inference_mode (OurDomain.load_mode ()) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then
           let our_summary = !Context.our_summary in
-          let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name actual in
+          let convert_actual =
+            actual
+            |> Type.Variable.convert_all_escaped_free_variables_to_bottom
+          in
+          
+          let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name convert_actual in
           Context.our_summary := our_summary;
         else ();
         (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)

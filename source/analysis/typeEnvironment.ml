@@ -246,28 +246,38 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           let our_model = OurDomain.OurSummary.join ~type_join our_model cur_summary in
           let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
 
-           if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
-            then (
-              Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
-            );
-            
-          (* if String.is_substring (Reference.show define) ~substring:"pandas.core.dtypes.dtypes.IntervalDtype.__eq__"
+           (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
             ); *)
-
-            (* if String.is_substring (Reference.show define) ~substring:"io.stata._cast_to_stata_types"
+            
+          (* if String.is_substring (Reference.show define) ~substring:"pandas.io.parsers.ParserBase.__init__"
+            then (
+              Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+            );
+ *)
+            (* if String.is_substring (Reference.show define) ~substring:"_should_parse_dates"
               then (
                 Log.dump "%a >>> %a" Reference.pp define OurDomain.OurSummary.pp cur_summary;
                 List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
               ); *)
 
-            (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi._sparsify"
+            (* if String.is_substring (Reference.show define) ~substring:"_write_col_header"
               then (
                 Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
                 List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
-              );
- *)
+              ); *)
+
+            (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi.MultiIndex.format"
+              then (
+                Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+              ); *)
+
+            (* if String.is_substring (Reference.show define) ~substring:"get_level_lengths"
+              then (
+                Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
+              ); *)
+
           (* if String.equal (Reference.show define) "pandas.util._decorators.make_signature"
           then (
             Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;

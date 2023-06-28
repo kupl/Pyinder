@@ -2985,6 +2985,7 @@ let instantiate_bottom ?(widen = false) ?(visit_children_before = false) annotat
         let transformed_annotation =
           match constraints annotation with
           | Some Bottom when widen -> Bottom
+          | Some replacement when is_any replacement -> Unknown
           | Some replacement -> replacement
           | None -> annotation
         in

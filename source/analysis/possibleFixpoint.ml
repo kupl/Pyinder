@@ -173,8 +173,8 @@ module Make (State : PossibleState) = struct
       in
       *)
       
-      (*
-      Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+      
+      (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
       
       Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
       *)
@@ -193,8 +193,8 @@ module Make (State : PossibleState) = struct
         then
       Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
       *)
-      (*
-      Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+      
+      (* Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
       *)
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       

@@ -51,14 +51,20 @@ module CallInfo = struct
     (* TODO: do more accurate *)
     if (not signature.star) && (not signature.double_star)
     then (
-      (target.position >= signature.position)
-      && (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
+      (* (target.position >= signature.position)
+      && *) (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
       && (Identifier.Set.is_subset target.default ~of_:signature.default)
     ) else if (signature.star) && (not signature.double_star) then (
       (Identifier.Set.is_subset target.default ~of_:signature.default)
-    ) else (
+    ) 
+    else (
       true
     )
+
+  let is_more_corresponding ~signature target =
+    (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
+      && (Identifier.Set.is_subset target.default ~of_:signature.default)
+      && is_corresponding ~signature target
 
 end
 
@@ -84,6 +90,9 @@ module AttributeStorage = struct
 
   let map t ~f =
     LocInsensitiveExpMap.map t ~f
+
+  let mapi t ~f =
+    LocInsensitiveExpMap.mapi t ~f
 
   let fold t ~init ~f =
     LocInsensitiveExpMap.fold t ~init ~f

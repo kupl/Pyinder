@@ -13958,7 +13958,6 @@ let exit_state ~resolution (module Context : OurContext) =
 
               let total_usage_attributes = AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes in
 
-              
               (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
                *)
               OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
@@ -13975,13 +13974,14 @@ let exit_state ~resolution (module Context : OurContext) =
                 Resolution.get_local_with_attributes resolution ~name 
                 |> (function
                 | None  -> duck_annotation
+                | Some origin when Type.is_top (Annotation.annotation origin) || Type.is_any (Annotation.annotation origin) -> 
+                  duck_annotation 
                 | Some origin -> 
                   Annotation.join ~type_join:(GlobalResolution.join global_resolution) origin duck_annotation 
                 )
               in
               
               let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
-
               
               (* Log.dump "[ Before Resolution ] \n%a" Resolution.pp resolution;
               Log.dump "Name : %a ===> %a" Expression.pp_expression value Annotation.pp annotation;
@@ -14000,9 +14000,10 @@ let exit_state ~resolution (module Context : OurContext) =
 
         let resolution_updated_attributes = 
           resolution 
-          |> update_resolution_from_attributes ~final_model
           |> update_resolution_of_self ~final_model 
+          |> update_resolution_from_attributes ~final_model
         in
+
 
         (* Log.dump "%a >>> \n%a\n" Reference.pp name Resolution.pp resolution;
         let t = (OurTypeSet.ArgTypesResolution.import_from_resolution ~join:(GlobalResolution.join global_resolution) resolution) in
@@ -14017,6 +14018,7 @@ let exit_state ~resolution (module Context : OurContext) =
           resolution_updated_attributes 
           |> update_resolution_from_arg_types ~final_model name
         in
+
         
         resolution, our_summary
       in
@@ -14090,6 +14092,10 @@ let exit_state ~resolution (module Context : OurContext) =
     let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
     let cfg = Cfg.create define in
 
+    if String.is_substring (Reference.show name) ~substring:"_should_parse_dates"
+      then (
+        Log.dump "TEST %a" Resolution.pp resolution;
+      );
 
     
     let our_summary = !Context.our_summary in
@@ -14112,6 +14118,10 @@ let exit_state ~resolution (module Context : OurContext) =
       Context.our_summary := our_summary
     );
 
+    let { Node.value = { Define.signature = { Define.Signature.name; _ }; _ }; _ } =
+      Context.define
+    in
+    
 
     (* Log.dump "%a GO" Reference.pp name; *)
     let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
