@@ -433,7 +433,6 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.Annotated left, _ -> solve_less_or_equal order ~constraints ~left ~right
     | _, Type.Annotated right -> solve_less_or_equal order ~constraints ~left ~right
     | Type.Any, other -> [add_fallbacks other]
-    | Type.Unknown, _ -> [constraints]
     | Type.Variable left_variable, Type.Variable right_variable
       when Type.Variable.Unary.is_free left_variable && Type.Variable.Unary.is_free right_variable
       ->
@@ -462,6 +461,7 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | _, Type.Bottom
     | Type.Top, _ ->
         impossible
+    | Type.Unknown, other -> [add_fallbacks other]
     | Type.Bottom, _ -> [constraints]
     | _, Type.NoneType -> impossible
     | _, Type.RecursiveType recursive_type ->
