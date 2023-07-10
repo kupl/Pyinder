@@ -134,6 +134,7 @@
    Scheduler.with_scheduler ~configuration ~f:(fun scheduler ->
        with_performance_tracking ~debug:configuration.debug (fun () ->
 
+          
 
            let environment =
             let read_write_environment =
@@ -147,8 +148,18 @@
             in
             let type_join = Analysis.GlobalResolution.join global_resolution in
 
+            let preprocess environment =
+              Log.dump "Preprocess...";
+              Analysis.OurDomain.save_mode "preprocess";
+              Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+              Analysis.OurDomain.save_mode "inference";
+            in
+
              let rec fixpoint n k environment prev_model skip_set =
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
+
+              if k >= 2 then
+                Analysis.OurDomain.is_first := false;
           
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
               
@@ -175,7 +186,25 @@
                 Analysis.ErrorsEnvironment.get_errors ~scheduler environment
               )
               else (
-                let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
+                let next_skip_set, next_our_model =
+                  if k = 0 then
+                    (* Preprocess ... *)
+                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in
+                    let environment =
+                      Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:next_our_model configuration
+                      |> Analysis.ErrorsEnvironment.set_environment environment
+                    in
+                    preprocess environment;
+                    let our_model = !Analysis.OurDomain.our_model in
+
+                    let next_skip_set = Ast.Reference.Set.empty in
+                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in
+                    next_skip_set, next_our_model
+                  else
+                    let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
+                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis prev_model our_model in
+                    next_skip_set, next_our_model
+                in
                 let n =
                   if Ast.Reference.Set.equal skip_set next_skip_set 
                   then n+1
@@ -183,11 +212,11 @@
                 in
                 
                 let environment =
-                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:next_our_model configuration
                   |> Analysis.ErrorsEnvironment.set_environment environment
                 in
                 
-                fixpoint n (k+1) environment our_model next_skip_set
+                fixpoint n (k+1) environment next_our_model next_skip_set
               )
              in
 

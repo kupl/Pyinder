@@ -53,5 +53,7 @@ module type OurContext = sig
 
   val our_summary : OurDomain.OurSummary.t ref
 
+  val entry_arg_types : OurDomain.ArgTypes.t ref
+
   module Builder : Callgraph.Builder
 end

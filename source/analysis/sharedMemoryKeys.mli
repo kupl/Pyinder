@@ -17,6 +17,12 @@ module ReferenceKey : sig
   include Memory.KeyType with type t := Reference.t
 end
 
+module ReferenceArgTypesKey : sig
+  type t = OurDomain.ArgTypesKey.t [@@deriving sexp]
+
+  include Memory.KeyType with type t := t
+end
+
 module AttributeTableKey : sig
   type t = {
     include_generated_attributes: bool;
@@ -54,6 +60,7 @@ end
 type dependency =
   | CreateModuleErrors of Reference.t
   | TypeCheckDefine of Reference.t
+  | OurTypeCheckDefine of OurDomain.ArgTypesKey.t
   | AliasRegister of Reference.t
   | ClassConnect of Type.Primitive.t
   | RegisterClassMetadata of Type.Primitive.t

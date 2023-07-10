@@ -993,7 +993,8 @@ module TypeCheckRT (Context : OurContext) = struct
         let local_annotation = Resolution.get_local resolution ~reference in
         match local_annotation, Reference.prefix reference with
         | Some annotation, _ -> 
-          let new_annotation =
+          let new_annotation = annotation in
+          (* let new_annotation =
             (match Annotation.annotation annotation with
               | Callable t -> (* TODO : Modify Resolution of callable *)
               (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
@@ -1012,7 +1013,7 @@ module TypeCheckRT (Context : OurContext) = struct
                 annotation
               | _ -> annotation
             )
-          in
+          in *)
           Some new_annotation
         | None, Some qualifier -> (
             (* Fallback to use a __getattr__ callable as defined by PEP 484. *)
@@ -1210,7 +1211,7 @@ module TypeCheckRT (Context : OurContext) = struct
                         let final_model = !OurDomain.our_model in
                         let class_name = Type.class_name class_data.instantiated in
                         let add_init = Reference.combine class_name (Reference.create "__init__") in
-                        let arg_types_of_namedtuple = OurDomain.OurSummary.get_arg_types final_model add_init in
+                        let arg_types_of_namedtuple = OurDomain.OurSummary.get_all_arg_types ~type_join:(GlobalResolution.join global_resolution) final_model add_init in
                         let attribute_name = "$parameter$" ^ (Annotated.Attribute.name attribute) in
                         let arg_type = OurDomain.ArgTypes.get_type arg_types_of_namedtuple attribute_name in
                         let annotation = arg_type |> Annotation.create_mutable in
@@ -1229,7 +1230,7 @@ module TypeCheckRT (Context : OurContext) = struct
                         | Type.Unknown -> annotation
                         | _ -> Annotation.create_mutable t
                       ), resolution
-                    | Callable t -> (* TODO : Modify Resolution of callable *)
+                    (* | Callable t -> (* TODO : Modify Resolution of callable *)
                       (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
                       let type_join = GlobalResolution.join global_resolution in
                       let final_model = !OurDomain.our_model in
@@ -1246,7 +1247,7 @@ module TypeCheckRT (Context : OurContext) = struct
                       (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
                       let annotation = Annotation.create_mutable (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) in
 
-                      annotation, resolution
+                      annotation, resolution *)
                     | _ -> annotation, resolution
                   else
                     annotation, resolution
@@ -2133,20 +2134,25 @@ module TypeCheckRT (Context : OurContext) = struct
                         found_return_annotation)
             |> Option.value ~default:found_return_annotation
             |> fun selected_return_annotation -> { callable_data with selected_return_annotation }
-        | _ -> { callable_data with selected_return_annotation }
+        | _ -> 
+          
+          { callable_data with selected_return_annotation }
       in
       let extract_found_not_found_unknown_attribute = function
         | KnownCallable
             {
-              callable = { TypeOperation.callable; _};
+              callable = { TypeOperation.callable; self_argument; _ };
               selected_return_annotation =
                 SignatureSelectionTypes.Found { selected_return_annotation };
-              _;
+              arguments;
+              _
             } ->
+
             (match callable.kind with
             | Named reference ->
               let our_model = !OurDomain.our_model in
-              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference in
+              let arg_types = GlobalResolution.callable_to_arg_types ~self_argument ~arguments callable in
+              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference arg_types in
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type
               | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
@@ -2391,6 +2397,7 @@ module TypeCheckRT (Context : OurContext) = struct
                 List.fold arguments ~f:forward_argument ~init:(resolution, errors, [])
               in
               let arguments = List.rev reversed_arguments in
+
               let selected_return_annotation =
                 GlobalResolution.our_signature_select
                   ~global_resolution
@@ -2458,8 +2465,8 @@ module TypeCheckRT (Context : OurContext) = struct
                       ~arguments
                       ~callable
                       ~self_argument
-                  in
 
+                  in
 
                   KnownCallable
                     (return_annotation_with_callable_and_self
@@ -2566,6 +2573,8 @@ module TypeCheckRT (Context : OurContext) = struct
                   "getattr";
                 ]
               in
+
+              let _ = update_arg_type in
               
               let resolution =
                 let rec update_resolution (callable: Type.Callable.t) resolution =
@@ -2616,7 +2625,7 @@ module TypeCheckRT (Context : OurContext) = struct
                           | Some exp -> (
                             match Node.value exp with
                             | Name name ->
-                              let callee_name = reference in
+                              (* let callee_name = reference in
                               let our_model = !OurDomain.our_model in
                               let ret_var_type = OurDomain.OurSummary.get_return_var_type our_model callee_name in
                               let func_arg_types = OurDomain.OurSummary.get_arg_annotation our_model callee_name in
@@ -2644,8 +2653,10 @@ module TypeCheckRT (Context : OurContext) = struct
                                 OurDomain.ReferenceMap.find ret_var_type param_reference |> Option.value ~default:Type.Unknown
                               in
 
-                              let new_arg_type = update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type in
-                              (*
+                              let new_arg_type = update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type in *)
+
+
+                              (* Not Used
                               let usedef_tables = 
                                 OurDomain.OurSummary.get_usedef_tables our_model callee_name 
                                 |> Option.value ~default:Usedef.UsedefStruct.empty
@@ -2666,9 +2677,12 @@ module TypeCheckRT (Context : OurContext) = struct
                               
                               (* Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Expression.pp exp Type.pp new_arg_type; *)
                               
-                              let update_resolution = Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable new_arg_type) in
+                              (* let update_resolution = Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable new_arg_type) in
                               
-                              update_resolution
+                              update_resolution *)
+
+                              let _ = name in
+                              resolution
                             | _ -> resolution
                           )
                             
@@ -2706,10 +2720,12 @@ module TypeCheckRT (Context : OurContext) = struct
                       )
                     in
 
+                    let arg_types = OurDomain.ArgTypes.make_arg_types save_param_type_list in
+
                     if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                       (*let { StatementDefine.Signature.name; _ } = define_signature in*)
                       let our_summary = !Context.our_summary in
-                      let our_summary = OurDomain.OurSummary.add_arg_types ~join:(GlobalResolution.join global_resolution) our_summary reference save_param_type_list in
+                      let our_summary = OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary reference arg_types in
                       Context.our_summary := our_summary;
                     else ();
 
@@ -6260,12 +6276,13 @@ module TypeCheckRT (Context : OurContext) = struct
         
         if OurDomain.is_inference_mode (OurDomain.load_mode ()) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then
           let our_summary = !Context.our_summary in
+          let entry_arg_types = !Context.entry_arg_types in
           let convert_actual =
             actual
             |> Type.Variable.convert_all_escaped_free_variables_to_bottom
           in
           
-          let our_summary = OurDomain.OurSummary.join_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name convert_actual in
+          let our_summary = OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name entry_arg_types convert_actual in
           Context.our_summary := our_summary;
         else ();
         (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)

@@ -27,16 +27,17 @@ module TypeOperation = struct
         input_annotation
         ~callable_and_self:{ callable; self_argument }
       =
+      let arguments = [
+          {
+            AttributeResolution.Argument.expression = None;
+            kind = Ast.Expression.Call.Argument.Positional;
+            resolved = input_annotation;
+          };
+        ]
+      in
       match
         signature_select
-          ~arguments:
-            [
-              {
-                AttributeResolution.Argument.expression = None;
-                kind = Ast.Expression.Call.Argument.Positional;
-                resolved = input_annotation;
-              };
-            ]
+          ~arguments
           ~callable
           ~self_argument
       with

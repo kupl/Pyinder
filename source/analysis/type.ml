@@ -7365,10 +7365,10 @@ let rec narrow_boundmethod ~join t =
   | _ -> t 
   
 let narrow_union ~join ~less_or_equal t =
-  let _ = join in
-  match t with
-  | Union t_list ->
+
+  let get_loose_t_list t_list =
     let t_list = List.map t_list ~f:(fun t -> if is_bottom t then Unknown else t) in
+
     let dedup =
       List.dedup_and_sort ~compare:(fun l r ->
         if (equal l r) then 0
@@ -7386,6 +7386,36 @@ let narrow_union ~join ~less_or_equal t =
     let loose_t_list =
         dedup (List.fold t_list ~init:[] ~f:loose_union)
     in
+
+    loose_t_list
+    |> List.map ~f:narrow_iterable
+
+  in
+
+  let _ = join in
+  match t with
+  | Union t_list ->
+    let loose_t_list = get_loose_t_list t_list in
+    if List.length loose_t_list <= 5 then (Union loose_t_list) else
+
+    
+    let dedup =
+      List.dedup_and_sort ~compare:(fun l r ->
+        if (equal l r) then 0
+        else compare l r  
+      )
+    in
+  (* 
+    let rec loose_union acc t =
+      match t with
+      | Union t_list ->
+        List.fold t_list ~init:acc ~f:loose_union
+      | _ -> t::acc
+    in
+  
+    let loose_t_list =
+        dedup (List.fold t_list ~init:[] ~f:loose_union)
+    in *)
 
     let unknown =
       List.find loose_t_list ~f:(fun t -> equal Unknown t)

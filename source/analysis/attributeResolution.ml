@@ -952,6 +952,58 @@ let callable_call_special_cases
   | _ -> None
 
 
+(*   let callable_to_arg_types ~self_argument ~(arguments: Argument.t list) (callable: Type.Callable.t) =
+    let params = callable.implementation.parameters in
+    let param_list = 
+    (match params with
+    | Defined defined_param_list ->
+      List.fold defined_param_list ~init:[] ~f:(fun acc param ->
+        (match param with
+        | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
+        | Named n -> n.name::acc
+        | _ -> (*print_endline "Other Param";*) acc
+        )
+      )
+    | _ -> (*print_endline "No defined";*) []
+    )
+    in
+    let param_list = List.rev param_list in
+      let param_type_init, revise_index = 
+      (match self_argument with
+      | Some t -> if List.length param_list == 0 then [], 1 else [(List.nth_exn param_list 0,t)], 1
+      | None -> (*Log.dump "No Self";*) [], 0
+      )
+    in
+  
+    let param_type_list = List.foldi arguments ~init:param_type_init ~f:(fun idx acc arg ->
+      if List.length param_list <= (idx+revise_index) then acc
+      else
+      (match arg.kind with
+      | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc
+      | Named s ->  
+        (s.value, arg.resolved)::acc
+      | Positional -> 
+        (List.nth_exn param_list (idx+revise_index), arg.resolved)::acc
+      )
+    )
+    in
+  
+    let param_type_list = List.rev param_type_list in
+  
+    let save_param_type_list =
+      (match self_argument with
+      | Some _ -> 
+        if List.length param_list == 0 
+        then param_type_list 
+        else 
+          let _, no_self_param = List.split_n param_type_list 1 in
+          no_self_param
+      | None -> param_type_list
+      )
+    in
+  
+    OurDomain.ArgTypes.make_arg_types save_param_type_list *)
+
 module SignatureSelection = struct
   (** Return a mapping from each parameter to the arguments that may be assigned to it. Also include
       any error reasons when there are too many or too few arguments.
@@ -4336,6 +4388,7 @@ class base class_metadata_environment dependency =
         >>| SignatureSelection.instantiate_return_annotation ~skip_marking_escapees ~order
         |> Option.value ~default:(SignatureSelection.default_signature callable)
       in
+
       if List.is_empty overloads then
         get_match [implementation]
       else

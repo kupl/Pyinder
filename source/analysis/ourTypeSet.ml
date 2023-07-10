@@ -259,12 +259,67 @@ module ArgTypesResolution = struct
       Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_type)
     ) t ~init:resolution
 
+(*   let callable_to_arg_types ~self_argument ~(arguments: AttributeResolution.Argument.t list) (callable: Type.Callable.t) =
+    let params = callable.implementation.parameters in
+    let param_list = 
+    (match params with
+    | Defined defined_param_list ->
+      List.fold defined_param_list ~init:[] ~f:(fun acc param ->
+        (match param with
+        | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
+        | Named n -> n.name::acc
+        | _ -> (*print_endline "Other Param";*) acc
+        )
+      )
+    | _ -> (*print_endline "No defined";*) []
+    )
+    in
+    let param_list = List.rev param_list in
+      let param_type_init, revise_index = 
+      (match self_argument with
+      | Some t -> if List.length param_list == 0 then [], 1 else [(List.nth_exn param_list 0,t)], 1
+      | None -> (*Log.dump "No Self";*) [], 0
+      )
+    in
+
+    let param_type_list = List.foldi arguments ~init:param_type_init ~f:(fun idx acc arg ->
+      if List.length param_list <= (idx+revise_index) then acc
+      else
+      (match arg.kind with
+      | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc
+      | Named s ->  
+        (s.value, arg.resolved)::acc
+      | Positional -> 
+        (List.nth_exn param_list (idx+revise_index), arg.resolved)::acc
+      )
+    )
+    in
+
+    let param_type_list = List.rev param_type_list in
+
+    let save_param_type_list =
+      (match self_argument with
+      | Some _ -> 
+        if List.length param_list == 0 
+        then param_type_list 
+        else 
+          let _, no_self_param = List.split_n param_type_list 1 in
+          no_self_param
+      | None -> param_type_list
+      )
+    in
+
+    ArgTypes.make_arg_types save_param_type_list *)
+
+
 end
 
 module FunctionSummaryResolution = struct
   include FunctionSummary
 
-  let store_to_return_var_type ?class_param ({ return_var_type; _ } as t) (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param ({ signatures; _ } as t) arg_types (store: Refinement.Store.t) =
+    let return_var_type = Signatures.get_return_var_type signatures arg_types in
+
     let class_param = class_param |> Option.value ~default:"" |> Reference.create in
     (* parameter만 *)
     let rec attribute_fold ~base_reference ~attributes return_var_type =
@@ -300,7 +355,9 @@ module FunctionSummaryResolution = struct
       x
     in
 
-    FunctionSummary.{ t with return_var_type; }
+    let signatures = Signatures.set_return_var_type signatures arg_types return_var_type in
+
+    FunctionSummary.{ t with signatures; }
 
   let find_class_of_attributes ~successors ~class_table ?(debug=false) { usage_attributes; _ } parent_usage_attributes =
 
@@ -380,9 +437,9 @@ end
 module FunctionTableResolution = struct
   include FunctionTable
 
-  let store_to_return_var_type ?class_param t func_name (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param t func_name arg_types (store: Refinement.Store.t) =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary store)
+    FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary arg_types store)
 
   let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -396,8 +453,8 @@ end
 module OurSummaryResolution = struct
   include OurSummary
 
-  let store_to_return_var_type ?class_param ({ function_table; _ } as t) func_name store = 
-    { t with function_table=FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name store; }
+  let store_to_return_var_type ?class_param ({ function_table; _ } as t) func_name arg_types store = 
+    { t with function_table=FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name arg_types store; }
 
   let get_type_of_class_attribute { class_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute class_table class_name attribute
   

@@ -21,11 +21,18 @@ end
 module ArgTypesResolution : sig
   include ArgTypes
 
-  val import_from_resolution : join:(Type.t -> Type.t -> Type.t) -> Resolution.t -> t
+  val import_from_resolution : join:(Type.t -> Type.t -> Type.t) -> Resolution.t -> ArgTypes.t
 
   val export_to_resolution : t -> Resolution.t -> Resolution.t
 
   val join_to_resolution : join:(Type.t -> Type.t -> Type.t) -> t -> Resolution.t -> Resolution.t
+
+  (* val callable_to_arg_types : 
+    self_argument:Type.t option -> 
+    arguments:AttributeResolution.Argument.t list ->
+    Type.Callable.t ->
+    ArgTypes.t *)
+    
 end
 
 module FunctionTableResolution : sig
@@ -37,7 +44,7 @@ module OurSummaryResolution : sig
 
   type t = OurSummary.t
 
-  val store_to_return_var_type : ?class_param:string -> t -> Reference.t -> Store.t -> t
+  val store_to_return_var_type : ?class_param:string -> t -> Reference.t -> ArgTypes.t -> Store.t -> t
 
   val get_type_of_class_attribute : t -> Reference.t -> string -> Type.t
 

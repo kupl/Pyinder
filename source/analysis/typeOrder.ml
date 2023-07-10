@@ -129,14 +129,20 @@ module OrderImplementation = struct
         right
       =
 
-
+      (* let timer = Timer.start () in *)
       let left, right =
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) right
       in
+      (* let tt0 = Timer.stop_in_sec timer in *)
 
       let union = Type.union_join left right in
-
+      (* let tt1 = Timer.stop_in_sec timer in
+      let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 0.01 then (
+        Log.dump "JOINDA %.5f %.5f" tt0 tt1;
+        Log.dump "LEFT %a RIGHT %a" Type.pp left Type.pp right;
+      );   *)
       if Type.equal left right then
         left
       (*else if

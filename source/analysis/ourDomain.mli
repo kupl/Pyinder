@@ -79,19 +79,63 @@ end
 
 
 module ArgTypes : sig
-  type t = Type.t IdentifierMap.t
+  type t = Type.t IdentifierMap.t [@@deriving compare, sexp]
 
   val empty : t
 
+  val is_empty : t -> bool
+
   val add_arg_type : join:(Type.t -> Type.t -> Type.t) -> t -> string -> Type.t -> t
+
+  val join: type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
+
+  val less_or_equal: less_or_equal:(Type.t -> Type.t -> bool) -> t -> t-> bool
 
   val pp : Format.formatter -> t -> unit
 
   val get_type : t -> Identifier.t -> Type.t
+
+  val make_arg_types : (Identifier.t * Type.t) list -> t
+end
+
+module ArgTypesKey : sig
+  type t = Reference.t * (Identifier.t * Type.t) list [@@deriving compare, sexp, hash, show]
+
+  val to_key : Reference.t -> ArgTypes.t -> t
+
+  val from_key : t -> Reference.t * ArgTypes.t
+end
+
+
+module Signatures : sig
+  type return_info = {
+    return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
+    return_type: Type.t; (* Function의 Return Type *)
+    should_analysis: bool
+  } [@@deriving sexp, equal]
+
+  module ArgTypesMap : Map.S with type Key.t = ArgTypes.t
+
+  type t = return_info ArgTypesMap.t (* Argumets의 Type*)
+  [@@deriving sexp, equal]
+
+  val get_return_var_type : t -> ArgTypes.t -> Type.t ReferenceMap.t
+
+  val set_return_var_type : t -> ArgTypes.t -> Type.t ReferenceMap.t -> t
 end
 
 module type FunctionSummary = sig
   type t = {
+    signatures: Signatures.t;
+    (* arg_types: ArgTypes.t; (* Argumets의 Input Type *)
+    arg_annotation: ArgTypes.t; (* Argument Annotation *)
+    return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
+    return_type: Type.t; (* Function의 Return Type *) *)
+    callers: CallerSet.t;
+    usage_attributes : AttributeStorage.t;
+    (*usedef_tables: UsedefStruct.t option;*)
+  }
+(*   type t = {
     arg_types: ArgTypes.t; (* Argumets의 Type*)
     arg_annotation : ArgTypes.t;
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
@@ -99,13 +143,15 @@ module type FunctionSummary = sig
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     (*usedef_tables: UsedefStruct.t option;*)
-  }
+  } *)
 
-  val add_return_var_type : t -> Reference.t -> Type.t -> t
+  val add_return_var_type : t -> ArgTypes.t -> Reference.t -> Type.t -> t
 end
 
+module ExpressionMap : Map.S with type Key.t = Expression.t
+
 module FunctionSummary : sig
-  type t = {
+(*   type t = {
     arg_types : ArgTypes.t;
     arg_annotation : ArgTypes.t;
     return_var_type : Type.t ReferenceMap.t;
@@ -113,11 +159,23 @@ module FunctionSummary : sig
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     (*usedef_tables : UsedefStruct.t option;*)
+  } *)
+  
+  type t = {
+    signatures: Signatures.t;
+    preprocess: Type.t ExpressionMap.t;
+    (* arg_types: ArgTypes.t; (* Argumets의 Input Type *)
+    arg_annotation: ArgTypes.t; (* Argument Annotation *)
+    return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
+    return_type: Type.t; (* Function의 Return Type *) *)
+    callers: CallerSet.t;
+    usage_attributes : AttributeStorage.t;
+    (*usedef_tables: UsedefStruct.t option;*)
   }
 
   val empty : t
 
-  val add_return_var_type : t -> Reference.t -> Type.t -> t
+  val add_return_var_type : t -> ArgTypes.t -> Reference.t -> Type.t -> t
 end
 
 module type FunctionTable = sig
@@ -144,9 +202,11 @@ module OurSummary : sig
 
   val empty : t
 
+  val update : type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> t
+
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
 
-  val join_return_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> Type.t -> t
+  (*val join_return_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> Type.t -> t*)
 
   val pp_class : Format.formatter -> t -> unit
 
@@ -156,19 +216,27 @@ module OurSummary : sig
 
   (*val copy : t -> t*)
 
-  val add_arg_types : join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> (Identifier.t * Type.t) list -> t
+  val find_signature : t -> Reference.t -> ArgTypes.t -> (* Signatures.t *) Signatures.return_info option
+
+  val add_new_signature : join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t -> t
+
+(*   val add_arg_types : join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> (Identifier.t * Type.t) list -> t *)
 
   val add_usage_attributes : ?class_name:Reference.t -> ?class_var:string -> t -> Reference.t -> AttributeStorage.t -> t
 
   val add_caller : t -> caller:Reference.t -> Reference.t -> t
 
-  val set_arg_types : t -> Reference.t -> ArgTypes.t -> t
+  val add_return_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t -> Type.t -> t
 
-  val set_arg_annotation : t -> Reference.t -> ArgTypes.t -> t
+(*   val set_arg_types : t -> Reference.t -> ArgTypes.t -> t
 
-  val set_return_var_type : t -> Reference.t -> Type.t FunctionMap.t -> t
+  val set_arg_annotation : t -> Reference.t -> ArgTypes.t -> t *)
 
-  val set_return_type : t -> Reference.t -> Type.t -> t
+  val set_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t FunctionMap.t -> t
+
+  val set_return_type : t -> Reference.t -> ArgTypes.t -> Type.t -> t
+
+  val set_preprocess : t -> Reference.t -> Expression.t -> Type.t -> t
 (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)
@@ -177,20 +245,24 @@ module OurSummary : sig
   (*
   val get_usedef_tables : t -> Reference.t -> UsedefStruct.t option
 *)
-  val get_arg_types : t -> Reference.t -> ArgTypes.t
+(*   val get_arg_types : t -> Reference.t -> ArgTypes.t
 
-  val get_arg_annotation : t -> Reference.t -> ArgTypes.t
+  val get_arg_annotation : t -> Reference.t -> ArgTypes.t *)
 
-  val get_return_var_type : t -> Reference.t -> Type.t ReferenceMap.t
+  val get_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t ReferenceMap.t
 
-  val get_return_type : t -> Reference.t -> Type.t
+  val get_return_type : t -> Reference.t -> ArgTypes.t -> Type.t
 
   val get_callers : t -> Reference.t -> CallerSet.t
 
   val get_usage_attributes_from_func : t -> Reference.t -> AttributeStorage.t
 
-  val get_callable : type_join:(Type.t -> Type.t -> Type.t) -> t -> Type.Callable.t -> Type.Callable.t
+  val get_preprocess : t -> Reference.t -> Type.t ExpressionMap.t
 
+  val get_callable : type_join:(Type.t -> Type.t -> Type.t) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
+
+  val get_callable_return_type :  t -> ArgTypes.t -> Type.Callable.t -> Type.t
+  
   val add_class_attribute : t -> Reference.t -> string -> t
 
   val add_class_property : t -> Reference.t -> string -> t
@@ -204,6 +276,16 @@ module OurSummary : sig
   val get_class_summary : t -> Reference.t -> ClassSummary.t
 
   val get_usage_attributes_from_class : t -> Reference.t -> AttributeStorage.t
+
+  val get_analysis_arg_types : t -> Reference.t -> ArgTypes.t list
+
+  val get_all_arg_types : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t
+
+  val change_analysis : t -> t -> t
+
+  val end_analysis : t -> Reference.t -> ArgTypes.t -> t
+
+  val change_analysis_all : t -> t
 
   val get_skip_set : t -> t -> ReferenceSet.t
 end
@@ -238,8 +320,10 @@ val load_global_summary_cache : unit -> unit
 
 val load_all_summary_test : unit -> unit
 
-val load_all_summary : ?use_cache:bool -> type_join:(Type.t -> Type.t -> Type.t) -> skip_set:Reference.Set.t -> OurSummary.t -> unit
-
+(* val load_all_summary : ?use_cache:bool -> type_join:(Type.t -> Type.t -> Type.t) -> skip_set:Reference.Set.t -> OurSummary.t -> unit
+ *)
 val load_specific_file : unit -> unit
 
 val select_our_model : Reference.t -> OurSummary.t
+
+val is_first : bool ref

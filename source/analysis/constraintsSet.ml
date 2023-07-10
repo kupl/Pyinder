@@ -461,7 +461,9 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | _, Type.Bottom
     | Type.Top, _ ->
         impossible
-    | Type.Unknown, other -> [add_fallbacks other]
+    | Type.Unknown, _ -> [constraints]
+    | _, Type.Unknown -> [constraints]
+    
     | Type.Bottom, _ -> [constraints]
     | _, Type.NoneType -> impossible
     | _, Type.RecursiveType recursive_type ->
@@ -782,7 +784,7 @@ module Make (OrderedConstraints : OrderedConstraintsType) = struct
     | Type.TypeOperation _, _
     | _, Type.TypeOperation _ ->
         impossible
-    | _, Type.Unknown -> [constraints]
+    
     
       
 

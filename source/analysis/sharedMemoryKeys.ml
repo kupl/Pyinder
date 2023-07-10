@@ -37,6 +37,13 @@ module ReferenceKey = struct
   let from_string name = Reference.create name
 end
 
+module ReferenceArgTypesKey = struct
+  type t = OurDomain.ArgTypesKey.t [@@deriving compare, sexp]
+
+  let to_string key = sexp_of_t key |> Sexp.to_string
+  let from_string sexp = Sexp.of_string sexp |> t_of_sexp
+end
+
 module AttributeTableKey = struct
   module T = struct
     type t = {
@@ -83,6 +90,7 @@ end
 type dependency =
   | CreateModuleErrors of Reference.t
   | TypeCheckDefine of Reference.t
+  | OurTypeCheckDefine of OurDomain.ArgTypesKey.t
   | AliasRegister of Reference.t
   | ClassConnect of Type.Primitive.t
   | RegisterClassMetadata of Type.Primitive.t

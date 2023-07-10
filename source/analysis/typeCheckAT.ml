@@ -1558,7 +1558,7 @@ module TypeCheckAT (Context : Context) = struct
       let unpack_callable_and_self_argument =
         unpack_callable_and_self_argument
           ~signature_select:
-            (GlobalResolution.signature_select
+            (GlobalResolution.our_signature_select
                ~global_resolution
                ~resolve_with_locals:(resolve_expression_type_with_locals ~resolution))
           ~global_resolution
@@ -1736,16 +1736,11 @@ module TypeCheckAT (Context : Context) = struct
               selected_return_annotation =
                 SignatureSelectionTypes.Found { selected_return_annotation };
               _;
-            } ->
+            } -> 
             (match callable.kind with
-            | Named reference ->
-              let { StatementDefine.Signature.name; _ } = define_signature in
-              let our_model = OurDomain.select_our_model name in
-              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference in
-              (match selected_return_annotation with
-              | Any -> `Fst observed_return_type
-              | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
-              )
+            | Named _ ->
+              `Fst selected_return_annotation
+            
             | _ -> `Fst selected_return_annotation
             )
             

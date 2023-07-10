@@ -23,8 +23,10 @@ end
 
 
 
-let produce_check_results global_environment define_name ~dependency =
-
+let produce_check_results global_environment define_info ~dependency =
+  let define_name = define_info in 
+  (* let define_name, entry_arg_types = OurDomain.ArgTypesKey.from_key define_info in
+  let _ = entry_arg_types in *)
   let type_check_controls, call_graph_builder, dependency =
     let controls = AnnotatedGlobalEnvironment.ReadOnly.controls global_environment in
     let configuration = EnvironmentControls.configuration controls in
@@ -47,13 +49,24 @@ let produce_check_results global_environment define_name ~dependency =
   in
 
   (* Log.dump "Start %a" Reference.pp define_name; *)
+  let mode = OurDomain.load_mode () in
 
-  let x = TypeCheck.check_define_by_name
-    ~type_check_controls
-    ~call_graph_builder
-    ~global_environment
-    ~dependency
-    define_name
+
+
+  let x = 
+    if String.equal mode "preprocess" then
+      TypeCheckPre.check_define_by_name
+      ~global_environment
+      ~dependency
+      define_name
+    else
+      TypeCheck.check_define_by_name
+      ~type_check_controls
+      ~call_graph_builder
+      ~global_environment
+      ~dependency
+      ~entry_arg_types:OurDomain.ArgTypes.empty
+      define_name
   in
 
   (* Log.dump "End %a" Reference.pp define_name; *)
@@ -95,6 +108,39 @@ let produce_check_results global_environment define_name ~dependency =
 
   x
 
+(* module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
+  module PreviousEnvironment = AnnotatedGlobalEnvironment
+  module Key = SharedMemoryKeys.ReferenceArgTypesKey
+  module Value = CheckResultValue
+
+  type trigger = OurDomain.ArgTypesKey.t
+  [@@deriving sexp, compare]
+
+  module TriggerSet = Set.Make (OurDomain.ArgTypesKey)
+
+  let convert_trigger = Fn.id
+
+  let key_to_trigger = Fn.id
+
+  let show_key = OurDomain.ArgTypesKey.show
+
+  let overlay_owns_key module_tracker_overlay key =
+    let reference, _ = key in
+    ModuleTracker.Overlay.owns_reference module_tracker_overlay reference
+
+  let lazy_incremental = false
+
+  let produce_value = produce_check_results
+
+  let filter_upstream_dependency = function
+    | SharedMemoryKeys.OurTypeCheckDefine name -> Some name
+    | _ -> None
+
+
+  let trigger_to_dependency name = SharedMemoryKeys.OurTypeCheckDefine name
+
+  let equal_value = CheckResultValue.equal
+end) *)
 
 module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
   module PreviousEnvironment = AnnotatedGlobalEnvironment
@@ -219,6 +265,13 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     List.filter all_defines ~f:(fun name ->
       not (Reference.Set.exists skip_set ~f:(Reference.equal name))
     )
+    (* |> List.fold ~init:[] ~f:(fun acc define -> 
+      let arg_types = OurDomain.OurSummary.get_analysis_arg_types !OurDomain.our_model define in
+      let arg_types =
+        if !OurDomain.is_first then [ OurDomain.ArgTypes.empty; ] else arg_types
+      in
+      List.map arg_types ~f:(fun arg_type -> OurDomain.ArgTypesKey.to_key define arg_type) @ acc
+    ) *)
   in
 
   (*
@@ -228,6 +281,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   populate_for_definitions ~scheduler environment filtered_defines;
 
   let _ = type_join in
+  let mode = OurDomain.load_mode () in
   
   let read_only = read_only environment in
   (
@@ -238,12 +292,22 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         let timer = Timer.start () in
         let _ = timer in
         let result = ReadOnly.get read_only define in
+        (* let define, _ =  OurDomain.ArgTypesKey.from_key arg_types_key in *)
         let x = 
         (match result with
+        | Some t when String.equal mode "preprocess" ->
+          let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
+          let expression_map = OurDomain.OurSummary.get_preprocess cur_summary define in
+          let our_model =
+            OurDomain.ExpressionMap.fold expression_map ~init:our_model ~f:(fun ~key ~data model -> 
+              OurDomain.OurSummary.set_preprocess model define key data
+            )
+          in
+          our_model, our_errors
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
-          let our_model = OurDomain.OurSummary.join ~type_join our_model cur_summary in
+          let our_model = OurDomain.OurSummary.update ~type_join ~prev:our_model cur_summary in
           let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
 
            (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
@@ -291,9 +355,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           ); *)
 
           (* let total_time = Timer.stop_in_sec timer in
-          if Float.(>.) total_time 0.5 then (
-            (* Log.dump "%a" OurDomain.OurSummary.pp cur_summary; *)
-            Log.dump "O %.5f" total_time;
+          if Float.(>.) total_time 0.2 then (
+            (* Log.dump "Start\n%a\nEnd" OurDomain.OurSummary.pp cur_summary; *)
+            Log.dump "OKOK %a %.5f" Reference.pp define total_time;
           );   *)
           
           our_model, our_errors
@@ -358,18 +422,21 @@ module ReadOnly = struct
     *)
 
   let get_errors environment ?dependency reference =
+    (* let reference = OurDomain.ArgTypesKey.to_key reference OurDomain.ArgTypes.empty in *)
     let x = get ?dependency environment reference in
     x >>= TypeCheck.CheckResult.errors
     |> Option.value ~default:[]
 
 
   let get_local_annotations environment ?dependency reference =
+    (* let reference = OurDomain.ArgTypesKey.to_key reference OurDomain.ArgTypes.empty in *)
     let x = get ?dependency environment reference in 
     x >>= TypeCheck.CheckResult.local_annotations
 
 
   let get_or_recompute_local_annotations environment name =
     let x= get_local_annotations environment name in
+    let name = OurDomain.ArgTypesKey.to_key name OurDomain.ArgTypes.empty in
     match x with
     | Some _ as local_annotations -> local_annotations
     | None ->

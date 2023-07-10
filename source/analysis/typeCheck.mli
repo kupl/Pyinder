@@ -110,7 +110,7 @@ val resolution_with_key
 
 val compute_local_annotations
   :  global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->
-  Reference.t ->
+  OurDomain.ArgTypesKey.t ->
   LocalAnnotationMap.ReadOnly.t option
 
 module CheckResult : sig
@@ -143,6 +143,7 @@ val check_define_by_name
   call_graph_builder:(module Callgraph.Builder) ->
   global_environment:AnnotatedGlobalEnvironment.ReadOnly.t ->
   dependency:SharedMemoryKeys.DependencyKey.registered option ->
+  entry_arg_types:OurDomain.ArgTypes.t ->
   Ast.Reference.t ->
   CheckResult.t option
 

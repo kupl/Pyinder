@@ -419,7 +419,7 @@ let resolve_define ~resolution:({ dependency; _ } as resolution) =
 
 let signature_select ~global_resolution:({ dependency; _ } as resolution) ~resolve_with_locals ~arguments ~callable ~self_argument =
   AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution)
-  |> (function
+  (* |> (function
     | SignatureSelectionTypes.Found { selected_return_annotation } ->
       (match selected_return_annotation with
       | Type.Callable t -> (* TODO : Modify Resolution of callable *)
@@ -439,7 +439,59 @@ let signature_select ~global_resolution:({ dependency; _ } as resolution) ~resol
       | _ -> SignatureSelectionTypes.Found { selected_return_annotation }
       )
     | t -> t
+  ) *)
+
+let callable_to_arg_types ~self_argument ~(arguments: AttributeResolution.Argument.t list) (callable: Type.Callable.t) =
+  let params = callable.implementation.parameters in
+  let param_list = 
+  (match params with
+  | Defined defined_param_list ->
+    List.fold defined_param_list ~init:[] ~f:(fun acc param ->
+      (match param with
+      | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
+      | Named n -> n.name::acc
+      | _ -> (*print_endline "Other Param";*) acc
+      )
+    )
+  | _ -> (*print_endline "No defined";*) []
   )
+  in
+  let param_list = List.rev param_list in
+    let param_type_init, revise_index = 
+    (match self_argument with
+    | Some t -> if List.length param_list == 0 then [], 1 else [(List.nth_exn param_list 0,t)], 1
+    | None -> (*Log.dump "No Self";*) [], 0
+    )
+  in
+
+  let param_type_list = List.foldi arguments ~init:param_type_init ~f:(fun idx acc arg ->
+    if List.length param_list <= (idx+revise_index) then acc
+    else
+    (match arg.kind with
+    | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc
+    | Named s ->  
+      (s.value, arg.resolved)::acc
+    | Positional -> 
+      (List.nth_exn param_list (idx+revise_index), arg.resolved)::acc
+    )
+  )
+  in
+
+  let param_type_list = List.rev param_type_list in
+
+  let save_param_type_list =
+    (match self_argument with
+    | Some _ -> 
+      if List.length param_list == 0 
+      then param_type_list 
+      else 
+        let _, no_self_param = List.split_n param_type_list 1 in
+        no_self_param
+    | None -> param_type_list
+    )
+  in
+
+  OurDomain.ArgTypes.make_arg_types save_param_type_list
 
 let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~resolve_with_locals ~arguments ~callable ~self_argument =
   AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
@@ -450,17 +502,32 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
-      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
+      let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
       (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
       SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
       | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
-      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      (* Log.dump "Before... %a" Type.pp (Callable t); *)
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
-      let callable = OurDomain.OurSummary.get_callable ~type_join final_model t in
-      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+      let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
+      (* Log.dump "After... %a" Type.pp (Callable callable); *)
       SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
-      | _ -> SignatureSelectionTypes.Found { selected_return_annotation }
+      | _ -> 
+        let type_join = join resolution in
+        let final_model = !OurDomain.our_model in
+        let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+        let return_type = OurDomain.OurSummary.get_callable_return_type final_model arg_types callable in
+
+        let selected_return_annotation =
+          (match return_type, selected_return_annotation with
+          | _, Type.Any -> return_type
+          | Type.Unknown, _ -> selected_return_annotation
+          | _ -> type_join return_type selected_return_annotation
+          )
+        in
+        SignatureSelectionTypes.Found { selected_return_annotation }
       )
     | t -> t
   )
