@@ -1224,8 +1224,10 @@ module TypeCheckRT (Context : OurContext) = struct
                       (* TODO : final summary 만으로 충분한가? *)
                       let final_model = !OurDomain.our_model in
                       let attribute_name = (Annotated.Attribute.name attribute) in
+                      
                       OurTypeSet.OurSummaryResolution.get_type_of_class_attribute final_model (Type.class_name class_data.instantiated) attribute_name
                       |> (fun t ->
+                        
                         match t with
                         | Type.Unknown -> annotation
                         | _ -> Annotation.create_mutable t
@@ -1466,7 +1468,7 @@ module TypeCheckRT (Context : OurContext) = struct
       *)
       (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in *)
 
-      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
+      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.models.dag.DAG.__init__"
         then (
           Log.dump "START Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
         ); *)
@@ -1669,8 +1671,9 @@ module TypeCheckRT (Context : OurContext) = struct
             |> List.map ~f:(fun t -> Option.value_exn t ~message:"Why is in None?")
           in
           if List.length new_t_list = 0 then None
-          else
-            Some (List.fold t_list ~init:Type.Bottom ~f:(fun acc t -> GlobalResolution.join global_resolution acc t))
+          else (
+            Some (List.fold new_t_list ~init:Type.Bottom ~f:(fun acc t -> GlobalResolution.join global_resolution acc t))
+          )
         | Type.Parametric (* dict.__getitem__ 처리 *)
           { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); Single origin] } 
           when String.equal (Reference.show name) "dict.__getitem__"
@@ -1699,7 +1702,9 @@ module TypeCheckRT (Context : OurContext) = struct
               else (
                 let result = 
                   if Type.contains_literal value_arg.resolved
-                  then Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
+                  then (
+                    Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
+                  )
                   else Type.get_dict_value_type annotation_type 
                 in
 
@@ -1906,10 +1911,72 @@ module TypeCheckRT (Context : OurContext) = struct
         | _ -> resolution
       in
 
+      let update_method_type arguments callee =
+        let rec update_resolved t = 
+          match t with
+          | Type.Union t_list -> Type.Union (List.map t_list ~f:update_resolved)
+          | Type.Callable t -> (* TODO : Modify Resolution of callable *)
+          (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+            let reversed_arguments =
+              let forward_argument reversed_arguments argument =
+                let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                forward_expression ~resolution ~at_resolution expression
+                |> fun { resolved; _ } ->
+                  { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                  :: reversed_arguments
+              in
+              List.fold arguments ~f:forward_argument ~init:[]
+            in
+            let arguments = List.rev reversed_arguments in
+            let type_join = GlobalResolution.join global_resolution in
+            let final_model = !OurDomain.our_model in
+            let arg_types = GlobalResolution.callable_to_arg_types ~self_argument:None ~arguments t in
+            let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
+          (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+            Type.Callable callable
+          | Type.Parametric { name = "BoundMethod"; parameters = [Single (Callable t); Single self_argument]} ->
+          (* Log.dump "Before... %a" Type.pp (Callable t); *)
+            let reversed_arguments =
+              let forward_argument reversed_arguments argument =
+                let expression, kind = Ast.Expression.Call.Argument.unpack argument in
+                forward_expression ~resolution ~at_resolution expression
+                |> fun { resolved; _ } ->
+                  { AttributeResolution.Argument.kind; expression = Some expression; resolved }
+                  :: reversed_arguments
+              in
+              List.fold arguments ~f:forward_argument ~init:[]
+            in
+            let arguments = List.rev reversed_arguments in
+            let type_join = GlobalResolution.join global_resolution in
+            let final_model = !OurDomain.our_model in
+            let arg_types = GlobalResolution.callable_to_arg_types ~self_argument:(Some self_argument) ~arguments t in
+            let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
+            
+            
+            (* Log.dump "After... %a" Type.pp (Callable callable); *)
+            Type.Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); Single self_argument]}
+          | t -> t 
+        in
+
+        let new_resolved = update_resolved (Callee.resolved callee) in
+
+        match callee with
+        | Attribute ({ attribute; _ } as t)->
+          let attribute = { attribute with resolved=new_resolved } in
+          Callee.Attribute { t with attribute }
+        | NonAttribute t ->
+          NonAttribute { t with resolved=new_resolved }
+
+      in
+
       let resolution = resolved_list_append resolution callee in
       let resolution = resolved_list_extend resolution callee in
       let resolution = update_dict_setitem resolution (Callee.resolved callee) in
       let resolution = resolved_dict_update resolution callee in
+
+      let callee = update_method_type arguments callee in
+
+
       (* Log.dump "Resolution >>> %a" Resolution.pp resolution; *)
 
       let rec update_resolved_type ?(no_rec=false) t =
@@ -2134,8 +2201,8 @@ module TypeCheckRT (Context : OurContext) = struct
                         found_return_annotation)
             |> Option.value ~default:found_return_annotation
             |> fun selected_return_annotation -> { callable_data with selected_return_annotation }
+
         | _ -> 
-          
           { callable_data with selected_return_annotation }
       in
       let extract_found_not_found_unknown_attribute = function
@@ -2421,6 +2488,9 @@ module TypeCheckRT (Context : OurContext) = struct
 
         match callable_data_list, Context.constraint_solving_style with
         | [KnownCallable callable_data], Configuration.Analysis.ExpressionLevel ->
+
+
+
             select_return_annotation_bidirectional_inference callable_data
         | callable_data_list, _ ->
 
@@ -2856,6 +2926,7 @@ module TypeCheckRT (Context : OurContext) = struct
             { resolved with resolved = resolved_zip callee_resolved |> update_resolved_type }
         | _ -> 
           let new_t = resolved_dict_getitem callee_resolved in
+
           match new_t with
           | Some new_t ->
             { resolved with resolved = new_t |> update_resolved_type }
@@ -2884,9 +2955,14 @@ module TypeCheckRT (Context : OurContext) = struct
           )*)
       in
 
+      
+
       let x = resolved_builtin_functions resolved callee in
 
-
+      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.models.dag.DAG.__init__"
+        then (
+          Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
+        ); *)
       x
 
       

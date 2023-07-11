@@ -13886,7 +13886,7 @@ let exit_state ~resolution (module Context : OurContext) =
   then (
     save_arg_types initial
   );
-  (* let timer = Timer.start () in *)
+  let timer = Timer.start () in
 
   let initial, our_summary = 
     if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
@@ -14107,7 +14107,7 @@ let exit_state ~resolution (module Context : OurContext) =
     else initial, our_summary
   in
   
-  (* let init_time = Timer.stop_in_sec timer in *)
+  let init_time = Timer.stop_in_sec timer in
 
   Context.our_summary := our_summary;
   if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
@@ -14115,7 +14115,7 @@ let exit_state ~resolution (module Context : OurContext) =
       save_arg_types initial
     );
   
-  (* let save_time = Timer.stop_in_sec timer in *)
+  let save_time = Timer.stop_in_sec timer in
   (*
   Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
   *)
@@ -14306,7 +14306,7 @@ let exit_state ~resolution (module Context : OurContext) =
             let our_summary = 
               (match parent, List.nth parameters 0 with
               | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-                          
+
                 let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name arg_types (Resolution.get_annotation_store v) in
             
                 OurDomain.OurSummary.set_class_table our_summary (
@@ -14363,11 +14363,13 @@ let exit_state ~resolution (module Context : OurContext) =
       )
     in
 
-    (* let total_time = Timer.stop_in_sec timer in
-    if Float.(>.) total_time 0.1 then (
-      Log.dump ">>> %a (%.3f => %.3f => %.3f)" Reference.pp name init_time save_time total_time;
-    ); *)
-
+    let total_time = Timer.stop_in_sec timer in
+    let _ = init_time, save_time, total_time in
+    (* if Float.(>.) total_time 5.0 then (
+      Log.dump ">>> %a (%.3f => %.3f => %.3f) (%i)" Reference.pp name init_time save_time total_time (List.length check_arg_types_list);
+      Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary;
+    );
+ *)
     errors, Some local_annotations, Some callees)
 
 
@@ -14575,9 +14577,14 @@ let check_define
       if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
         let our_summary =
           Option.fold callees ~init:our_summary ~f:(fun our_summary callees -> 
-              List.fold callees ~init:our_summary ~f:(fun our_summary callee ->
+              (* List.filter callees ~f:(fun callee ->
+                not (String.is_suffix ~suffix:"__init__" (Reference.show (Callgraph.get_callee_name ~callee:callee.callee))) 
+              ) 
+              |> *)
+              callees |>
+              List.fold ~init:our_summary ~f:(fun our_summary { Callgraph.callee; _}  ->
                 OurDomain.OurSummary.add_caller our_summary (
-                  Callgraph.get_callee_name ~callee:callee.callee
+                  Callgraph.get_callee_name ~callee:callee
                 ) ~caller:name
               )
           )

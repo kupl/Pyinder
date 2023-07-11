@@ -307,6 +307,12 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
+          let our_model =
+            OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define) 
+          in
+          let our_model =
+            OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define)
+          in
           let our_model = OurDomain.OurSummary.update ~type_join ~prev:our_model cur_summary in
           let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
 
@@ -354,11 +360,11 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
               List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
           ); *)
 
-          (* let total_time = Timer.stop_in_sec timer in
-          if Float.(>.) total_time 0.2 then (
+          let total_time = Timer.stop_in_sec timer in
+          if Float.(>.) total_time 0.1 then (
             (* Log.dump "Start\n%a\nEnd" OurDomain.OurSummary.pp cur_summary; *)
-            Log.dump "OKOK %a %.5f" Reference.pp define total_time;
-          );   *)
+            Log.dump "OKOK %a %.3f" Reference.pp define total_time;
+          );  
           
           our_model, our_errors
         | _ -> our_model, our_errors

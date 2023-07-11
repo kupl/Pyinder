@@ -24,14 +24,49 @@ module ReferenceMap = struct
     )
 
   let join ~data_join ~equal left right =
-    merge left right ~f:(fun ~key:_ data ->
+    let timer = Timer.start () in
+    let t_list = ref [] in
+    let x =
+      fold left ~init:right ~f:(fun ~key ~data acc ->
+          let x = find acc key in
+          let tt0 = Timer.stop_in_sec timer in
+          t_list := (tt0, "find")::!t_list;
+          match x with
+          | Some v when equal v data -> 
+            let tt0 = Timer.stop_in_sec timer in
+            t_list := (tt0, "equal")::!t_list;
+            acc
+          | Some v -> 
+            let x = set acc ~key ~data:(data_join data v) in
+            let tt0 = Timer.stop_in_sec timer in
+            t_list := (tt0, "join")::!t_list;
+            x
+          | _ -> 
+            let x = set acc ~key ~data in
+            let tt0 = Timer.stop_in_sec timer in
+            t_list := (tt0, "concat")::!t_list;
+            x
+            
+      )
+    (*  merge left right ~f:(fun ~key:_ data ->
       match data with
       | `Both (left, right) -> 
         let x = if equal left right then Some left else Some (data_join left right) in
-
+        let tt0 = Timer.stop_in_sec timer in
+        t_list := (tt0, "join")::!t_list;
         x
-      | `Left data | `Right data -> Some data
-    )
+      | `Left data | `Right data -> 
+        let tt0 = Timer.stop_in_sec timer in
+        t_list := (tt0, "concat")::!t_list; 
+        Some data
+    ) *)
+    in
+    let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 0.1 then (
+        Log.dump "MAP JOIN %.3f" total_time;
+        List.iter !t_list ~f:(fun (t, msg) -> Log.dump "%s... %.3f" msg t);
+      );
+    x
 
   let pp ~data_pp format t =
     iteri ~f:(fun ~key ~data ->
@@ -143,9 +178,9 @@ module ArgTypes = struct
       | `Left _ -> false
       | `Right _ -> true
       | `Both (v1, v2)  -> Type.equal v1 v2
-    ) *)
+    )
 
-  (* let can_arg_merge left right =
+  let can_arg_merge left right =
     IdentifierMap.fold2 left right ~init:true ~f:(fun ~key:_ ~data flag ->
       flag &&
       match data with
@@ -418,10 +453,23 @@ module Signatures = struct
     should_analysis = true;
   }
 
+  let equal_except_parameter left right =
+    Type.equal left.return_type right.return_type &&
+    ReferenceMap.fold2 left.return_var_type right.return_var_type ~init:true ~f:(fun ~key ~data flag ->
+        if Reference.is_self key || Reference.is_cls key
+        then (
+          match data with
+          | `Both (v1, v2) -> flag && Type.equal v1 v2
+          | _ -> false
+        ) else (
+          flag
+        )
+    )
+
   let update_return_info ~type_join left right =
     (* let timer = Timer.start () in *)
 
-    let return_var_type = ReferenceMap.join_type ~type_join left.return_var_type right.return_var_type in
+    let return_var_type = (* ReferenceMap.join_type ~type_join left.return_var_type *) right.return_var_type in
     (* let tt0 = Timer.stop_in_sec timer in *)
     let return_type = type_join left.return_type right.return_type in
     (* let tt1 = Timer.stop_in_sec timer in *)
@@ -437,7 +485,7 @@ module Signatures = struct
   in
 
     
-    (* if Float.(>.) total_time 0.0005 then (
+    (* if Float.(>.) total_time 0.001 then (
       Log.dump "HOODA %.5f %.5f %.5f" tt0 tt1 tt2;
       Log.dump "LEFT %a RIGHT %a" Type.pp left.return_type Type.pp right.return_type;
     );   *)
@@ -453,7 +501,7 @@ module Signatures = struct
     }
     
 
-  (* let merge_arg_types ~type_join arg_types prev_key prev_data =
+(*   let merge_arg_types ~type_join arg_types prev_key prev_data =
     let new_arg_types, flag =
       ArgTypesMap.fold arg_types ~init:(ArgTypesMap.empty, false) ~f:(fun ~key:next_key ~data:next_data (new_arg_types, flag) ->
         match ArgTypes.arg_merge prev_key next_key with
@@ -490,7 +538,7 @@ module Signatures = struct
     ArgTypesMap.merge ~f:(fun ~key:_ data ->
       match data with
       | `Left v | `Right v -> Some v
-      | `Both (v1, v2) -> if equal_return_info v1 v2 then Some v1 else Some (update_return_info ~type_join v1 v2)
+      | `Both (v1, v2) -> (* if equal_return_info v1 v2 then Some v1 else  *)Some (update_return_info ~type_join v1 v2)
     ) prev next
 
 
@@ -526,11 +574,31 @@ module Signatures = struct
     (* ArgTypesMap.filter_keys t ~f:(fun k -> ArgTypes.less_or_equal_keys arg_types k) *)
     ArgTypesMap.find t arg_types
 
+  
 
   let filter_unknown arg_types =
+    
     arg_types
+    |> ArgTypes.map ~f:Type.narrow_iterable
     |> ArgTypes.map ~f:Type.filter_unknown
     |> ArgTypes.filter ~f:(fun data -> not (Type.is_unknown data))
+
+    
+
+
+(*   let find_return_type ~type_join t arg_types =
+    let new_arg_types = filter_unknown arg_types in
+    (* let timer = Timer.start () in *)
+    let x =
+    find_signature t new_arg_types
+    |> ArgTypesMap.fold ~init:Type.Bottom ~f:(fun ~key:_ ~data acc -> 
+      type_join data.return_type acc)
+    in
+(*       let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 5.0 then (
+        Log.dump ">>> %a (%.3f)" Type.pp x total_time;
+      ); *)
+      x *)
 
   let add_new_signature ~join t arg_typ_list =
     let _ = join in
@@ -603,8 +671,8 @@ module Signatures = struct
     ArgTypesMap.fold2 left right ~init:false ~f:(fun ~key:_ ~data flag ->
       flag ||
       match data with
-      | `Left _ | `Right _ -> false
-      | `Both (v1, v2) -> equal_return_info v1 v2
+      | `Left _ | `Right _ -> true
+      | `Both (v1, v2) -> equal_except_parameter v1 v2
     )
 
 end
@@ -678,6 +746,12 @@ module FunctionSummary = struct
 
   let set_preprocess ({ preprocess; _ } as t) expression typ =
     { t with preprocess=(ExpressionMap.set preprocess ~key:expression ~data:typ)}
+
+  let set_callers t callers =
+    { t with callers }
+
+  let set_usage_attributes t usage_attributes =
+    { t with usage_attributes }
 
   (* let add_return_var_type ({ return_var_type; _ } as t) reference typ =
     { t with return_var_type=(ReferenceMap.set return_var_type ~key:reference ~data:typ); } *)
@@ -818,25 +892,28 @@ module FunctionSummary = struct
         )
       in
       *)
-      (* let timer = Timer.start () in *)
+      let timer = Timer.start () in
       let signatures=Signatures.update ~type_join prev.signatures next.signatures in
-      (* let tt = Timer.stop_in_sec timer in *)
-      let preprocess=
-        ExpressionMap.merge prev.preprocess next.preprocess ~f:(fun ~key:_ data ->
+      let tt = Timer.stop_in_sec timer in
+      let preprocess = next.preprocess
+        (* ExpressionMap.merge prev.preprocess next.preprocess ~f:(fun ~key:_ data ->
           match data with
           | `Left v | `Right v -> Some v
           | `Both (v1, v2) -> Some (type_join v1 v2)    
-        )
+        ) *)
       in
 
-      let callers=CallerSet.union prev.callers next.callers in
+      let callers= next.callers
+      (* CallerSet.union prev.callers next.callers *) 
+      in
       (* let tt1 = Timer.stop_in_sec timer in *)
-      let usage_attributes=AttributeStorage.join prev.usage_attributes next.usage_attributes in
-      (* let tt2 = Timer.stop_in_sec timer in
+      let usage_attributes = next.usage_attributes (* AttributeStorage.join prev.usage_attributes next.usage_attributes *) in
+      (* let tt2 = Timer.stop_in_sec timer in *)
       let total_time = Timer.stop_in_sec timer in
-      if Float.(>.) total_time 0.001 then (
-        Log.dump "GOODA %.5f %.5f %.5f" tt tt1 tt2;
-      );   *)
+      if Float.(>.) total_time 0.01 then (
+        Log.dump "GOODA %.3f %.3f" tt total_time;
+        (* Log.dump "Left : %a\nRight : %a\n" Signatures.pp prev.signatures Signatures.pp next.signatures; *)
+      );  
       
       
     {
@@ -898,7 +975,7 @@ module FunctionSummary = struct
 
     let ret_callable =
       match return_type with
-      | Type.Unknown -> 
+      | Type.Unknown | Type.Bottom -> 
         (match arg_callable.implementation.annotation with
         | Type.Top | Any -> Type.Callable.with_return_annotation arg_callable ~annotation:Type.Unknown
         | _ -> arg_callable
@@ -1000,6 +1077,14 @@ module FunctionTable = struct
   let set_preprocess t func expression typ =
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set ~key:func ~data:(FunctionSummary.set_preprocess func_summary expression typ) t
+
+  let set_callers t func callers =
+    let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionMap.set ~key:func ~data:(FunctionSummary.set_callers func_summary callers) t
+  
+  let set_usage_attributes t func usage_attributes =
+    let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionMap.set ~key:func ~data:(FunctionSummary.set_usage_attributes func_summary usage_attributes) t
 
 (*   let set_return_var_type t func return_var_type =
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
@@ -1170,7 +1255,9 @@ module OurSummary = struct
     let class_time = Timer.stop_in_sec timer in
     let function_table = FunctionTable.update ~type_join prev.function_table next.function_table in
     let function_time = Timer.stop_in_sec timer -. class_time in
-    (* Log.dump "Class %f \nFunction %f" class_time function_time; *)
+
+    if Float.(>) (function_time +. class_time) 0.1 then
+      Log.dump "Class %.3f Function %.3f" class_time function_time;
     let _ = function_time in
     {
       class_table;
@@ -1240,6 +1327,12 @@ module OurSummary = struct
 
   let set_preprocess ({function_table; _} as t) func_name expression typ =
     { t with function_table=FunctionTable.set_preprocess function_table func_name expression typ }
+
+  let set_callers ({function_table; _} as t) func_name callers =
+    { t with function_table=FunctionTable.set_callers function_table func_name callers }
+
+  let set_usage_attributes ({function_table; _} as t) func_name usage_attributes =
+    { t with function_table=FunctionTable.set_usage_attributes function_table func_name usage_attributes }
     (*
   let set_usedef_tables ({function_table; _} as t) func_name usedef_tables =
     { t with function_table=FunctionTable.set_usedef_tables function_table func_name usedef_tables }

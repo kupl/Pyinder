@@ -323,6 +323,7 @@ module FunctionSummaryResolution = struct
     let class_param = class_param |> Option.value ~default:"" |> Reference.create in
     (* parameter만 *)
     let rec attribute_fold ~base_reference ~attributes return_var_type =
+      
       Identifier.Map.Tree.fold ~init:return_var_type ~f:(fun ~key ~data return_var_type ->
         unit_fold ~unit:data ~base_reference:(Reference.combine base_reference (Reference.create key)) return_var_type
       ) attributes

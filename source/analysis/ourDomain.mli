@@ -237,6 +237,10 @@ module OurSummary : sig
   val set_return_type : t -> Reference.t -> ArgTypes.t -> Type.t -> t
 
   val set_preprocess : t -> Reference.t -> Expression.t -> Type.t -> t
+
+  val set_callers : t -> Reference.t -> CallerSet.t -> t
+
+  val set_usage_attributes : t -> Reference.t -> AttributeStorage.t -> t
 (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)

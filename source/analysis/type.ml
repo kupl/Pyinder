@@ -2882,6 +2882,7 @@ module Transform = struct
         | Tuple ordered_type -> Tuple (visit_ordered_types ordered_type)
         | OurTypedDictionary { general; typed_dict; } -> 
           (*Log.dump "What is this?"; *)
+          let typed_dict = List.map typed_dict ~f:(fun t -> { t with annotation=visit_annotation t.annotation ~state; }) in
           OurTypedDictionary { general=visit_annotation general ~state; typed_dict; } 
         | TypeOperation (Compose ordered_type) -> 
             TypeOperation (Compose (visit_ordered_types ordered_type))
@@ -7196,6 +7197,29 @@ let rec get_depth parent_annotation =
     in
     snd (InstantiateTransform.visit () annotation)
   
+let narrow_our_typed_dict annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
+
+    let visit_children_before _ _ = true
+
+    let visit_children_after = false
+
+    let visit _ annotation = 
+      let annotation =
+        match annotation with
+        | OurTypedDictionary { general; typed_dict; } ->
+          if List.length typed_dict > 20 then general else annotation
+        | _ -> annotation
+      in
+      
+      { 
+        Transform.transformed_annotation = annotation; 
+        new_state = (); 
+      }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
 
 let rec can_union ~f t =
   match t with
@@ -7387,8 +7411,13 @@ let narrow_union ~join ~less_or_equal t =
         dedup (List.fold t_list ~init:[] ~f:loose_union)
     in
 
-    loose_t_list
-    |> List.map ~f:narrow_iterable
+    let x =
+      loose_t_list
+      |> List.map ~f:narrow_iterable
+      |> List.map ~f:narrow_our_typed_dict
+    in
+
+    x
 
   in
 
@@ -7396,7 +7425,7 @@ let narrow_union ~join ~less_or_equal t =
   match t with
   | Union t_list ->
     let loose_t_list = get_loose_t_list t_list in
-    if List.length loose_t_list <= 5 then (Union loose_t_list) else
+    if List.length loose_t_list <= 10 then (Union loose_t_list) else
 
     
     let dedup =
@@ -7458,13 +7487,19 @@ let narrow_union ~join ~less_or_equal t =
     if (List.length loose_t_list) > (List.length narrow_result)
       then Log.dump "[[ Before : %i ]]\n%a\n[[ After : %i ]]\n%a\n" (List.length loose_t_list) pp (Union loose_t_list) (List.length narrow_result) pp (Union narrow_result);
     *)
-    if List.length narrow_result = 1
-    then List.nth_exn narrow_result 0 
-    else if false
+    let result = (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join in
+
+    (match result with
+    | Union t_list ->
+    if List.length t_list = 1
+    then List.nth_exn t_list 0 
+    else if List.length t_list > 15
     then (
       Top
     )
     else
-      (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join
+      result
+    | _ -> result
+    )
   | _ -> t
 

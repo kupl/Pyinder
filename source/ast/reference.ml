@@ -86,6 +86,11 @@ let is_self reference =
   | head :: _ when String.is_prefix ~prefix:"$parameter$self" head -> true
   | _ -> false
 
+let is_cls reference =
+  match reference with
+  | head :: _ when String.is_prefix ~prefix:"$parameter$cls" head -> true
+  | _ -> false
+
 let sanitized reference = List.map ~f:Identifier.sanitized reference
 
 let sanitize_qualified reference =

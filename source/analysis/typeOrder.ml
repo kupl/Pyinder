@@ -129,6 +129,8 @@ module OrderImplementation = struct
         right
       =
 
+      (* let origin_left, origin_right = left, right in *)
+
       (* let timer = Timer.start () in *)
       let left, right =
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
@@ -143,6 +145,7 @@ module OrderImplementation = struct
         Log.dump "JOINDA %.5f %.5f" tt0 tt1;
         Log.dump "LEFT %a RIGHT %a" Type.pp left Type.pp right;
       );   *)
+      let x =
       if Type.equal left right then
         left
       (*else if
@@ -219,13 +222,13 @@ module OrderImplementation = struct
           |> Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order)
         
         
-        (*
-        | Type.Union _, Type.Union right ->
+        
+        (* | Type.Union _, Type.Union right ->
 
             List.fold right ~init:left ~f:(fun acc right_t ->
               join order acc right_t
-            )
-        *)
+            ) *)
+       
         | (Type.Union elements as union), other
         | other, (Type.Union elements as union) ->
           
@@ -241,8 +244,8 @@ module OrderImplementation = struct
           );  *)
           
           
-            if always_less_or_equal order ~left:other ~right:union 
-              && not (Type.contains_any other) && not (Type.can_unknown other) && not (Type.can_unknown union)
+            if always_less_or_equal order ~left:other ~right:(Type.filter_unknown union) 
+              && not (Type.contains_any other)(*  && not (Type.can_unknown other) && not (Type.can_unknown union) *)
             then (
               union
             )
@@ -603,7 +606,14 @@ module OrderImplementation = struct
         | TypeOperation _, _
         | _, TypeOperation _ ->
             union
-        
+      in
+
+      (* let total_time = Timer.stop_in_sec timer in *)
+      (* if Float.(>.) total_time 0.1 then (
+        Log.dump "JOIN %.3f %.3f\nLeft : %a =>\n%a\nRight : %a =>\n%a\n" tt0 total_time Type.pp origin_left Type.pp left Type.pp origin_right Type.pp right;
+      );  *)
+
+      x
 
 
 
