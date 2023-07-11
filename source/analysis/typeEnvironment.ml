@@ -282,13 +282,15 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
   let _ = type_join in
   let mode = OurDomain.load_mode () in
+
+  let our_model = OurDomain.OurSummary.change_analysis_all_to_false !OurDomain.our_model in
   
   let read_only = read_only environment in
   (
   match type_join with
   | Some type_join ->
     let our_summary, our_errors =
-      List.fold filtered_defines ~init:(!OurDomain.our_model, !OurErrorDomain.our_errors) ~f:(fun (our_model, our_errors) define ->
+      List.fold filtered_defines ~init:(our_model, !OurErrorDomain.our_errors) ~f:(fun (our_model, our_errors) define ->
         let timer = Timer.start () in
         let _ = timer in
         let result = ReadOnly.get read_only define in
@@ -360,11 +362,11 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
               List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);
           ); *)
 
-          let total_time = Timer.stop_in_sec timer in
-          if Float.(>.) total_time 0.1 then (
+          (* let total_time = Timer.stop_in_sec timer in *)
+          (* if Float.(>.) total_time 0.1 then (
             (* Log.dump "Start\n%a\nEnd" OurDomain.OurSummary.pp cur_summary; *)
             Log.dump "OKOK %a %.3f" Reference.pp define total_time;
-          );  
+          );   *)
           
           our_model, our_errors
         | _ -> our_model, our_errors

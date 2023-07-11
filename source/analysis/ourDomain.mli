@@ -291,6 +291,8 @@ module OurSummary : sig
 
   val change_analysis_all : t -> t
 
+  val change_analysis_all_to_false : t -> t
+
   val get_skip_set : t -> t -> ReferenceSet.t
 end
 

@@ -14194,6 +14194,11 @@ let exit_state ~resolution (module Context : OurContext) =
 
       (* Log.dump "%a GO" Reference.pp name;
       Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution; *)
+      if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.storage.Store._async_handle_write_data"
+        then (
+          Log.dump "START %a" Resolution.pp resolution;
+        ); 
+
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       let exit = PossibleFixpoint.exit fixpoint in
 
