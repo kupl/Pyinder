@@ -13861,7 +13861,6 @@ let exit_state ~resolution (module Context : OurContext) =
     let final_model = !OurDomain.our_model in 
     let join = GlobalResolution.join global_resolution in
 
-    let our_model =
       match initial.rt_type with
       | Value resolution ->
         let arg_types = OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution in
@@ -13871,13 +13870,12 @@ let exit_state ~resolution (module Context : OurContext) =
         (match OurDomain.OurSummary.find_signature final_model name arg_types with
         (* | signature when OurDomain.Signatures.ArgTypesMap.is_empty signature -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
         | _ -> our_model *)
-        | Some _ -> our_model
+        | Some _ -> ()
         | _ -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
         )
 
-      | Unreachable -> our_model 
-    in
-    Context.our_summary := our_model
+      | Unreachable -> () 
+    (* Context.our_summary := our_model *)
   in
 
   let initial = PossibleState.initial ~resolution in
@@ -14137,12 +14135,10 @@ let exit_state ~resolution (module Context : OurContext) =
     let final_model = !OurDomain.our_model in
     let arg_types_list = OurDomain.OurSummary.get_analysis_arg_types final_model name in
     let our_summary = !Context.our_summary in
-    let our_summary =
-      List.fold arg_types_list ~init:our_summary ~f:(fun our_summary arg_types -> 
+      List.iter arg_types_list ~f:(fun arg_types -> 
         OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary name arg_types    
-      )
-    in
-    Context.our_summary := our_summary;
+      );
+    (* Context.our_summary := our_summary; *)
 
     let check_arg_types_list = OurDomain.OurSummary.get_analysis_arg_types our_summary name in
 
@@ -14181,8 +14177,8 @@ let exit_state ~resolution (module Context : OurContext) =
       in
 
       if not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then (
-        let our_summary = OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name arg_types return_annotation in
-        Context.our_summary := our_summary
+        OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name arg_types return_annotation;
+        (* Context.our_summary := our_summary *)
       );
 
       let { Node.value = { Define.signature = { Define.Signature.name; _ }; _ }; _ } =
@@ -14302,38 +14298,40 @@ let exit_state ~resolution (module Context : OurContext) =
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
       let our_summary = !Context.our_summary in
-      let our_summary = 
+
         (match last_state with
         | Some state ->
           (match state.rt_type with
           | Value v ->
 
-            let our_summary = 
-              (match parent, List.nth parameters 0 with
-              | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+            let _ =
+            (match parent, List.nth parameters 0 with
+            | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
 
-                let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name arg_types (Resolution.get_annotation_store v) in
-            
-                OurDomain.OurSummary.set_class_table our_summary (
-                  OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
-                    (OurDomain.OurSummary.get_class_table our_summary) class_name class_param (Resolution.annotation_store v)
-                )
-              | _ ->           
-                let our_summary = OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name arg_types (Resolution.get_annotation_store v) in
-                our_summary
-              )
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name arg_types (Resolution.get_annotation_store v);
+              let class_table = OurDomain.OurSummary.get_class_table our_summary in
+
+              OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
+                class_table class_name class_param (Resolution.annotation_store v);
+
+              OurDomain.OurSummary.set_class_table our_summary class_table
+            | _ ->           
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name arg_types (Resolution.get_annotation_store v);
+              our_summary
+            )
             in
-            our_summary
+            ()
 
-          | Unreachable -> our_summary
+
+          | Unreachable -> ()
           )
-        | None -> our_summary
-        )
-      in
+        | None -> ()
+        );
 
-      let our_summary = OurDomain.OurSummary.end_analysis our_summary name arg_types in
 
-      Context.our_summary := our_summary;
+      OurDomain.OurSummary.end_analysis our_summary name arg_types;
+
+      (* Context.our_summary := our_summary; *)
 
       let callees = Context.Builder.get_all_callees () in
       let local_annotations =
@@ -14568,7 +14566,7 @@ let check_define
         in
         Some [undefined_error], None, None, OurDomain.OurSummary.empty
   in
-  let our_summary =
+
     if not (Define.is_overloaded_function define) then
       let caller =
         if Define.is_property_setter define then
@@ -14580,28 +14578,26 @@ let check_define
         Callgraph.set ~caller ~callees
       );
       if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-        let our_summary =
-          Option.fold callees ~init:our_summary ~f:(fun our_summary callees -> 
+          Option.iter callees ~f:(fun callees -> 
               (* List.filter callees ~f:(fun callee ->
                 not (String.is_suffix ~suffix:"__init__" (Reference.show (Callgraph.get_callee_name ~callee:callee.callee))) 
               ) 
               |> *)
               callees |>
-              List.fold ~init:our_summary ~f:(fun our_summary { Callgraph.callee; _}  ->
+              List.iter ~f:(fun { Callgraph.callee; _}  ->
                 OurDomain.OurSummary.add_caller our_summary (
                   Callgraph.get_callee_name ~callee:callee
                 ) ~caller:name
               )
           )
-        in
-        our_summary
+
       else (
-        our_summary
+        ()
       )
     else (
-      our_summary
-    )
-  in
+      ()
+    );
+
   let local_annotations =
     if include_local_annotations then
       Some
@@ -14683,7 +14679,7 @@ let check_function_definition
     Log.dump "Check %a ===>\n %a\n" Reference.pp name OurDomain.OurSummary.pp !OurDomain.our_summary;
   );
   *)
-
+  let our_model = OurDomain.OurSummary.empty in
   let check_define = check_define ~type_check_controls ~resolution ~qualifier ~call_graph_builder ~entry_arg_types in
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
@@ -14695,12 +14691,12 @@ let check_function_definition
     in
     let aggregate_our_summary results =
       List.map results ~f:(fun (our_summary, _, _) -> our_summary)
-      |> List.fold ~init:OurDomain.OurSummary.empty ~f:(fun acc our_summary ->
-          OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) acc our_summary
+      |> List.iter ~f:(fun our_summary ->
+          OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) our_summary our_model
         )
     in
     match body with
-    | None -> { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t (aggregate_our_summary sibling_results); errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> aggregate_our_summary sibling_results; { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
         { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }

@@ -5570,7 +5570,7 @@ module TypeCheckAT (Context : Context) = struct
            classes and functions are analyzed separately. *)
 
         (* Class 에 모든 define body가 담겨 있음 *)
-        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+        (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name; _ } = define_signature in
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
@@ -5590,7 +5590,7 @@ module TypeCheckAT (Context : Context) = struct
             | _ -> ()
           )
         else ();
-          
+           *)
           
         let check_base errors base =
           let check_pair errors extended actual =
@@ -5653,7 +5653,7 @@ module TypeCheckAT (Context : Context) = struct
           | _ -> errors
         in
 
-        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+        (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
           let { StatementDefine.Signature.name=define_name; _ } = define_signature in
           let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_statement.name)) in
           (match class_summary with
@@ -5689,7 +5689,7 @@ module TypeCheckAT (Context : Context) = struct
             OurTypeSet.save_summary our_model saved_name;
             *)
           
-        else ();
+        else (); *)
         (Value resolution, List.fold (Class.base_classes class_statement) ~f:check_base ~init:[])
     | For _
     | If _

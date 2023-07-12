@@ -156,6 +156,7 @@
             in
 
              let rec fixpoint n k environment prev_model skip_set =
+              let _ = prev_model in
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
 
               if k >= 2 then
@@ -175,7 +176,7 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 12) || (n >= 2) || (Analysis.OurDomain.OurSummary.equal prev_model our_model)
+              if (k >= 12) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
               then (
                 Log.dump "Done";
                 let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in
@@ -189,21 +190,21 @@
                 let next_skip_set, next_our_model =
                   if k = 0 then
                     (* Preprocess ... *)
-                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in
+                    (* Analysis.OurDomain.OurSummary.change_analysis_all our_model; *)
                     let environment =
-                      Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:next_our_model configuration
+                      Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
                       |> Analysis.ErrorsEnvironment.set_environment environment
                     in
                     preprocess environment;
                     let our_model = !Analysis.OurDomain.our_model in
 
                     let next_skip_set = Ast.Reference.Set.empty in
-                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in
-                    next_skip_set, next_our_model
+                    (* let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in *)
+                    next_skip_set, our_model
                   else
-                    let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set prev_model our_model in
-                    let next_our_model = Analysis.OurDomain.OurSummary.change_analysis prev_model our_model in
-                    next_skip_set, next_our_model
+                    let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set our_model in
+                     Analysis.OurDomain.OurSummary.change_analysis our_model;
+                    next_skip_set, our_model
                 in
                 let n =
                   if Ast.Reference.Set.equal skip_set next_skip_set 

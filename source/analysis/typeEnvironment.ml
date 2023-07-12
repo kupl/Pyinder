@@ -259,7 +259,11 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       ~inputs:qualifiers
       ()
   in
+  let our_model = !OurDomain.our_model in
 
+  let mode = OurDomain.load_mode () in
+  if String.equal mode "preprocess" then
+    List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define);
 
   let filtered_defines =
     List.filter all_defines ~f:(fun name ->
@@ -281,16 +285,20 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   populate_for_definitions ~scheduler environment filtered_defines;
 
   let _ = type_join in
-  let mode = OurDomain.load_mode () in
+  
 
-  let our_model = OurDomain.OurSummary.change_analysis_all_to_false !OurDomain.our_model in
+  
+  if String.equal mode "preprocess" then
+    List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define)
+  else
+    List.iter filtered_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_to_false_of_func our_model define);
   
   let read_only = read_only environment in
   (
   match type_join with
   | Some type_join ->
-    let our_summary, our_errors =
-      List.fold filtered_defines ~init:(our_model, !OurErrorDomain.our_errors) ~f:(fun (our_model, our_errors) define ->
+    let our_errors =
+      List.fold filtered_defines ~init:!OurErrorDomain.our_errors ~f:(fun our_errors define ->
         let timer = Timer.start () in
         let _ = timer in
         let result = ReadOnly.get read_only define in
@@ -300,22 +308,19 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         | Some t when String.equal mode "preprocess" ->
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let expression_map = OurDomain.OurSummary.get_preprocess cur_summary define in
-          let our_model =
-            OurDomain.ExpressionMap.fold expression_map ~init:our_model ~f:(fun ~key ~data model -> 
-              OurDomain.OurSummary.set_preprocess model define key data
-            )
-          in
-          our_model, our_errors
+            OurDomain.ExpressionMap.iteri expression_map ~f:(fun ~key ~data -> 
+              OurDomain.OurSummary.set_preprocess our_model define key data
+            );
+          our_errors
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
-          let our_model =
-            OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define) 
-          in
-          let our_model =
-            OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define)
-          in
-          let our_model = OurDomain.OurSummary.update ~type_join ~prev:our_model cur_summary in
+          
+            OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
+
+            OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define);
+
+          OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
           let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
 
            (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
@@ -368,15 +373,15 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             Log.dump "OKOK %a %.3f" Reference.pp define total_time;
           );   *)
           
-          our_model, our_errors
-        | _ -> our_model, our_errors
+          our_errors
+        | _ -> our_errors
         )
         in
         
         x
       )
     in
-    OurDomain.our_model := our_summary;
+    (* OurDomain.our_model := our_summary; *)
     OurErrorDomain.our_errors := our_errors;
   | _ -> Log.dump "No Join"
   )

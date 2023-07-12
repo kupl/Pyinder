@@ -12,12 +12,12 @@ module Error = AnalysisError
 module CheckResult = TypeCheck.CheckResult
 module DummyContext = TypeCheck.DummyContext
 
-let preprocess ~global_resolution define =
+let preprocess ~our_model ~global_resolution define =
   let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; _ }; _ } =
     define
   in
 
-  let our_model = OurDomain.OurSummary.empty in
+  
   let final_model = !OurDomain.our_model in
 
   let func_attrs = 
@@ -67,21 +67,23 @@ let preprocess ~global_resolution define =
     )
   in  
 
-  LocInsensitiveExpMap.fold func_attrs ~init:our_model ~f:(fun ~key:({ Node.value; _ } as expression) ~data our_model ->
+  LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key:({ Node.value; _ } as expression) ~data ->
     match value with
     | Expression.Name _ ->
       let duck_type = Type.Primitive (Reference.show data) in
       (* Log.dump "Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
-      
-    | _ -> our_model
-  )
+    | _ -> ()
+  );
+
+  our_model
 
 let check_define
+    ~our_model
     ~global_resolution
     define_node
   =
-  let our_summary = preprocess ~global_resolution define_node in
+  let our_summary = preprocess ~our_model ~global_resolution define_node in
   let errors = None in
   let local_annotations = None in
   (our_summary, errors, local_annotations)
@@ -93,7 +95,8 @@ let check_function_definition
     { FunctionDefinition.body; siblings; _ }
   =
   let timer = Timer.start () in
-  let check_define = check_define ~global_resolution in
+  let our_model = OurDomain.OurSummary.empty in
+  let check_define = check_define ~our_model ~global_resolution in
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
   let result =
@@ -103,12 +106,12 @@ let check_function_definition
     in
     let aggregate_our_summary results =
       List.map results ~f:(fun (our_summary, _, _) -> our_summary)
-      |> List.fold ~init:OurDomain.OurSummary.empty ~f:(fun acc our_summary ->
-          OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) acc our_summary
+      |> List.iter ~f:(fun our_summary ->
+          OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) our_summary our_model
         )
     in
     match body with
-    | None -> { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t (aggregate_our_summary sibling_results); errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> aggregate_our_summary sibling_results; { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
         { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }

@@ -11,12 +11,12 @@ module ReferenceSet = Reference.Set
 module ReferenceHash = struct
   include Reference.Table
 
-  let join_type ~type_join left right =
+  (* let join_type ~type_join left right =
     merge_into ~src:left ~dst:right ~f:(fun ~key:_ src dst ->
       match dst with
       | Some v -> Set_to (type_join src v)
       | _ -> Set_to src
-    )
+    ) *)
     (* merge left right ~f:(fun ~key:_ data ->
       match data with
       | `Both (left, right) -> if Type.equal left right then Some left else (
@@ -37,10 +37,10 @@ module ReferenceHash = struct
       | _ -> Set_to src
     )
 
-  let pp ~data_pp format t =
+  (* let pp ~data_pp format t =
     iteri ~f:(fun ~key ~data ->
       Format.fprintf format "%a => %a\n" Reference.pp key data_pp data
-    ) t
+    ) t *)
 end
 
 
@@ -412,6 +412,8 @@ module ClassSummary = struct
 
   let pp format t =
     Format.fprintf format "%a\n%a\n%a" pp_class_var_type t pp_class_info t pp_usage_attributes t
+
+  let has_analysis { should_analysis; _ } = should_analysis
 end
 
 module type ClassTable = sig
@@ -466,6 +468,11 @@ module ClassTable = struct
       else
         ref_set
     )
+
+  let has_analysis t =
+    ClassHash.fold t ~init:false ~f:(fun ~key:_ ~data acc ->
+      acc || ClassSummary.has_analysis data
+    )
 end
 
 (* module type FunctionSummary = sig
@@ -504,7 +511,7 @@ module Signatures = struct
     caller_analysis = true;
   }
 
-  let equal_except_parameter left right =
+  (* let equal_except_parameter left right =
     Type.equal left.return_type right.return_type &&
     ReferenceMap.fold2 left.return_var_type right.return_var_type ~init:true ~f:(fun ~key ~data flag ->
         if Reference.is_self key || Reference.is_cls key
@@ -515,7 +522,7 @@ module Signatures = struct
         ) else (
           flag
         )
-    )
+    ) *)
 
   let update_return_info ~type_join left right =
     (* let timer = Timer.start () in *)
@@ -735,6 +742,10 @@ module Signatures = struct
       | `Both (v1, v2) -> equal_except_parameter v1 v2
     ) *)
 
+  let has_analysis t = 
+    ArgTypesMap.fold t ~init:false ~f:(fun ~key:_ ~data:{ should_analysis; caller_analysis; _ } flag ->
+      flag || should_analysis || caller_analysis
+    )
 end
 
 module type FunctionSummary = sig
@@ -1087,6 +1098,9 @@ module FunctionSummary = struct
     let analysis_set = analysis_caller_set t in
     
     should_analysis, analysis_set
+
+  let has_analysis { signatures; _ } =
+    Signatures.has_analysis signatures
 end
 
 module type FunctionTable = sig
@@ -1286,6 +1300,11 @@ module FunctionTable = struct
       )
     )
 
+  let has_analysis t =
+    FunctionHash.fold t ~init:false ~f:(fun ~key:_ ~data acc ->
+      acc || FunctionSummary.has_analysis data
+    )
+
 end
 
 module type OurSummary = sig
@@ -1476,7 +1495,9 @@ module OurSummary = struct
     let get_all_functions= FunctionTable.get_all_functions function_table in
     ReferenceSet.diff get_all_functions analysis_set
 
-  
+
+  let has_analysis { class_table; function_table; } =
+    ClassTable.has_analysis class_table && FunctionTable.has_analysis function_table
 
 end
 

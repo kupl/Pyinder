@@ -238,7 +238,7 @@ module ClassTable: sig
 
   val get : class_name:Reference.t -> f:(ClassSummary.t -> 'a) -> t -> 'a
 
-  val get_class_var_type : t -> Reference.t -> Type.t FunctionHash.t
+  val get_class_var_type : t -> Reference.t -> Type.t ReferenceMap.t
 
   val pp : Format.formatter -> t -> unit
 end
@@ -403,7 +403,7 @@ module OurSummary : sig
 
   val set_arg_annotation : t -> Reference.t -> ArgTypes.t -> t *)
 
-  val set_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t FunctionHash.t -> unit
+  val set_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t ReferenceMap.t -> unit
 
   val set_return_type : t -> Reference.t -> ArgTypes.t -> Type.t -> unit
 
@@ -446,7 +446,7 @@ module OurSummary : sig
 
   val set_class_summary : t -> Reference.t -> ClassSummary.t -> unit
 
-  val set_class_table : t -> ClassTable.t -> unit
+  val set_class_table : t -> ClassTable.t -> t
 
   val get_class_summary : t -> Reference.t -> ClassSummary.t
 
@@ -456,7 +456,7 @@ module OurSummary : sig
 
   val get_all_arg_types : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t
 
-  val change_analysis : t -> t -> unit
+  val change_analysis : t -> unit
 
   val end_analysis : t -> Reference.t -> ArgTypes.t -> unit
 
@@ -464,7 +464,9 @@ module OurSummary : sig
 
   val change_analysis_to_false_of_func : t -> Reference.t -> unit
 
-  val get_skip_set : t -> t -> ReferenceSet.t
+  val get_skip_set : t -> ReferenceSet.t
+
+  val has_analysis : t -> bool
 end
 
 val global_summary : string

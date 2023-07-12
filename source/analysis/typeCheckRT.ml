@@ -2795,8 +2795,8 @@ module TypeCheckRT (Context : OurContext) = struct
                     if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                       (*let { StatementDefine.Signature.name; _ } = define_signature in*)
                       let our_summary = !Context.our_summary in
-                      let our_summary = OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary reference arg_types in
-                      Context.our_summary := our_summary;
+                      OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary reference arg_types;
+                      (* Context.our_summary := our_summary; *)
                     else ();
 
                     resolution
@@ -6358,8 +6358,8 @@ module TypeCheckRT (Context : OurContext) = struct
             |> Type.Variable.convert_all_escaped_free_variables_to_bottom
           in
           
-          let our_summary = OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name entry_arg_types convert_actual in
-          Context.our_summary := our_summary;
+          OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name entry_arg_types convert_actual;
+          (* Context.our_summary := our_summary; *)
         else ();
         (Value resolution, validate_return expression ~resolution ~at_resolution ~errors ~actual ~is_implicit)
     | Define { signature = { Define.Signature.name; _ } as signature; _ } (* 이거 signature만 봄 *) ->
@@ -6470,8 +6470,8 @@ module TypeCheckRT (Context : OurContext) = struct
               let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
               let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
               
-              let our_model =
-                match parent, List.nth parameters 0 with
+              
+                (match parent, List.nth parameters 0 with
                 | Some class_name, Some { Node.value={ Parameter.name=class_var; _ }; _ } -> (* class 함수 *)
                   let rec update_parent_model our_model class_name =
                     (* 부모 클래스에 attribute 추가하기 *)
@@ -6483,7 +6483,7 @@ module TypeCheckRT (Context : OurContext) = struct
                           match parent_class_exp with
                           | Name name ->
                             let class_name = name_to_reference name |> Option.value ~default:Reference.empty in
-                            let model = OurTypeSet.OurSummaryResolution.add_parent_attributes model attribute_storage class_name class_var in
+                            OurTypeSet.OurSummaryResolution.add_parent_attributes model attribute_storage class_name class_var;
                             update_parent_model model class_name
                           | _ -> model
                         )
@@ -6496,9 +6496,9 @@ module TypeCheckRT (Context : OurContext) = struct
                   
                 | _ -> 
                   OurDomain.OurSummary.add_usage_attributes our_model define_name attribute_storage
-              in
+                );
               
-              Context.our_summary := our_model;
+              (* Context.our_summary := our_model; *)
               ()
             | _ -> ()
           )
@@ -6574,43 +6574,43 @@ module TypeCheckRT (Context : OurContext) = struct
             | Some { Node.value = class_summary; _ } ->
               
               let class_attrs = ClassSummary.attributes class_summary in
-              let our_model =
-                Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } our_model -> 
+            
+                Identifier.SerializableMap.iter (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } -> 
                   match kind with
                   | Simple _ ->
                     OurDomain.OurSummary.add_class_attribute our_model class_statement.name name
                   | Property _ ->
                     OurDomain.OurSummary.add_class_property our_model class_statement.name name
                   | Method { signatures; _ } ->
-                    List.fold signatures ~init:our_model ~f:(fun our_model signature ->
+                    List.iter signatures ~f:(fun signature ->
                       let arguments = AttributeAnalysis.CallInfo.of_parameters signature.parameters in
                       OurDomain.OurSummary.add_class_method our_model class_statement.name arguments name
                     )
                     
-                ) class_attrs our_model
-              in
+                ) class_attrs;
+
 
               let base_classes = ClassSummary.base_classes class_summary in
-              List.fold base_classes ~init:our_model ~f:(fun our_model { Node.value=base_class; _ } -> 
+              List.iter base_classes ~f:(fun { Node.value=base_class; _ } -> 
                 match base_class with
                 | Expression.Name n -> 
                   name_to_reference n |> (function
                     | Some reference -> get_attributes_of_class ~our_model reference
-                    | _ -> our_model
+                    | _ -> ()
                   )
-                | _ -> our_model
+                | _ -> ()
               )
-            | _ -> our_model
+            | _ -> ()
             )
           in
           let our_model = !Context.our_summary in
-          let our_model = get_attributes_of_class ~our_model class_statement.name in
+          get_attributes_of_class ~our_model class_statement.name;
 
           (* if String.is_substring (Reference.show class_statement.name) ~substring:"pandas.core.indexes.multi.MultiIndex"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp our_model;
             );  *)
-          Context.our_summary := our_model;
+          (* Context.our_summary := our_model; *)
           ()
           
             (*
