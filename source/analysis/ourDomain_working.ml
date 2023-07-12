@@ -1,3 +1,8 @@
+open Ast
+
+module ReferenceHash = struct
+  include Reference.Table
+end
 (* open Core
 open Ast
 

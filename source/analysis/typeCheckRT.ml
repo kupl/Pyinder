@@ -1930,7 +1930,7 @@ module TypeCheckRT (Context : OurContext) = struct
             let arguments = List.rev reversed_arguments in
             let type_join = GlobalResolution.join global_resolution in
             let final_model = !OurDomain.our_model in
-            let arg_types = GlobalResolution.callable_to_arg_types ~self_argument:None ~arguments t in
+            let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument:None ~arguments t in
             let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
           (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
             Type.Callable callable
@@ -1949,7 +1949,7 @@ module TypeCheckRT (Context : OurContext) = struct
             let arguments = List.rev reversed_arguments in
             let type_join = GlobalResolution.join global_resolution in
             let final_model = !OurDomain.our_model in
-            let arg_types = GlobalResolution.callable_to_arg_types ~self_argument:(Some self_argument) ~arguments t in
+            let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument:(Some self_argument) ~arguments t in
             let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
             
             
@@ -2218,7 +2218,7 @@ module TypeCheckRT (Context : OurContext) = struct
             (match callable.kind with
             | Named reference ->
               let our_model = !OurDomain.our_model in
-              let arg_types = GlobalResolution.callable_to_arg_types ~self_argument ~arguments callable in
+              let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument ~arguments callable in
               let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference arg_types in
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type

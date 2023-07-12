@@ -167,13 +167,13 @@ module ClassTableResolution = struct
   let join_with_merge_class_var_type ~type_join t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
     let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join class_summary class_param method_postcondition in
-    ClassHash.set ~key:class_name ~data t
+    ClassMap.set ~key:class_name ~data t
 
   let find_classes_from_attributes t { AttributeStorage.attribute_set; call_set; } =
     let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
 
     let more_accurate =
-      ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
+      ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
         let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
         let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
         let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
@@ -198,7 +198,7 @@ module ClassTableResolution = struct
     in
 
     if List.is_empty more_accurate then
-      ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
+      ClassMap.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
         let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
         let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
         let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
@@ -439,11 +439,11 @@ module FunctionTableResolution = struct
   include FunctionTable
 
   let store_to_return_var_type ?class_param t func_name arg_types (store: Refinement.Store.t) =
-    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionHash.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary arg_types store)
+    let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionMap.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary arg_types store)
 
   let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
-    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    let func_summary = FunctionMap.find t func_name |> Option.value ~default:FunctionSummary.empty in
     let debug = 
       String.is_substring (Reference.show func_name) ~substring:"_write_col_header"
     in
@@ -454,17 +454,18 @@ end
 module OurSummaryResolution = struct
   include OurSummary
 
-  let store_to_return_var_type ?class_param { function_table; _ } func_name arg_types store = 
-    FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name arg_types store
+  let store_to_return_var_type ?class_param ({ function_table; _ } as t) func_name arg_types store = 
+    { t with function_table=FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name arg_types store; }
 
   let get_type_of_class_attribute { class_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute class_table class_name attribute
   
   let get_self_attributes_tree { class_table; _ } class_name = ClassTableResolution.get_self_attributes_tree class_table class_name
 
-  let add_parent_attributes { class_table; _ } storage class_name class_var =
+  let add_parent_attributes ({ class_table; _ } as t) storage class_name class_var =
     (* 이거 짜야 댕 *)
     let filtered_storage = AttributeStorage.filter_by_prefix storage ~prefix:(Reference.create class_var) in
-    ClassTableResolution.add_parent_attributes class_table class_name filtered_storage
+    let class_table = ClassTableResolution.add_parent_attributes class_table class_name filtered_storage in
+    { t with class_table; }
 
 
   (*

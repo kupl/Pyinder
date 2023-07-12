@@ -230,6 +230,7 @@ val signature_select
   SignatureSelectionTypes.instantiated_return_annotation
 
 val callable_to_arg_types : 
+  global_resolution:t ->
   self_argument:Type.t option -> 
   arguments:AttributeResolution.Argument.t list ->
   Type.Callable.t ->

@@ -7209,7 +7209,7 @@ let narrow_our_typed_dict annotation =
       let annotation =
         match annotation with
         | OurTypedDictionary { general; typed_dict; } ->
-          if List.length typed_dict > 20 then general else annotation
+          if List.length typed_dict > 10 then general else annotation
         | _ -> annotation
       in
       
@@ -7425,7 +7425,7 @@ let narrow_union ~join ~less_or_equal t =
   match t with
   | Union t_list ->
     let loose_t_list = get_loose_t_list t_list in
-    if List.length loose_t_list <= 10 then (Union loose_t_list) else
+    if List.length loose_t_list <= 7 then (Union loose_t_list) else
 
     
     let dedup =
@@ -7493,7 +7493,7 @@ let narrow_union ~join ~less_or_equal t =
     | Union t_list ->
     if List.length t_list = 1
     then List.nth_exn t_list 0 
-    else if List.length t_list > 15
+    else if List.length t_list > 7
     then (
       Top
     )

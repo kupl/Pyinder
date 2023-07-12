@@ -15,7 +15,7 @@ open Refinement
 module ClassTableResolution : sig
   include ClassTable
 
-  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> string -> Refinement.Store.t -> unit
+  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> string -> Refinement.Store.t -> t
 end
 
 module ArgTypesResolution : sig
@@ -44,13 +44,13 @@ module OurSummaryResolution : sig
 
   type t = OurSummary.t
 
-  val store_to_return_var_type : ?class_param:string -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
+  val store_to_return_var_type : ?class_param:string -> t -> Reference.t -> ArgTypes.t -> Store.t -> t
 
   val get_type_of_class_attribute : t -> Reference.t -> string -> Type.t
 
   val get_self_attributes_tree : t -> Reference.t -> Unit.t Identifier.Map.Tree.t
 
-  val add_parent_attributes : t -> AttributeStorage.t -> Reference.t -> string -> unit
+  val add_parent_attributes : t -> AttributeStorage.t -> Reference.t -> string -> t
 (*
   val search_suspicious_variable : t -> store_combine:(Store.t -> Unit.t Reference.Map.t) -> Reference.t -> Refinement.Unit.t Reference.Map.t list
 *)

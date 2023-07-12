@@ -441,7 +441,7 @@ let signature_select ~global_resolution:({ dependency; _ } as resolution) ~resol
     | t -> t
   ) *)
 
-let callable_to_arg_types ~self_argument ~(arguments: AttributeResolution.Argument.t list) (callable: Type.Callable.t) =
+let callable_to_arg_types ~global_resolution ~self_argument ~(arguments: AttributeResolution.Argument.t list) (callable: Type.Callable.t) =
   let params = callable.implementation.parameters in
   let param_list = 
   (match params with
@@ -469,10 +469,12 @@ let callable_to_arg_types ~self_argument ~(arguments: AttributeResolution.Argume
     else
     (match arg.kind with
     | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc
-    | Named s ->  
-      (s.value, arg.resolved)::acc
+    | Named s ->
+      let arg_resolved = Type.narrow_union ~join:(join global_resolution) ~less_or_equal:(less_or_equal global_resolution) arg.resolved in  
+      (s.value, arg_resolved)::acc
     | Positional -> 
-      (List.nth_exn param_list (idx+revise_index), arg.resolved)::acc
+      let arg_resolved = Type.narrow_union ~join:(join global_resolution) ~less_or_equal:(less_or_equal global_resolution) arg.resolved in
+      (List.nth_exn param_list (idx+revise_index), arg_resolved)::acc
     )
   )
   in
@@ -502,7 +504,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
-      let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+      let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
       (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
       SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
@@ -510,14 +512,14 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       (* Log.dump "Before... %a" Type.pp (Callable t); *)
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
-      let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+      let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
       (* Log.dump "After... %a" Type.pp (Callable callable); *)
       SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
       | _ -> 
         let type_join = join resolution in
         let final_model = !OurDomain.our_model in
-        let arg_types = callable_to_arg_types ~self_argument ~arguments callable in
+        let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
         let return_type = OurDomain.OurSummary.get_callable_return_type final_model arg_types callable in
 
         let selected_return_annotation =
