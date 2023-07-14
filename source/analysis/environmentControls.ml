@@ -12,7 +12,7 @@ type t = {
   our_errors: OurErrorDomainReadOnly.OurErrorListReadOnly.t;
 }
 
-let create ?(populate_call_graph = false) ?(our_summary = OurDomain.OurSummary.empty) ?(our_errors = OurErrorDomainReadOnly.OurErrorListReadOnly.empty) configuration = 
+let create ?(populate_call_graph = false) ?(our_summary = OurDomain.OurSummary.empty ()) ?(our_errors = OurErrorDomainReadOnly.OurErrorListReadOnly.empty) configuration = 
   { configuration; populate_call_graph; our_summary; our_errors; }
 
 let create_for_overlay parent = { parent with populate_call_graph = false }

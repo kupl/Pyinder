@@ -1087,6 +1087,7 @@ module TypeCheckRT (Context : OurContext) = struct
         ~has_default
       =
       
+      
       let name = Name.Attribute { base; special; attribute } in
       let reference = name_to_reference name in
       let name_expression = name in
@@ -1095,6 +1096,7 @@ module TypeCheckRT (Context : OurContext) = struct
       Log.dump "Resolved Base : %a" Type.pp resolved_base; *)
       
       let access_as_attribute () =
+        
         let find_attribute ({ Type.instantiated; accessed_through_class; class_name } as class_data)
           =
           let name = attribute in
@@ -1194,9 +1196,12 @@ module TypeCheckRT (Context : OurContext) = struct
             let name = attribute in
             let class_datas, attributes, _ = List.unzip3 attribute_info in
             let head_annotation, tail_annotations, resolution =
+
+
               let (rev_annotations, resolution) = attributes |> List.foldi ~init:([], resolution) ~f:(fun i (acc, resolution) attribute -> 
                 let annotation = Annotated.Attribute.annotation attribute in
 
+                
                 let new_annotation, resolution =
                   if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                     let class_data = List.nth_exn class_datas i in
@@ -1257,6 +1262,9 @@ module TypeCheckRT (Context : OurContext) = struct
                 new_annotation::acc, resolution
                 ) 
               in
+
+              
+      
               let annotations = List.rev rev_annotations in
               List.hd_exn annotations, List.tl_exn annotations, resolution
             in
@@ -1332,6 +1340,7 @@ module TypeCheckRT (Context : OurContext) = struct
                     errors, resolution
               | _ -> errors, resolution
             in
+
             let resolved_annotation =
               let apply_local_override global_annotation =
                 let local_override =
@@ -1368,7 +1377,7 @@ module TypeCheckRT (Context : OurContext) = struct
               *)
 
               let join sofar element =
-                let refined =
+                (* let refined =
                   Refinement.Unit.join
                     ~global_resolution
                     (Refinement.Unit.create sofar)
@@ -1376,14 +1385,20 @@ module TypeCheckRT (Context : OurContext) = struct
                   |> Refinement.Unit.base
                   |> Option.value ~default:(Annotation.create_mutable Type.Unknown)
                 in
-                { refined with annotation = Type.union [sofar.annotation; element.annotation] }
+                { refined with annotation = Type.union [sofar.annotation; element.annotation] } *)
+
+                Annotation.join ~type_join:(GlobalResolution.join global_resolution) sofar element
               in
+
               List.fold ~init:head_annotation ~f:join tail_annotations 
               |> apply_local_override
               (*
               |> apply_class_info
               *)
             in
+
+            
+
             
             {
               resolution;
@@ -1431,6 +1446,7 @@ module TypeCheckRT (Context : OurContext) = struct
             access_as_attribute ()
       in
 
+      
       let base =
         match super_base with
         | Some (Resolved.Super _) -> super_base
@@ -1975,7 +1991,6 @@ module TypeCheckRT (Context : OurContext) = struct
       let resolution = resolved_dict_update resolution callee in
 
       let callee = update_method_type arguments callee in
-
 
       (* Log.dump "Resolution >>> %a" Resolution.pp resolution; *)
 
@@ -2886,6 +2901,7 @@ module TypeCheckRT (Context : OurContext) = struct
         ~qualifier:Context.qualifier
         ~callee_type:(Callee.resolved callee)
         ~callee:(Callee.expression callee);
+
       let found_return_annotations, not_found_return_annotations, undefined_attributes =
         List.partition3_map
           callables_with_selected_return_annotations
@@ -2958,6 +2974,7 @@ module TypeCheckRT (Context : OurContext) = struct
       
 
       let x = resolved_builtin_functions resolved callee in
+
 
       (* if String.is_substring (Reference.show define_name) ~substring:"airflow.models.dag.DAG.__init__"
         then (
@@ -3506,6 +3523,8 @@ module TypeCheckRT (Context : OurContext) = struct
           =
           forward_expression ~resolution ~at_resolution callee
         in
+        
+        
 
         (*
         Log.dump "Call : %a => %a" Expression.pp callee Type.pp resolved_callee;
@@ -3607,6 +3626,9 @@ module TypeCheckRT (Context : OurContext) = struct
         
         Log.dump "Update resolution >>> \n%a" Resolution.pp updated_resolution;
         *)
+
+        
+
         let _ = updated_resolution in
         {
           resolution = updated_resolution;
@@ -4229,12 +4251,16 @@ module TypeCheckRT (Context : OurContext) = struct
               else
                 errors, resolved_base
             in
+            let x =
             resolve_attribute_access
               ~base_resolved:{ base_resolved with errors; resolved = resolved_base }
               ~base
               ~special
               ~attribute
               ~has_default:false
+            in
+
+            x
             )
     | Constant Constant.NoneLiteral ->
         {
@@ -6194,11 +6220,12 @@ module TypeCheckRT (Context : OurContext) = struct
               else
                 resolution, errors
         in
+        
+
         let resolution, errors =
           forward_assign ~resolution ~errors ~target ~guide ~resolved_value (Some value)
         in
 
-        
 
         Value resolution, errors
 
@@ -6277,6 +6304,7 @@ module TypeCheckRT (Context : OurContext) = struct
     match value with
     | Statement.Assign { Assign.target; annotation; value } ->
         forward_assignment ~resolution ~at_resolution ~location ~target ~annotation ~value
+
     | Assert { Assert.test; origin; _ } -> forward_assert ~resolution ~at_resolution ~origin test
     | Delete expressions ->
         let process_expression (resolution, errors_sofar) expression =
@@ -6504,6 +6532,7 @@ module TypeCheckRT (Context : OurContext) = struct
           )
         else ();
           
+        (* Log.dump "HMM >>> %a" OurDomain.OurSummary.pp !Context.our_summary; *)
           
         let check_base errors base =
           let check_pair errors extended actual =

@@ -316,9 +316,10 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
           
-            OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
+          
+            (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
 
-            OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define);
+            OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define); *)
 
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
           let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in

@@ -371,7 +371,7 @@ module OurSummary : sig
   }
   [@@deriving equal, sexp]
 
-  val empty : t
+  val empty : ?size:int -> unit -> t
 
   val update : type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> unit
 

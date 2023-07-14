@@ -158,11 +158,16 @@ module Make (State : PossibleState) = struct
     let analyze_node node =
       let node_id = Cfg.Node.id node in
       
+      let timer = Timer.start () in
       let precondition =
         Hashtbl.find preconditions node_id
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
       in
+      let join_time = Timer.stop_in_sec timer in
+
+      if Float.(>) join_time 0.5 then
+        Log.dump "%.3f" join_time;
 
       
       (*
@@ -183,10 +188,24 @@ module Make (State : PossibleState) = struct
       then
         Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
       *)
+      (* let timer = Timer.start () in *)
+
+      (* if String.is_substring (Reference.show func_name) ~substring:"rasa.shared.core.training_data.visualization.visualize_neighborhood"
+        then (
+          Log.dump "START %a" Reference.pp func_name;
+          Log.dump "%a" Cfg.Node.pp node;
+        ); *)
+
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
 
-      
+      (* let trans_time = Timer.stop_in_sec timer in
+
+      if Float.(>) trans_time 2.0 (* && String.is_substring (Reference.show func_name) ~substring:"rasa.shared.core.trackers.DialogueStateTracker.update" *)
+        then (
+          Log.dump "THISIS!! %.3f %a" trans_time Reference.pp func_name;
+          Log.dump "%a" Cfg.Node.pp node;
+        ); *)
       
       (*
       if Int.equal 3 (Cfg.Node.id node)

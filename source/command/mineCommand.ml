@@ -131,6 +131,7 @@
  
  
  let do_check configuration =
+  Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.empty ~size:30000 ();
    Scheduler.with_scheduler ~configuration ~f:(fun scheduler ->
        with_performance_tracking ~debug:configuration.debug (fun () ->
 

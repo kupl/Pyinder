@@ -13049,7 +13049,7 @@ module DummyContext = struct
 
   let error_map = None
 
-  let our_summary = ref OurDomain.OurSummary.empty
+  let our_summary = ref (OurDomain.OurSummary.empty ())
 
   let entry_arg_types = ref OurDomain.ArgTypes.empty 
 
@@ -14190,18 +14190,21 @@ let exit_state ~resolution (module Context : OurContext) =
 
       (* Log.dump "%a GO" Reference.pp name;
       Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution; *)
-      if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.storage.Store._async_handle_write_data"
+      
+      (* if String.is_substring (Reference.show name) ~substring:"rasa.shared.core.trackers.DialogueStateTracker.update"
         then (
           Log.dump "START %a" Resolution.pp resolution;
-        ); 
+          Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
+        ); *)
 
+        (* if String.is_substring (Reference.show name) ~substring:"rasa.shared.core.training_data.visualization.visualize_neighborhood"
+        then (
+          Log.dump "START %a" Resolution.pp resolution;
+          Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
+        ); *)
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       let exit = PossibleFixpoint.exit fixpoint in
 
-
-      (* og.dump "%a STOP" Reference.pp name; *)
-
-      
       (* (match PossibleFixpoint.exit_possible fixpoint with
       | Some n -> Format.printf "[[ Final Possible ]] \n\n%a\n\n" PossibleState.pp n
       | None -> print_endline "NOPE"
@@ -14368,11 +14371,11 @@ let exit_state ~resolution (module Context : OurContext) =
 
     let total_time = Timer.stop_in_sec timer in
     let _ = init_time, save_time, total_time in
-    (* if Float.(>.) total_time 5.0 then (
+    if Float.(>.) total_time 5.0 then (
       Log.dump ">>> %a (%.3f => %.3f => %.3f) (%i)" Reference.pp name init_time save_time total_time (List.length check_arg_types_list);
-      Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary;
+      (* Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary; *)
     );
- *)
+
     errors, Some local_annotations, Some callees)
 
 
@@ -14395,7 +14398,7 @@ let compute_local_annotations ~global_environment name =
 
       let error_map = Some (LocalErrorMap.empty ())
 
-      let our_summary = ref OurDomain.OurSummary.empty
+      let our_summary = ref (OurDomain.OurSummary.empty ())
 
       let entry_arg_types = ref entry_arg_types
 
@@ -14523,7 +14526,7 @@ let check_define
 
         let error_map = Some (LocalErrorMap.empty ())
 
-        let our_summary = ref OurDomain.OurSummary.empty
+        let our_summary = ref (OurDomain.OurSummary.empty ())
 
         let entry_arg_types = ref entry_arg_types
 
@@ -14564,7 +14567,7 @@ let check_define
             ~kind:(Error.AnalysisFailure (UnexpectedUndefinedType annotation))
             ~define:define_node
         in
-        Some [undefined_error], None, None, OurDomain.OurSummary.empty
+        Some [undefined_error], None, None, OurDomain.OurSummary.empty ()
   in
 
     if not (Define.is_overloaded_function define) then
@@ -14606,6 +14609,7 @@ let check_define
     else
       None
   in
+
   (our_summary, errors, local_annotations)
 
   (*
@@ -14679,7 +14683,7 @@ let check_function_definition
     Log.dump "Check %a ===>\n %a\n" Reference.pp name OurDomain.OurSummary.pp !OurDomain.our_summary;
   );
   *)
-  let our_model = OurDomain.OurSummary.empty in
+  let our_model = OurDomain.OurSummary.empty () in
   let check_define = check_define ~type_check_controls ~resolution ~qualifier ~call_graph_builder ~entry_arg_types in
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
@@ -14699,6 +14703,7 @@ let check_function_definition
     | None -> aggregate_our_summary sibling_results; { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
+
         { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 

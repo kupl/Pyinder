@@ -20,7 +20,11 @@ let preprocess ~our_model ~global_resolution define =
   
   let final_model = !OurDomain.our_model in
 
+  (* Log.dump ">>> %a" OurDomain.OurSummary.pp final_model; *)
+  
+
   let func_attrs = 
+    
     let parameter_usage_attributes =
       OurDomain.OurSummary.get_usage_attributes_from_func final_model name
     in
@@ -59,13 +63,20 @@ let preprocess ~our_model ~global_resolution define =
 
       let total_usage_attributes = AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes in
 
-      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
-       *)
 
+      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp parameter_usage_attributes; *)
+      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
+      
+      let x =
       OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
+      in
+
+      x
     | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name parameter_usage_attributes
     )
   in  
+
+  
 
   LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key:({ Node.value; _ } as expression) ~data ->
     match value with
@@ -75,6 +86,7 @@ let preprocess ~our_model ~global_resolution define =
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()
   );
+  
 
   our_model
 
@@ -95,7 +107,7 @@ let check_function_definition
     { FunctionDefinition.body; siblings; _ }
   =
   let timer = Timer.start () in
-  let our_model = OurDomain.OurSummary.empty in
+  let our_model = OurDomain.OurSummary.empty () in
   let check_define = check_define ~our_model ~global_resolution in
   let sibling_bodies = List.map siblings ~f:(fun { FunctionDefinition.Sibling.body; _ } -> body) in
   let sibling_results = List.map sibling_bodies ~f:(fun define_node -> let x = check_define define_node in x) in
@@ -110,10 +122,15 @@ let check_function_definition
           OurDomain.OurSummary.join ~type_join:(GlobalResolution.join global_resolution) our_summary our_model
         )
     in
+
+    
+
     match body with
-    | None -> aggregate_our_summary sibling_results; { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
+    | None -> aggregate_our_summary sibling_results;
+      { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
         let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
+
         { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 

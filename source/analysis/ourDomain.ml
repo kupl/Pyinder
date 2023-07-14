@@ -423,7 +423,7 @@ end
 module ClassTable = struct
   type t = ClassSummary.t ClassHash.t [@@deriving sexp, equal]
 
-  let empty = ClassHash.create ()
+  let empty = ClassHash.create
 
   let find_default t name = ClassHash.find t name |> Option.value ~default:ClassSummary.empty 
 
@@ -974,11 +974,11 @@ module FunctionSummary = struct
         ) *)
       in
 
-      let callers= next.callers
-      (* CallerSet.union prev.callers next.callers *) 
+      let callers= 
+      CallerSet.union prev.callers next.callers 
       in
       (* let tt1 = Timer.stop_in_sec timer in *)
-      let usage_attributes = next.usage_attributes (* AttributeStorage.join prev.usage_attributes next.usage_attributes *) in
+      let usage_attributes = (* next.usage_attributes *) AttributeStorage.join prev.usage_attributes next.usage_attributes in
       (* let tt2 = Timer.stop_in_sec timer in *)
       (* let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 0.01 then (
@@ -1110,7 +1110,7 @@ end
 module FunctionTable = struct
   type t = FunctionSummary.t FunctionHash.t [@@deriving sexp, equal]
 
-  let empty = FunctionHash.create ()
+  let empty = FunctionHash.create
 
   let find_signature t reference arg_types =
     let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
@@ -1321,9 +1321,9 @@ module OurSummary = struct
   }
   [@@deriving equal, sexp]
 
-  let empty = {
-    class_table=ClassTable.empty;
-    function_table=FunctionTable.empty;
+  let empty ?(size=5) () = {
+    class_table=ClassTable.empty ~size ();
+    function_table=FunctionTable.empty ~size ();
   }
 
   let update ~type_join ~prev next = 
@@ -1536,9 +1536,9 @@ let set_data_path (configuration: Configuration.Analysis.t) =
 
 
 
-let our_model = ref (OurSummary.empty);;
+let our_model = ref (OurSummary.empty ());;
 
-let our_summary = ref (OurSummary.empty);;
+let our_summary = ref (OurSummary.empty ());;
 
 let cache = ref false;;
 
@@ -1580,7 +1580,7 @@ let load_summary func_name =
       close_in data_in;
       our_summary
   | _ ->
-    OurSummary.empty
+    OurSummary.empty ()
   in
   x
 

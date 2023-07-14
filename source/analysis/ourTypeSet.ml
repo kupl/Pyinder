@@ -176,7 +176,7 @@ module ClassTableResolution = struct
       ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
         let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
         let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
-        let method_flag = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+        let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
           flag &&  
           (match data with
           | `Both (left, right) ->
@@ -191,12 +191,14 @@ module ClassTableResolution = struct
         in
   
   
-        if field_flag && method_flag
+        if field_flag && method_flag ()
         then (key::candidate_classes)
         else candidate_classes
       )
     in
 
+
+    let x =
     if List.is_empty more_accurate then
       ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
         let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
@@ -221,6 +223,9 @@ module ClassTableResolution = struct
         else candidate_classes
       )
     else more_accurate
+  in
+
+  x
 end
 
 module ArgTypesResolution = struct
@@ -416,7 +421,7 @@ module FunctionSummaryResolution = struct
     let usage_attributes =
       parent_usage_attributes
       |> AttributeStorage.join usage_attributes
-    in
+    in 
     
     
     

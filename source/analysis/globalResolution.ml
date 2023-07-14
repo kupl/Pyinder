@@ -499,14 +499,21 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
   AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
   |> (function
     | SignatureSelectionTypes.Found { selected_return_annotation } ->
+      let timer = Timer.start () in
       (match selected_return_annotation with
       | Type.Callable t -> (* TODO : Modify Resolution of callable *)
       (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
       (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 1.0 then (
+        Log.dump "Signature Time %.3f" total_time;
+      );
+
       SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
       | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
       (* Log.dump "Before... %a" Type.pp (Callable t); *)
@@ -515,6 +522,10 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
       (* Log.dump "After... %a" Type.pp (Callable callable); *)
+      let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 1.0 then (
+        Log.dump "Signature Time %.3f" total_time;
+      );
       SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
       | _ -> 
         let type_join = join resolution in
@@ -529,6 +540,11 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
           | _ -> type_join return_type selected_return_annotation
           )
         in
+
+        let total_time = Timer.stop_in_sec timer in
+        if Float.(>.) total_time 1.0 then (
+          Log.dump "Select Time %.3f" total_time;
+        );
         SignatureSelectionTypes.Found { selected_return_annotation }
       )
     | t -> t
