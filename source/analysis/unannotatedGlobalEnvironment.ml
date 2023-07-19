@@ -201,6 +201,7 @@ module ReadOnly = struct
                 names_to_resolve
                 (Reference.as_list current_module |> List.rev))
       | Some module_metadata -> (
+          (* Log.dump "%a ===> %a" Reference.pp reference Module.pp module_metadata; *)
           match Module.empty_stub module_metadata with
           | true ->
               Some

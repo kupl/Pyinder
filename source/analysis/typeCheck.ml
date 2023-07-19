@@ -13856,6 +13856,7 @@ let exit_state ~resolution (module Context : OurContext) =
   let resolution = OurTypeSet.ArgTypes.export_to_resolution our_arg_types resolution in
   *)
 
+
   let save_arg_types (initial: PossibleState.t) =
     let our_model = !Context.our_summary in
     let final_model = !OurDomain.our_model in 
@@ -13879,6 +13880,8 @@ let exit_state ~resolution (module Context : OurContext) =
   in
 
   let initial = PossibleState.initial ~resolution in
+
+  
 
   if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
   then (
@@ -14113,7 +14116,7 @@ let exit_state ~resolution (module Context : OurContext) =
       save_arg_types initial
     );
   
-  let save_time = Timer.stop_in_sec timer in
+  
   (*
   Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
   *)
@@ -14149,6 +14152,8 @@ let exit_state ~resolution (module Context : OurContext) =
       )
     ); *)
 
+    let save_time = Timer.stop_in_sec timer in
+
     let check_define_of_arg_types arg_types = 
       Log.log ~section:`Check "Checking %a" Reference.pp name;
       Context.entry_arg_types := arg_types;
@@ -14159,6 +14164,25 @@ let exit_state ~resolution (module Context : OurContext) =
       *)
       let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
       let resolution = OurTypeSet.ArgTypesResolution.join_to_resolution ~join:(GlobalResolution.join global_resolution) arg_types resolution in
+
+      let update_resolution_from_value resolution =
+        List.fold parameters ~init:resolution ~f:(fun resolution { Node.value={ Parameter.name=class_param; value; _}; _ } ->
+        match value with
+        | Some e -> 
+          let reference = Reference.create class_param in
+          let resolved = Resolution.resolve_reference resolution reference in
+          if Type.can_unknown resolved then (
+            let value_resolved = Resolution.resolve_expression_to_type resolution e in
+            let new_resolved = GlobalResolution.join global_resolution resolved value_resolved in
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_resolved)
+          ) else 
+            resolution
+        | _ -> resolution
+        )
+      in
+
+      let resolution = update_resolution_from_value resolution in
+
       let cfg = Cfg.create define in
       
       let our_summary = !Context.our_summary in
@@ -14319,11 +14343,14 @@ let exit_state ~resolution (module Context : OurContext) =
 
               OurDomain.OurSummary.set_class_table our_summary class_table
             | _ ->           
-              OurTypeSet.OurSummaryResolution.store_to_return_var_type our_summary name arg_types (Resolution.get_annotation_store v);
+              let local = String.is_suffix ~suffix:".$toplevel" (Reference.show name) in
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local our_summary name arg_types (Resolution.get_annotation_store v);
               our_summary
             )
             in
+
             ()
+
 
 
           | Unreachable -> ()

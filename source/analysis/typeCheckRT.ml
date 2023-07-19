@@ -949,6 +949,7 @@ module TypeCheckRT (Context : OurContext) = struct
             let { Resolved.resolution; resolved = new_resolved; errors = new_errors; _ } =
               forward_expression ~resolution ~at_resolution expression
             in
+            
             {
               resolution;
               resolved = GlobalResolution.join global_resolution resolved new_resolved;
@@ -961,9 +962,12 @@ module TypeCheckRT (Context : OurContext) = struct
         let resolved =
           if Type.is_unbound resolved then
             Type.variable "_T" |> Type.Variable.mark_all_free_variables_as_escaped
+          else if Type.is_top resolved then
+            Type.Unknown
           else
             resolved
         in
+        (* Log.dump "%a => %a" Expression.pp expression Type.pp resolved; *)
         { Resolved.resolution; errors; resolved; resolved_annotation = None; base = None }
       in
       List.fold
@@ -987,8 +991,8 @@ module TypeCheckRT (Context : OurContext) = struct
             })
       |> correct_bottom
     in
-    let forward_reference ~resolution ~errors reference =
-      let reference = GlobalResolution.legacy_resolve_exports global_resolution ~reference in
+    let forward_reference ~resolution ~errors referencea =
+      let reference = GlobalResolution.legacy_resolve_exports global_resolution ~reference:referencea in
       let annotation =
         let local_annotation = Resolution.get_local resolution ~reference in
         match local_annotation, Reference.prefix reference with
@@ -1076,6 +1080,7 @@ module TypeCheckRT (Context : OurContext) = struct
               in
               { resolution; errors; resolved = Type.Unknown; resolved_annotation = None; base = None }
           | _ ->
+            
               { resolution; errors; resolved = Type.Unknown; resolved_annotation = None; base = None })
     in
     let resolve_attribute_access
@@ -2272,6 +2277,7 @@ module TypeCheckRT (Context : OurContext) = struct
                   ],
                   Some operator_name ) 
                   ->
+
                   Some
                     (Error.UnsupportedOperand
                         (Binary { operator_name; left_operand = target; right_operand = resolved }))
@@ -2503,12 +2509,12 @@ module TypeCheckRT (Context : OurContext) = struct
 
         match callable_data_list, Context.constraint_solving_style with
         | [KnownCallable callable_data], Configuration.Analysis.ExpressionLevel ->
-
+          
 
 
             select_return_annotation_bidirectional_inference callable_data
         | callable_data_list, _ ->
-
+          
             let resolution, errors, reversed_arguments =
               let forward_argument (resolution, errors, reversed_arguments) argument =
                 let expression, kind = Ast.Expression.Call.Argument.unpack argument in
@@ -2520,6 +2526,8 @@ module TypeCheckRT (Context : OurContext) = struct
                     then Type.filter_unknown resolved
                     else resolved
                   in
+
+                  (* Log.dump "%a => %a" Expression.pp expression Type.pp resolved; *)
 
                 ( resolution,
                   List.append new_errors errors,
@@ -2543,6 +2551,7 @@ module TypeCheckRT (Context : OurContext) = struct
               | KnownCallable
                   ({ callable = { TypeOperation.callable; self_argument }; arguments; _ } as
                   callable_data) ->
+
                   let selected_return_annotation =
                     GlobalResolution.our_signature_select
                       ~global_resolution
@@ -2552,6 +2561,11 @@ module TypeCheckRT (Context : OurContext) = struct
                       ~self_argument
 
                   in
+
+                  (* (match selected_return_annotation with
+                  | Found _ -> ()
+                  | _ -> Log.dump "%a Not Found" Expression.pp (Callee.expression callee);
+                  ); *)
 
                   KnownCallable
                     (return_annotation_with_callable_and_self
@@ -3867,6 +3881,7 @@ module TypeCheckRT (Context : OurContext) = struct
                     | _ ->
                         let errors =
                           let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
+
                           emit_error
                             ~errors
                             ~location
@@ -4170,6 +4185,9 @@ module TypeCheckRT (Context : OurContext) = struct
         let { Resolved.resolution; resolved; errors; _ } =
           forward_elements ~resolution ~errors:[] ~elements
         in
+
+        (* Log.dump "%a => %a ... %a" Expression.pp expression Type.pp resolved Type.pp (Type.list resolved); *)
+
         {
           resolution;
           errors;
@@ -4228,11 +4246,38 @@ module TypeCheckRT (Context : OurContext) = struct
           >>| fun reference -> GlobalResolution.legacy_resolve_exports global_resolution ~reference
         with
         | Some name_reference ->
-          forward_reference ~resolution ~errors:[] name_reference
+          let resolved = forward_reference ~resolution ~errors:[] name_reference in
+          (match resolved.resolved with
+          | Type.Any ->
+            let final_model = !OurDomain.our_model in
+            let prefix = Reference.prefix name_reference in
+            (match prefix with
+              | Some prefix ->
+                let typ = OurDomain.OurSummary.get_module_var_type final_model prefix attribute in
+              { resolved with resolved=typ }
+              |_ -> resolved
+            )
+            
+          | _ -> resolved
+          )
+          (* Log.dump "%a.%s >>>> %a" Expression.pp base attribute Type.pp resolved.resolved;
+          resolved *)
         | None ->
+          (* let tt =
+          Ast.Expression.name_to_reference base
+          >>= GlobalResolution.resolve_exports global_resolution
+          in
+            (match tt with
+            | Some m -> 
+              Log.dump "%a ==> %a" Expression.pp base Module.pp m;
+            | _ -> ()
+            ); *)
+
             let ({ Resolved.errors; resolved = resolved_base; _ } as base_resolved) =
               forward_expression ~resolution ~at_resolution base
             in
+            
+
             let errors, resolved_base =
               if Type.Variable.contains_escaped_free_variable resolved_base then
                 let errors =
@@ -4400,6 +4445,7 @@ module TypeCheckRT (Context : OurContext) = struct
             List.fold resolved_elements ~f:concatenate ~init:(Some (Type.OrderedTypes.Concrete []))
           in
           match concatenated_elements with
+          | Some (Type.OrderedTypes.Concrete []) -> Type.Tuple (Type.OrderedTypes.Concrete [Type.Unknown]), errors
           | Some concatenated_elements -> Type.Tuple concatenated_elements, errors
           | None ->
               let variadic_expressions =

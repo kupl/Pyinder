@@ -44,7 +44,7 @@ module OurSummaryResolution : sig
 
   type t = OurSummary.t
 
-  val store_to_return_var_type : ?class_param:string -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
+  val store_to_return_var_type : ?class_param:string -> ?local:bool -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
 
   val get_type_of_class_attribute : t -> Reference.t -> string -> Type.t
 

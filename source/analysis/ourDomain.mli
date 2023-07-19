@@ -456,6 +456,8 @@ module OurSummary : sig
 
   val get_all_arg_types : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t
 
+  val get_module_var_type : t -> Reference.t -> string -> Type.t
+
   val change_analysis : t -> unit
 
   val end_analysis : t -> Reference.t -> ArgTypes.t -> unit

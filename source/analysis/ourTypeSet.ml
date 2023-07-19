@@ -322,7 +322,7 @@ end
 module FunctionSummaryResolution = struct
   include FunctionSummary
 
-  let store_to_return_var_type ?class_param ({ signatures; _ } as t) arg_types (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param ?(local=false) ({ signatures; _ } as t) arg_types (store: Refinement.Store.t) =
     let return_var_type = Signatures.get_return_var_type signatures arg_types in
 
     let class_param = class_param |> Option.value ~default:"" |> Reference.create in
@@ -344,7 +344,11 @@ module FunctionSummaryResolution = struct
     
     let annotation_fold annotation return_var_type =
       Reference.Map.fold ~init:return_var_type ~f:(fun ~key ~data return_var_type ->
-        if Reference.is_parameter key then
+        if local || (Reference.is_local key) then
+          let key = Reference.delocalize key |> Reference.drop_head in
+          let x = unit_fold ~unit:data ~base_reference:key return_var_type in
+          x
+        else if (not local) && Reference.is_parameter key then
           let x = unit_fold ~unit:data ~base_reference:key return_var_type in
           x
         else
@@ -443,9 +447,9 @@ end
 module FunctionTableResolution = struct
   include FunctionTable
 
-  let store_to_return_var_type ?class_param t func_name arg_types (store: Refinement.Store.t) =
+  let store_to_return_var_type ?class_param ?local t func_name arg_types (store: Refinement.Store.t) =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionHash.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param func_summary arg_types store)
+    FunctionHash.set t ~key:func_name ~data:(FunctionSummaryResolution.store_to_return_var_type ?class_param ?local func_summary arg_types store)
 
   let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -459,8 +463,8 @@ end
 module OurSummaryResolution = struct
   include OurSummary
 
-  let store_to_return_var_type ?class_param { function_table; _ } func_name arg_types store = 
-    FunctionTableResolution.store_to_return_var_type ?class_param function_table func_name arg_types store
+  let store_to_return_var_type ?class_param ?local { function_table; _ } func_name arg_types store = 
+    FunctionTableResolution.store_to_return_var_type ?class_param ?local function_table func_name arg_types store
 
   let get_type_of_class_attribute { class_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute class_table class_name attribute
   

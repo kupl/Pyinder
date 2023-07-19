@@ -177,7 +177,7 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 12) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
+              if (k >= 20) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
               then (
                 Log.dump "Done";
                 let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in

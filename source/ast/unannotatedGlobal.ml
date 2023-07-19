@@ -82,6 +82,7 @@ module Collector = struct
             value;
             _;
           } ->
+
           {
             Result.name = Identifier.sanitized identifier;
             unannotated_global =

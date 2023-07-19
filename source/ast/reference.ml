@@ -171,6 +171,10 @@ let prefix reference =
 
 let head reference = List.hd reference >>| fun head -> [head]
 
+let drop_head = function
+  | [] -> [""]
+  | _::tl -> tl
+
 let first = function
   | [] -> ""
   | head :: _ -> head

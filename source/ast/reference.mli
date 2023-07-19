@@ -75,6 +75,8 @@ val prefix : t -> t option
 
 val head : t -> t option
 
+val drop_head : t -> t
+
 val first : t -> Identifier.t
 
 val last : t -> Identifier.t

@@ -718,6 +718,17 @@ module Signatures = struct
       ArgTypes.join ~type_join key arg_types  
     )
 
+  let get_module_var_type t attribute =
+    let return_info_list = ArgTypesMap.data t in
+    match return_info_list with
+    | [] -> Type.Unknown
+    | { return_var_type; _ }::_ ->
+      let typ = ReferenceMap.find return_var_type (Reference.create attribute) in
+      (match typ with
+      | Some t -> t
+      | _ -> Type.Unknown
+      ) 
+
   let end_analysis t arg_types =
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
     ArgTypesMap.set t ~key:arg_types ~data:{ data with should_analysis=false; }
@@ -746,6 +757,8 @@ module Signatures = struct
     ArgTypesMap.fold t ~init:false ~f:(fun ~key:_ ~data:{ should_analysis; caller_analysis; _ } flag ->
       flag || should_analysis || caller_analysis
     )
+
+  
 end
 
 module type FunctionSummary = sig
@@ -865,6 +878,8 @@ module FunctionSummary = struct
   (* let get_return_type {return_type; _} = return_type *)
 
   let get_preprocess { preprocess; _} = preprocess
+
+
 
 
   let join ~type_join left right = 
@@ -1062,6 +1077,9 @@ module FunctionSummary = struct
 
   let get_all_arg_types ~type_join { signatures; _ } =
     Signatures.get_all_arg_types ~type_join signatures
+
+  let get_module_var_type { signatures; _ } attribute =
+    Signatures.get_module_var_type signatures attribute
 
   let analysis_caller_set { signatures; callers; _ } = 
     if Signatures.caller_analysis signatures
@@ -1267,6 +1285,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_all_arg_types ~type_join func_summary
 
+  let get_module_var_type t func_name attribute =
+    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_module_var_type func_summary attribute
+
   let change_analysis t callers =
     ReferenceSet.iter callers ~f:(fun caller -> 
       match FunctionHash.find t caller with
@@ -1463,6 +1485,10 @@ module OurSummary = struct
 
   let get_all_arg_types ~type_join { function_table; _ } func_name =
     FunctionTable.get_all_arg_types ~type_join function_table func_name
+
+  let get_module_var_type { function_table; _ } func_prefix attribute =
+    let func_name = Reference.combine func_prefix (Reference.create "$toplevel") in
+    FunctionTable.get_module_var_type function_table func_name attribute
 
 
   let get_analysis_set { class_table; function_table; } =
