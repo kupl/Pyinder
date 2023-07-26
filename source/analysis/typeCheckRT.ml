@@ -185,15 +185,32 @@ let errors_from_not_found
                       >>= operator_name_to_symbol
                   in
                   match operator_symbol, callee_expression >>| Node.value with
-                  | Some operator_name, Some (Expression.Name (Attribute { special = true; _ })) ->
+                  | Some operator_name, Some Expression.Name (Attribute { special = true; base; _ }) ->
                       let left_operand, right_operand =
                         if is_uninverted then
                           self_annotation, actual
                         else
                           actual, self_annotation
                       in
-                      Error.UnsupportedOperand
-                        (Binary { operator_name; left_operand; right_operand })
+
+                      (match Node.value base with
+                      | Expression.Name name 
+                      | Call { callee={ Node.value=Expression.Name name; _ }; _} -> 
+                        (match name_to_reference name with
+                        | Some left_reference when not (Reference.equal Reference.empty target_reference) -> 
+                          Error.UnsupportedOperandWithReference
+                          (BinaryWithReference { operator_name; left_operand; right_operand; left_reference; right_reference=target_reference;})
+                        | _ -> 
+                          Error.UnsupportedOperand
+                          (Binary { operator_name; left_operand; right_operand })
+                        )
+                        | _ -> 
+                          Error.UnsupportedOperand
+                          (Binary { operator_name; left_operand; right_operand })
+                      )
+
+                      (* Error.UnsupportedOperand
+                        (Binary { operator_name; left_operand; right_operand }) *)
                   | _ -> normal)
               | Some (Type.Primitive _ as annotation), Some [_; method_name] ->
                   GlobalResolution.get_typed_dictionary ~resolution:global_resolution annotation
@@ -1718,16 +1735,23 @@ module TypeCheckRT (Context : OurContext) = struct
               (* value 원소는 literal이어야 한다 *)
               let value_arg = List.nth_exn arguments 0 in
 
+
               if Type.can_union ~f:(fun t -> Type.equal t (Primitive "slice")) value_arg.resolved 
               then None (* callee_resolved *)
               else (
                 let result = 
-                  if Type.contains_literal value_arg.resolved
+                  (match value_arg.expression with
+                  | Some exp -> Type.get_dict_value_type ~with_key:(Some (Expression.show exp)) annotation_type
+                  | _ -> Type.get_dict_value_type annotation_type 
+                  )
+                  (* if Type.contains_literal value_arg.resolved
                   then (
                     Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
                   )
-                  else Type.get_dict_value_type annotation_type 
+                  else Type.get_dict_value_type annotation_type  *)
                 in
+                
+                (* Log.dump "Value : %a / Annotation : %a" Type.pp value_arg.resolved Type.pp annotation_type; *)
 
                 Some result
               )
@@ -2000,6 +2024,7 @@ module TypeCheckRT (Context : OurContext) = struct
       (* Log.dump "Resolution >>> %a" Resolution.pp resolution; *)
 
       let rec update_resolved_type ?(no_rec=false) t =
+        let t = t |> Type.Variable.convert_all_escaped_free_variables_to_bottom  in
         match t with
         (* possible infinite loop *)
         | Type.Variable _
@@ -2031,6 +2056,8 @@ module TypeCheckRT (Context : OurContext) = struct
             | Name (Name.Attribute { attribute = "__eq__"; _}) 
             | Name (Name.Attribute { attribute = "__ge__"; _}) 
             | Name (Name.Attribute { attribute = "__le__"; _}) 
+            | Name (Name.Attribute { attribute = "__gt__"; _}) 
+            | Name (Name.Attribute { attribute = "__lt__"; _}) 
             -> Type.bool
             | Name (Name.Attribute { attribute = "__float__"; _}) -> Type.float
             | Name (Name.Attribute { attribute = "__list__"; _}) -> 
@@ -2149,7 +2176,6 @@ module TypeCheckRT (Context : OurContext) = struct
               selected_return_annotation;
             } as callable_data)
         =
-        (*Format.printf "[[[ Return Function ]]]\n%a\n" Type.Callable.pp callable;*)
         match selected_return_annotation, callable with
         | SignatureSelectionTypes.NotFound _, _ -> (
             match callee, callable, arguments with
@@ -2220,9 +2246,11 @@ module TypeCheckRT (Context : OurContext) = struct
                       else
                         found_return_annotation)
             |> Option.value ~default:found_return_annotation
-            |> fun selected_return_annotation -> { callable_data with selected_return_annotation }
+            |> fun selected_return_annotation -> 
+              { callable_data with selected_return_annotation }
 
         | _ -> 
+
           { callable_data with selected_return_annotation }
       in
       let extract_found_not_found_unknown_attribute = function
@@ -2236,7 +2264,7 @@ module TypeCheckRT (Context : OurContext) = struct
             } ->
 
             (match callable.kind with
-            | Named reference ->
+            | Named reference when not (String.equal (Reference.last reference) "__init__") ->
               let our_model = !OurDomain.our_model in
               let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument ~arguments callable in
               let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference arg_types in
@@ -2469,6 +2497,7 @@ module TypeCheckRT (Context : OurContext) = struct
               |> instantiate_return_annotation
                     ~order:(GlobalResolution.full_order global_resolution)
               |> fun selected_return_annotation ->
+
               { callable_data with arguments; selected_return_annotation }, resolution, errors
           | _ ->
               let resolution, errors, reversed_arguments =
@@ -2514,7 +2543,6 @@ module TypeCheckRT (Context : OurContext) = struct
 
             select_return_annotation_bidirectional_inference callable_data
         | callable_data_list, _ ->
-          
             let resolution, errors, reversed_arguments =
               let forward_argument (resolution, errors, reversed_arguments) argument =
                 let expression, kind = Ast.Expression.Call.Argument.unpack argument in
@@ -2552,6 +2580,8 @@ module TypeCheckRT (Context : OurContext) = struct
                   ({ callable = { TypeOperation.callable; self_argument }; arguments; _ } as
                   callable_data) ->
 
+                    (* Log.dump "?? %a" Type.Callable.pp callable; *)
+
                   let selected_return_annotation =
                     GlobalResolution.our_signature_select
                       ~global_resolution
@@ -2561,11 +2591,6 @@ module TypeCheckRT (Context : OurContext) = struct
                       ~self_argument
 
                   in
-
-                  (* (match selected_return_annotation with
-                  | Found _ -> ()
-                  | _ -> Log.dump "%a Not Found" Expression.pp (Callee.expression callee);
-                  ); *)
 
                   KnownCallable
                     (return_annotation_with_callable_and_self
@@ -2825,6 +2850,7 @@ module TypeCheckRT (Context : OurContext) = struct
                       (*let { StatementDefine.Signature.name; _ } = define_signature in*)
                       let our_summary = !Context.our_summary in
                       OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary reference arg_types;
+                      ();
                       (* Context.our_summary := our_summary; *)
                     else ();
 
@@ -2967,6 +2993,12 @@ module TypeCheckRT (Context : OurContext) = struct
                 Type.Parametric { name = "type"; parameters=[Single (Primitive "zip")]; }
               in
               { resolved with resolved = resolved_zip heuristic_callee |> update_resolved_type }
+            | t, Some callee_reference when String.is_suffix ~suffix:"get" (Reference.show callee_reference) && Type.is_dict (target |> Option.value ~default:Type.Unknown) ->
+              (match t with
+              | Type.Union [NoneType; Unknown] | Union [Unknown; NoneType] -> resolved
+              | Type.Union t -> { resolved with resolved=Type.Union (List.filter t ~f:(fun sub -> not (Type.is_none sub))) }
+              | _ -> resolved
+              )
             | _ -> resolved
             )
             
@@ -2989,7 +3021,9 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let x = resolved_builtin_functions resolved callee in
 
-
+      (* Log.dump "Callee %a Type %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
+      Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
+ *)
       (* if String.is_substring (Reference.show define_name) ~substring:"airflow.models.dag.DAG.__init__"
         then (
           Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
@@ -3881,12 +3915,8 @@ module TypeCheckRT (Context : OurContext) = struct
                     | _ ->
                         let errors =
                           let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
-
-                          emit_error
-                            ~errors
-                            ~location
-                            ~kind:
-                              (Error.UnsupportedOperand
+                          let default_kind = 
+                            (Error.UnsupportedOperand
                                   (Unary
                                     {
                                       operator_name =
@@ -3896,6 +3926,34 @@ module TypeCheckRT (Context : OurContext) = struct
                                           operator;
                                       operand = resolved;
                                     }))
+                          in
+                          let kind =
+                            (match Node.value right with
+                            | Expression.Name name 
+                            | Call { callee={ Node.value=Expression.Name name; _ }; _ } ->
+                              (match name_to_reference name with
+                              | Some reference -> 
+                                (Error.UnsupportedOperandWithReference
+                                  (UnaryWithReference
+                                    {
+                                      operator_name =
+                                        Format.asprintf
+                                          "%a"
+                                          ComparisonOperator.pp_comparison_operator
+                                          operator;
+                                      operand = resolved;
+                                      reference;
+                                    }))
+                              | _ ->
+                                default_kind
+                              )
+                            | _ -> default_kind
+                            )
+                          in
+                          emit_error
+                            ~errors
+                            ~location
+                            ~kind
                         in
                         { getitem_resolution with Resolved.resolved = Type.Unknown; errors }))
           in
@@ -3970,12 +4028,16 @@ module TypeCheckRT (Context : OurContext) = struct
         let key =
           if List.is_empty keywords && Type.is_unbound key then
             Type.variable "_KT" |> Type.Variable.mark_all_free_variables_as_escaped
+          else if List.is_empty keywords && Type.is_unknown key then
+            Type.Bottom
           else
             key
         in
         let value =
           if List.is_empty keywords && Type.is_unbound value then
             Type.variable "_VT" |> Type.Variable.mark_all_free_variables_as_escaped
+          else if List.is_empty keywords && Type.is_unknown value then
+            Type.Unknown
           else
             value
         in
@@ -3991,6 +4053,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
                 let errors = List.append new_errors errors in
                 let rec dict_extract_type source =
+                  let source = Type.filter_unknown source in
                   (match source with
                   | Type.Top
                   | Bottom
@@ -4522,6 +4585,7 @@ module TypeCheckRT (Context : OurContext) = struct
         let send_type, subgenerator_return_type =
           GlobalResolution.type_of_generator_send_and_return ~global_resolution resolved
         in
+
         let actual =
           if define_signature.async then
             Type.async_generator ~yield_type ~send_type ()
@@ -4960,6 +5024,7 @@ module TypeCheckRT (Context : OurContext) = struct
           operator = ComparisonOperator.IsNot;
           right = { Node.value = Constant Constant.NoneLiteral; _ };
         } ->
+          
         refine_resolution_for_assert ~resolution ~at_resolution left
     | Name name when is_simple_name name -> (
         match existing_annotation name with
@@ -4975,6 +5040,31 @@ module TypeCheckRT (Context : OurContext) = struct
             in
             Value resolution
         | _ -> Value resolution)
+    | Call { 
+        callee={ Node.value=Expression.Name (Name.Attribute { base={ Node.value=Expression.Name name; _ } as base; attribute; _ }); _ };
+        arguments = [{ Call.Argument.name = None; value; }];
+      } when String.equal attribute "__getitem__" -> (
+        let { Annotation.annotation=annotation_type; _ } = resolve_expression ~resolution ~at_resolution base in
+        let key_string = Expression.show value in
+        let value_type = Type.get_dict_value_type ~with_key:(Some key_string) annotation_type in
+        (match value_type with
+        | Type.NoneType -> Unreachable
+        | Type.Union parameters ->
+          let refined_annotation =
+            List.filter parameters ~f:(fun parameter -> not (Type.is_none parameter))
+          in
+
+          let new_type = Type.OurTypedDictionary.set_dict_field annotation_type key_string (Type.union refined_annotation) in
+          let resolution =
+            refine_local
+              ~name
+              (Annotation.create_mutable new_type)
+          in
+          Value resolution
+        | _ -> Value resolution
+        )
+      )
+
     | ComparisonOperator
         {
           ComparisonOperator.left = { Node.value = Constant Constant.NoneLiteral; _ };
@@ -5080,7 +5170,7 @@ module TypeCheckRT (Context : OurContext) = struct
   and forward_assert ?(origin = Assert.Origin.Assertion) ~resolution ~at_resolution test =
     let { Resolved.resolution; errors; _ } = forward_expression ~resolution ~at_resolution test in
     
-    (* Log.dump "TEST : %a" Expression.pp test;
+   (*  Log.dump "TEST : %a" Expression.pp test;
 
     Log.dump "%s" (Format.asprintf "[ Before Refined Resolution ]\n%a\n\n" Resolution.pp resolution); *)
     

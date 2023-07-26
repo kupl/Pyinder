@@ -387,9 +387,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   | _ -> Log.dump "No Join"
   )
   ;
-  
-
-
+  (* let functions_list = OurDomain.OurSummary.get_functions_of_class our_model in
+  OurErrorDomain.our_errors := List.fold functions_list ~init:!OurErrorDomain.our_errors ~f:(fun our_errors functions -> OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
+ *)
   Statistics.event
     ~section:`Memory
     ~name:"shared memory size post-typecheck"

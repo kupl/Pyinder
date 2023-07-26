@@ -13833,6 +13833,7 @@ let exit_state ~resolution (module Context : OurContext) =
     Context.define
   in
 
+
   (* our_summary 업데이트 시 여기 바꾸기 *)
   let our_summary = !Context.our_summary in
   let global_resolution = Resolution.global_resolution resolution in
@@ -14013,7 +14014,7 @@ let exit_state ~resolution (module Context : OurContext) =
                 Resolution.get_local_with_attributes resolution ~name 
                 |> (function
                 | None  -> duck_annotation
-                | Some origin when Type.is_top (Annotation.annotation origin) || Type.is_any (Annotation.annotation origin) -> 
+                | Some origin when Type.is_top (Annotation.annotation origin) || Type.is_any (Annotation.annotation origin) || Type.is_unknown (Annotation.annotation origin) -> 
                   duck_annotation 
                 | Some origin -> 
                   Annotation.join ~type_join:(GlobalResolution.join global_resolution) origin duck_annotation 
@@ -14086,7 +14087,7 @@ let exit_state ~resolution (module Context : OurContext) =
             let resolution, our_summary = update_resolution resolution in
             resolution
             |> Resolution.top_to_unknown
-            |> Resolution.add_unknown
+            (* |> Resolution.add_unknown *)
             , our_summary
           in
           (*
@@ -14171,12 +14172,17 @@ let exit_state ~resolution (module Context : OurContext) =
         | Some e -> 
           let reference = Reference.create class_param in
           let resolved = Resolution.resolve_reference resolution reference in
-          if Type.can_unknown resolved then (
+          if Type.is_unknown resolved then (
+            let value_resolved = Resolution.resolve_expression_to_type resolution e in
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+          ) else 
+            resolution
+          (* if Type.can_unknown resolved then (
             let value_resolved = Resolution.resolve_expression_to_type resolution e in
             let new_resolved = GlobalResolution.join global_resolution resolved value_resolved in
             Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_resolved)
           ) else 
-            resolution
+            resolution *)
         | _ -> resolution
         )
       in
@@ -14398,10 +14404,10 @@ let exit_state ~resolution (module Context : OurContext) =
 
     let total_time = Timer.stop_in_sec timer in
     let _ = init_time, save_time, total_time in
-    if Float.(>.) total_time 5.0 then (
+    (* if Float.(>.) total_time 5.0 then (
       Log.dump ">>> %a (%.3f => %.3f => %.3f) (%i)" Reference.pp name init_time save_time total_time (List.length check_arg_types_list);
       (* Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary; *)
-    );
+    ); *)
 
     errors, Some local_annotations, Some callees)
 

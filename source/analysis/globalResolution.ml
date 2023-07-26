@@ -502,13 +502,13 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let timer = Timer.start () in
       (match selected_return_annotation with
       | Type.Callable t -> (* TODO : Modify Resolution of callable *)
-      (* Log.dump "Before %s... %a" name Type.pp (Callable t); *)
+      (* Log.dump "Before ... %a" Type.pp (Callable t); *)
       
       let type_join = join resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
-      (* Log.dump "After %s... %a" name Type.pp (Callable callable); *)
+      (* Log.dump "After ... %a" Type.pp (Callable callable); *)
       let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 1.0 then (
         Log.dump "Signature Time %.3f" total_time;
@@ -533,6 +533,8 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
         let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
         let return_type = OurDomain.OurSummary.get_callable_return_type final_model arg_types callable in
 
+        (* Log.dump "Before %a" Type.pp selected_return_annotation; *)
+
         let selected_return_annotation =
           (match return_type, selected_return_annotation with
           | _, Type.Any -> return_type
@@ -540,6 +542,8 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
           | _ -> type_join return_type selected_return_annotation
           )
         in
+
+        (* Log.dump "After %a" Type.pp selected_return_annotation; *)
 
         let total_time = Timer.stop_in_sec timer in
         if Float.(>.) total_time 1.0 then (
@@ -660,6 +664,8 @@ let type_of_generator_send_and_return ~global_resolution generator_type =
           ~source:generator_type
       with
       | Some [_yield_type; send_type] -> send_type, Type.none
+      | _ when Type.is_unknown generator_type ->
+        Type.Unknown, Type.Unknown
       | _ ->
           (* Fall back to Type.none because it's legal to use other annotations like `object` or
              `Iterator` on a generator function, but in those cases the send type is always NoneType *)

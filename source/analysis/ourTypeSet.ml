@@ -169,6 +169,32 @@ module ClassTableResolution = struct
     let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join class_summary class_param method_postcondition in
     ClassHash.set ~key:class_name ~data t
 
+  let find_default_type_from_attributes ~key ~default_type:{ OurDomain.ClassAttributes.attributes; properties; methods } { AttributeStorage.attribute_set; call_set; } =
+    let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
+
+    let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+    let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+    let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+      flag &&  
+      (match data with
+      | `Both (left, right) ->
+        CallSet.fold left ~init:true ~f:(fun flag call_info -> 
+          flag &&  
+          CallSet.exists right ~f:(fun signature -> 
+            (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+            CallInfo.is_more_corresponding ~signature call_info)
+        )
+      | `Right _ -> true
+      | `Left _ -> false
+      )
+    )
+    in
+
+
+    if field_flag && method_flag ()
+    then [key]
+    else []
+
   let find_classes_from_attributes t { AttributeStorage.attribute_set; call_set; } =
     let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
 
@@ -182,7 +208,9 @@ module ClassTableResolution = struct
           | `Both (left, right) ->
             CallSet.fold left ~init:true ~f:(fun flag call_info -> 
               flag &&  
-              CallSet.exists right ~f:(fun signature -> CallInfo.is_more_corresponding ~signature call_info)
+              CallSet.exists right ~f:(fun signature -> 
+                (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                CallInfo.is_more_corresponding ~signature call_info)
             )
           | `Right _ -> true
           | `Left _ -> false
@@ -260,7 +288,13 @@ module ArgTypesResolution = struct
     IdentifierMap.fold ~f:(fun ~key ~data resolution ->
       let reference = Reference.create key in
       let old_type = Resolution.resolve_reference resolution reference in
-      let new_type = join data old_type in
+
+      let new_type = 
+        match old_type with
+        | Unknown -> data
+        | _ -> join data old_type
+      in
+
       Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_type)
     ) t ~init:resolution
 
@@ -369,6 +403,13 @@ module FunctionSummaryResolution = struct
 
     FunctionSummary.{ t with signatures; }
 
+  let find_default_type_of_attributes t =
+    ClassTableResolution.find_default_type_from_attributes ~key:(Reference.create "str") ~default_type:(OurDomain.ClassAttributes.str_attributes ()) t
+    |> (function
+    | [t] -> let _ = t in None
+    | _ -> None
+    )
+
   let find_class_of_attributes ~successors ~class_table ?(debug=false) { usage_attributes; _ } parent_usage_attributes =
 
     let _ = debug in
@@ -434,7 +475,10 @@ module FunctionSummaryResolution = struct
         attributes
         |> ClassTableResolution.find_classes_from_attributes class_table
         |> extract_class
-
+        |> (function
+        | None -> let _ = find_default_type_of_attributes in None (* find_default_type_of_attributes attributes *)
+        | Some v -> Some v
+        )
     )
     |> LocInsensitiveExpMap.filter_map ~f:(fun v -> 
       match v with

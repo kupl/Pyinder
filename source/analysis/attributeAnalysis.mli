@@ -27,6 +27,8 @@ module CallInfo : sig
 
   val of_parameters : Parameter.t list -> t
 
+  val pp : Format.formatter -> t -> unit
+
   val is_corresponding : signature:t -> t -> bool
 
   val is_more_corresponding : signature:t -> t -> bool
@@ -48,6 +50,8 @@ module AttributeStorage :
     val map : t -> f:(data_set -> 'a) -> 'a LocInsensitiveExpMap.t
     val mapi : t -> f:(key:SkipMap.Key.t -> data:data_set -> 'a) -> 'a LocInsensitiveExpMap.t
     val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
+    val filter_single_class_param : class_param:string -> t -> t
+    val get_reference_list : t -> Reference.t list
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit
     val pp :
       Format.formatter -> t -> unit

@@ -247,6 +247,7 @@ let run_on_qualifier environment ~dependency qualifier =
       let errors_by_define =
         defines |> List.map ~f:(fun define -> 
           let x = (OurErrorDomain.get_errors our_errors_read_only ~key:define) in
+          (* List.iter x ~f:(fun e -> Log.dump "%a" Error.pp e); *)
           x
         )
       in

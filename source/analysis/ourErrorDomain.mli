@@ -17,6 +17,8 @@ module OurErrorList : sig
     val add : key:Reference.t -> data:Error.t list -> t -> t
 
     val num : t -> int
+
+    val get_repeated_errors : t -> Reference.t list -> t
 end
 
 type errors = Error.t list [@@deriving sexp]

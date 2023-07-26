@@ -61,8 +61,10 @@ let preprocess ~our_model ~global_resolution define =
         |> AttributeAnalysis.AttributeStorage.add_prefix ~prefix:(Reference.create class_param)
       in
 
-      let total_usage_attributes = AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes in
-
+      let total_usage_attributes = 
+        AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes 
+        |>  AttributeAnalysis.AttributeStorage.filter_single_class_param ~class_param
+      in
 
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp parameter_usage_attributes; *)
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)

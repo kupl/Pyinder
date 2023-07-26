@@ -241,6 +241,19 @@ and unsupported_operand_kind =
       operator_name: Identifier.t;
       operand: Type.t;
     }
+and unsupported_operand_kind_with_reference =
+  | BinaryWithReference of {
+      operator_name: Identifier.t;
+      left_operand: Type.t;
+      left_reference: Reference.t;
+      right_operand: Type.t;
+      right_reference: Reference.t;
+    }
+  | UnaryWithReference of {
+      operator_name: Identifier.t;
+      operand: Type.t;
+      reference: Reference.t;
+    }
 
 and illegal_annotation_target_kind =
   | InvalidExpression
@@ -435,6 +448,7 @@ and kind =
       unpack_problem: unpack_problem;
     }
   | UnsupportedOperand of unsupported_operand_kind
+  | UnsupportedOperandWithReference of unsupported_operand_kind_with_reference
   | UnusedIgnore of int list
   | UnusedLocalMode of {
       unused_mode: Source.local_mode Node.t;
@@ -527,6 +541,7 @@ let code_of_kind = function
   | InvalidDecoration _ -> 56
   | IncompatibleAsyncGeneratorReturnType _ -> 57
   | UnsupportedOperand _ -> 58
+  | UnsupportedOperandWithReference _ -> 72
   | DuplicateTypeVariables _ -> 59
   | TupleConcatenationError _ -> 60
   | UninitializedLocal _ -> 61
@@ -603,6 +618,7 @@ let name_of_kind = function
   | Unpack _ -> "Unable to unpack"
   | UnsafeCast _ -> "Unsafe cast"
   | UnsupportedOperand _ -> "Unsupported operand"
+  | UnsupportedOperandWithReference _ -> "Unsupported operand with reference"
   | UnusedIgnore _ -> "Unused ignore"
   | UnusedLocalMode _ -> "Unused local mode"
   | TupleConcatenationError _ -> "Unable to concatenate tuple"
@@ -682,6 +698,17 @@ let weaken_literals kind =
   | ProhibitedAny { is_type_alias; missing_annotation } ->
       ProhibitedAny
         { is_type_alias; missing_annotation = weaken_missing_annotation missing_annotation }
+  | UnsupportedOperandWithReference (BinaryWithReference { operator_name; left_operand; left_reference; right_operand; right_reference; }) -> 
+    let kind = (BinaryWithReference
+      {
+        operator_name;
+        left_operand = Type.weaken_literals left_operand;
+        left_reference;
+        right_operand = Type.weaken_literals right_operand;
+        right_reference;
+      }) 
+    in
+    UnsupportedOperandWithReference kind
   | UnsupportedOperand (Binary { operator_name; left_operand; right_operand }) ->
    
       UnsupportedOperand
@@ -691,6 +718,9 @@ let weaken_literals kind =
              left_operand = Type.weaken_literals left_operand;
              right_operand = Type.weaken_literals right_operand;
            })
+  | UnsupportedOperandWithReference (UnaryWithReference { operator_name; reference; operand; }) -> 
+    let kind = (UnaryWithReference { operator_name; reference; operand = Type.weaken_literals operand; }) in
+    UnsupportedOperandWithReference kind;
   | UnsupportedOperand (Unary { operator_name; operand }) ->
       UnsupportedOperand (Unary { operator_name; operand = Type.weaken_literals operand })
   | Unpack { expected_count; unpack_problem = UnacceptableType annotation } ->
@@ -2095,6 +2125,16 @@ let rec messages ~concise ~signature location kind =
           (show_sanitized_expression expression)
           (Annotation.display_as_revealed_type annotation);
       ]
+  | UnsupportedOperandWithReference (BinaryWithReference { operator_name; left_operand; right_operand; _ }) ->
+    [
+        Format.asprintf
+          "`%s` is not supported for operand types `%a` and `%a`."
+          operator_name
+          pp_type
+          left_operand
+          pp_type
+          right_operand;
+      ]
   | UnsupportedOperand (Binary { operator_name; left_operand; right_operand }) ->
       [
         Format.asprintf
@@ -2104,6 +2144,14 @@ let rec messages ~concise ~signature location kind =
           left_operand
           pp_type
           right_operand;
+      ]
+  | UnsupportedOperandWithReference (UnaryWithReference { operator_name; operand; _ }) ->
+    [
+        Format.asprintf
+          "`%s` is not supported for right operand type `%a`."
+          operator_name
+          pp_type
+          operand;
       ]
   | UnsupportedOperand (Unary { operator_name; operand }) ->
       [
@@ -2685,8 +2733,10 @@ let due_to_analysis_limitations { kind; _ } =
   | UninitializedAttribute { mismatch = { actual; _ }; _ }
   | Unpack { unpack_problem = UnacceptableType actual; _ } ->
       is_due_to_analysis_limitations actual
+  | UnsupportedOperandWithReference (BinaryWithReference { left_operand; right_operand; _ })
   | UnsupportedOperand (Binary { left_operand; right_operand; _ }) ->
       is_due_to_analysis_limitations left_operand || is_due_to_analysis_limitations right_operand
+  | UnsupportedOperandWithReference (UnaryWithReference { operand; _ })
   | UnsupportedOperand (Unary { operand; _ }) -> is_due_to_analysis_limitations operand
   | Top -> true
   | UndefinedAttribute { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
@@ -3007,6 +3057,22 @@ let less_or_equal ~resolution left right =
       Option.equal Reference.equal_sanitized left.callee right.callee
       && Identifier.equal left.name right.name
   | UndefinedImport left, UndefinedImport right -> [%compare.equal: undefined_import] left right
+  | ( UnsupportedOperandWithReference
+        (BinaryWithReference
+          {
+            operator_name = left_operator_name;
+            left_operand = left_operand_for_left;
+            right_operand = right_operand_for_left;
+            _
+          }),
+      UnsupportedOperandWithReference
+        (BinaryWithReference
+          {
+            operator_name = right_operator_name;
+            left_operand = left_operand_for_right;
+            right_operand = right_operand_for_right;
+            _
+          }) )
   | ( UnsupportedOperand
         (Binary
           {
@@ -3030,6 +3096,8 @@ let less_or_equal ~resolution left right =
            resolution
            ~left:right_operand_for_left
            ~right:right_operand_for_right
+  | ( UnsupportedOperandWithReference (UnaryWithReference { operator_name = left_operator_name; operand = left_operand; _ }),
+    UnsupportedOperandWithReference (UnaryWithReference { operator_name = right_operator_name; operand = right_operand; _ }) )
   | ( UnsupportedOperand (Unary { operator_name = left_operator_name; operand = left_operand }),
       UnsupportedOperand (Unary { operator_name = right_operator_name; operand = right_operand }) )
     when Identifier.equal_sanitized left_operator_name right_operator_name ->
@@ -3116,6 +3184,7 @@ let less_or_equal ~resolution left right =
   | UninitializedAttribute _, _
   | Unpack _, _
   | UnsupportedOperand _, _
+  | UnsupportedOperandWithReference _, _
   | UnusedIgnore _, _
   | UnusedLocalMode _, _ ->
       false
@@ -3443,6 +3512,52 @@ let join ~resolution left right =
     | UndefinedImport left, UndefinedImport right when [%compare.equal: undefined_import] left right
       ->
         UndefinedImport left
+      | ( UnsupportedOperandWithReference
+
+          (BinaryWithReference
+            ({
+              operator_name = left_operator_name;
+              left_operand = left_operand_for_left;
+              right_operand = right_operand_for_left;
+              left_reference = left_reference_for_left;
+              right_reference = right_reference_for_left;
+            } as left)),
+        UnsupportedOperandWithReference
+
+        (BinaryWithReference
+          {
+            operator_name = right_operator_name;
+            left_operand = left_operand_for_right;
+            right_operand = right_operand_for_right;
+            left_reference = left_reference_for_right;
+            right_reference = right_reference_for_right;
+          }) 
+        )
+    when Identifier.equal_sanitized left_operator_name right_operator_name 
+    && Reference.equal left_reference_for_left right_reference_for_left
+    && Reference.equal left_reference_for_right right_reference_for_right
+    ->
+      UnsupportedOperandWithReference
+        (BinaryWithReference
+           {
+             left with
+             left_operand =
+               GlobalResolution.join resolution left_operand_for_left left_operand_for_right;
+             right_operand =
+               GlobalResolution.join resolution right_operand_for_left right_operand_for_right;
+            left_reference = left_reference_for_left;
+            right_reference = right_reference_for_left;
+           })
+    | ( UnsupportedOperandWithReference
+        (UnaryWithReference ({ operator_name = left_operator_name; operand = left_operand; reference=left_reference; } as left)),
+        UnsupportedOperandWithReference 
+        (UnaryWithReference { operator_name = right_operator_name; operand = right_operand; reference=right_reference; })
+    )
+    when Identifier.equal_sanitized left_operator_name right_operator_name && Reference.equal left_reference right_reference ->
+      UnsupportedOperandWithReference
+        (UnaryWithReference { left with operand = GlobalResolution.join resolution left_operand right_operand; reference = left_reference;})
+
+
     | ( UnsupportedOperand
           (Binary
             ({
@@ -3459,6 +3574,7 @@ let join ~resolution left right =
             }) )
       when Identifier.equal_sanitized left_operator_name right_operator_name ->
         UnsupportedOperand
+        
           (Binary
              {
                left with
@@ -3467,6 +3583,7 @@ let join ~resolution left right =
                right_operand =
                  GlobalResolution.join resolution right_operand_for_left right_operand_for_right;
              })
+             
     | ( UnsupportedOperand
           (Unary ({ operator_name = left_operator_name; operand = left_operand } as left)),
         UnsupportedOperand (Unary { operator_name = right_operator_name; operand = right_operand })
@@ -3600,6 +3717,7 @@ let join ~resolution left right =
     | UninitializedAttribute _, _
     | Unpack _, _
     | UnsupportedOperand _, _
+    | UnsupportedOperandWithReference _, _
     | UnusedIgnore _, _
     | UnusedLocalMode _, _ ->
         let { location; _ } = left in
@@ -3711,6 +3829,56 @@ let deduplicate errors =
   let x = Core.Hash_set.to_list error_set in
   x
 
+let filter_typical_errors ~exist errors =
+  List.filter errors ~f:(fun { kind; _ } ->
+    match kind with  
+    | UnsupportedOperandWithReference (BinaryWithReference {left_operand; right_operand; left_reference; right_reference; _ }) ->
+      exist (left_reference, left_operand) || exist (right_reference, right_operand)
+    | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; _ }) ->
+      exist (reference, operand)
+    | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; reference; _ }
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; _ }
+    ->
+      (* Log.dump "?? %a, %a => %b" Reference.pp reference Type.pp actual (exist (reference, actual)); *)
+      exist (reference, actual)
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; reference; _ }
+    ->
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      
+      exist (reference, actual)
+    | _ -> true
+  )
+
+let get_reference_type errors =
+  let tmp = 
+  List.fold errors ~init:[] ~f:(fun acc { kind; _ } ->
+    match kind with
+    | UnsupportedOperandWithReference (BinaryWithReference {left_operand; right_operand; left_reference; right_reference; _ }) ->
+      (left_reference, left_operand)::(right_reference, right_operand)::acc
+
+    | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; _ }) ->
+
+      (reference, operand)::acc
+    | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; reference; _ }
+    ->
+      (reference, actual)::acc
+
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; _ } when
+      Type.is_none actual || Type.is_optional actual
+    ->
+
+      (reference, actual)::acc
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; reference; _ } when
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      Type.is_none actual || Type.is_optional actual ->
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      (reference, actual)::acc
+
+    | _ -> 
+      acc
+  )
+  in
+  tmp
 
 let filter ~resolution errors =
   let should_filter error =
@@ -4303,6 +4471,22 @@ let dequalify
     | UndefinedImport reference -> UndefinedImport reference
     | UnexpectedKeyword { name; callee } ->
         UnexpectedKeyword { name; callee = Option.map callee ~f:dequalify_reference }
+
+    | UnsupportedOperandWithReference (BinaryWithReference { operator_name; left_operand; right_operand; left_reference; right_reference;}) ->
+      let kind =
+        (BinaryWithReference
+             {
+               operator_name;
+               left_operand = dequalify left_operand;
+               right_operand = dequalify right_operand;
+               left_reference;
+               right_reference;
+             })
+      in
+      UnsupportedOperandWithReference kind
+    | UnsupportedOperandWithReference (UnaryWithReference { operator_name; operand; reference }) ->
+      let kind = (UnaryWithReference { operator_name; operand = dequalify operand; reference }) in
+      UnsupportedOperandWithReference kind
     | UnsupportedOperand (Binary { operator_name; left_operand; right_operand }) ->
         UnsupportedOperand
           (Binary
@@ -4357,7 +4541,7 @@ let create_mismatch ~resolution ~actual ~expected ~covariant =
 let filter_type_error errors =
   List.filter errors ~f:(fun {kind;_} ->
       (match kind with
-      | UnsupportedOperand _ 
+      | UnsupportedOperand _ | UnsupportedOperandWithReference _
       | IncompatibleParameterType _ | IncompatibleParameterTypeWithReference _ 
       | UndefinedAttribute _ | UndefinedAttributeWithReference _ | IncompatibleAttributeType _
         -> true

@@ -1134,6 +1134,8 @@ module OurTypedDictionary : sig
 
   val update_dict_field : join_f:(type_t -> type_t -> type_t) -> type_t -> string -> type_t -> type_t
 
+  val set_dict_field : type_t -> string -> type_t -> type_t
+
   val solve_less_or_equal
     : left:'annotation Record.OurTypedDictionary.record ->
       right:'annotation Record.OurTypedDictionary.record ->
@@ -1214,6 +1216,8 @@ val get_dict_value_type : ?with_key:string option -> type_t -> type_t
 val can_union : f:(t -> bool) -> t -> bool
 
 val can_unknown : t -> bool
+
+val can_none : t -> bool
 
 val can_top : t -> bool
 

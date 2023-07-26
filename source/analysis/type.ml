@@ -6425,6 +6425,19 @@ module OurTypedDictionary = struct
       OurTypedDictionary { our_typed_dict with typed_dict; }
     
     | _ -> target_type
+
+  let set_dict_field t name field_type =
+    match t with
+    | OurTypedDictionary ({ typed_dict; _ } as t) ->
+      let typed_dict =
+        List.map typed_dict ~f:(fun ({ name=dict_name; _ } as field) -> 
+          if String.equal name dict_name
+          then create_field ~annotation:field_type name
+          else field
+        )
+      in
+      OurTypedDictionary { t with typed_dict }
+    | _ -> t
   let solve_less_or_equal ~left ~right ~solve ~order ~constraints ~impossible =
     let find name field =
       String.equal name field.name
@@ -6966,7 +6979,26 @@ let callable_name = function
       Some name
   | _ -> None
 
+let rec can_union ~f t =
+  match t with
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_union ~f t))
+  | _ -> f t
 
+let can_unknown t =
+  can_union ~f:is_unknown t
+
+let can_none t =
+  can_union ~f:is_none t
+(*   match t with
+  | Unknown -> true
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_unknown t))
+  | _ -> false *)
+
+let rec can_top t =
+  match t with
+  | Top -> true
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_top t))
+  | _ -> false
 
 let rec top_to_bottom t =
   let rec top_to_bottom_of_unpackable unpackable =
@@ -7098,7 +7130,8 @@ let rec get_dict_value_type ?(with_key = None) t =
   match t with
   | Parametric { name = "dict"; parameters } -> (
       match parameters with
-      | [_; Single value_parameter] -> value_parameter
+      | [Single key_parameter; Single value_parameter] ->
+        if can_unknown key_parameter then Unknown else value_parameter
       | _ -> Log.dump "HMM??"; Unknown
   )
   | OurTypedDictionary { general; typed_dict } -> (
@@ -7108,7 +7141,7 @@ let rec get_dict_value_type ?(with_key = None) t =
         |> Option.value ~default:(get_dict_value_type general)
       | _ -> get_dict_value_type general
   )
-  | _ -> Any  
+  | _ -> Unknown  
 
 
 let is_possible_recursive t =
@@ -7221,23 +7254,7 @@ let narrow_our_typed_dict annotation =
   in
   snd (InstantiateTransform.visit () annotation)
 
-let rec can_union ~f t =
-  match t with
-  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_union ~f t))
-  | _ -> f t
 
-let can_unknown t =
-  can_union ~f:is_unknown t
-(*   match t with
-  | Unknown -> true
-  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_unknown t))
-  | _ -> false *)
-
-let rec can_top t =
-  match t with
-  | Top -> true
-  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_top t))
-  | _ -> false
 
 let rec union_update ~f t =
   match t with

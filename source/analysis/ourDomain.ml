@@ -113,6 +113,14 @@ module ReferenceMap = struct
       ); *)
     x
 
+  let diff left right =
+    fold2 left right ~init:ReferenceSet.empty ~f:(fun ~key ~data refset->
+      match data with
+      | `Both (left, right) -> if Type.equal left right then refset else ReferenceSet.add refset key
+      | `Left v | `Right v when not (Type.is_unknown v) -> ReferenceSet.add refset key
+      | _ -> refset
+    )
+
   let pp ~data_pp format t =
     iteri ~f:(fun ~key ~data ->
       Format.fprintf format "%a => %a\n" Reference.pp key data_pp data
@@ -352,7 +360,20 @@ module ClassAttributes = struct
   let is_subset_with_total_attributes t attributes =
     AttrsSet.is_subset attributes ~of_:(total_attributes t)
     *)
-end 
+
+  let str_attributes () =
+    let startswith_data = { AttributeAnalysis.CallInfo.empty with position=1; } |> AttributeAnalysis.CallSet.singleton in
+    let endswith_data = { AttributeAnalysis.CallInfo.empty with position=1; } |> AttributeAnalysis.CallSet.singleton in
+    let getitem_data = { AttributeAnalysis.CallInfo.empty with position=1; } |> AttributeAnalysis.CallSet.singleton in
+    let methods = 
+      Identifier.Map.empty
+      |> Identifier.Map.set ~key:"startswith" ~data:startswith_data
+      |> Identifier.Map.set ~key:"endswith" ~data:endswith_data
+      |> Identifier.Map.set ~key:"__getitem__" ~data:getitem_data
+    in
+    
+    { empty with methods }
+end
 
 
 
@@ -361,17 +382,19 @@ module ClassSummary = struct
     class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
-    should_analysis: bool
+    change_set : ReferenceSet.t;
+    (* should_analysis: bool *)
   } [@@deriving sexp, equal]
 
   let empty = {
     class_var_type=ReferenceMap.empty;
     class_attributes=ClassAttributes.empty;
     usage_attributes=AttributeStorage.empty;
-    should_analysis=true;
+    change_set=ReferenceSet.empty;
+    (* should_analysis=true; *)
   }
 
-  let should_analysis { should_analysis; _ } = should_analysis
+  (* let should_analysis { should_analysis; _ } = should_analysis *)
   let get_class_var_type { class_var_type; _ } = class_var_type
 
   let get_usage_attributes { usage_attributes; _ } = usage_attributes
@@ -393,12 +416,13 @@ module ClassSummary = struct
 
   let join ~type_join left right =
     let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
-    let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in
+    let change_set = ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) in
+    (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
       class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
       usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
-      should_analysis;
+      change_set;
     }
 
   let pp_class_var_type format { class_var_type; _ } =
@@ -413,7 +437,7 @@ module ClassSummary = struct
   let pp format t =
     Format.fprintf format "%a\n%a\n%a" pp_class_var_type t pp_class_info t pp_usage_attributes t
 
-  let has_analysis { should_analysis; _ } = should_analysis
+  (* let has_analysis { should_analysis; _ } = should_analysis *)
 end
 
 module type ClassTable = sig
@@ -473,6 +497,12 @@ module ClassTable = struct
     ClassHash.fold t ~init:false ~f:(fun ~key:_ ~data acc ->
       acc || ClassSummary.has_analysis data
     )
+
+  let get_functions_of_class ~get_functions t =
+    ClassHash.mapi t ~f:(fun ~key ~data:_ ->
+        get_functions key |> ReferenceSet.to_list
+    )
+    |> ClassHash.data
 end
 
 (* module type FunctionSummary = sig
@@ -605,11 +635,11 @@ module Signatures = struct
 
   
 
-  let pp_return_info format { return_var_type; return_type; _ } =
+  let pp_return_info format { return_var_type; return_type; should_analysis; _ } =
     Format.fprintf format 
-    "\n<Return Var Type>\n%a\n\n<Return Type> %a\n"
+    "\n<Return Var Type>\n%a\n\n<Return Type> %a\nShould : %b"
     (ReferenceMap.pp ~data_pp:Type.pp) return_var_type 
-    Type.pp return_type 
+    Type.pp return_type should_analysis
 
   let pp format t =
     ArgTypesMap.iteri t ~f:(fun ~key ~data ->
@@ -1386,11 +1416,11 @@ module OurSummary = struct
         let filtered_storage = AttributeStorage.filter_by_prefix storage ~prefix:(Reference.create class_var) in
         ClassTable.add_usage_attributes class_table class_name filtered_storage;
               
-        let filter_class_var_storage = AttributeStorage.filter_class_var storage ~prefix:(Reference.create class_var) in
-        filter_class_var_storage
+        storage
+        (* let filter_class_var_storage = AttributeStorage.filter_class_var storage ~prefix:(Reference.create class_var) in
+        filter_class_var_storage *)
       | _ -> storage
     in
-
     (*let class_summary =  in*)
     FunctionTable.add_usage_attributes function_table func_name storage
 
@@ -1502,6 +1532,13 @@ module OurSummary = struct
     FunctionTable.change_analysis function_table callers;
 
     total_analysis_set
+
+  let get_functions_of_class { class_table; function_table; } = 
+    let get_functions =
+      FunctionTable.get_functions function_table
+    in
+
+    ClassTable.get_functions_of_class ~get_functions class_table
 
   let change_analysis { function_table; _ } =
     let _, callers = FunctionTable.get_analysis_set function_table in 

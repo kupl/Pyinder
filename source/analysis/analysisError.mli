@@ -232,6 +232,19 @@ and unsupported_operand_kind =
       operator_name: Identifier.t;
       operand: Type.t;
     }
+and unsupported_operand_kind_with_reference =
+  | BinaryWithReference of {
+      operator_name: Identifier.t;
+      left_operand: Type.t;
+      left_reference: Reference.t;
+      right_operand: Type.t;
+      right_reference: Reference.t;
+    }
+  | UnaryWithReference of {
+      operator_name: Identifier.t;
+      operand: Type.t;
+      reference: Reference.t;
+    }
 
 and illegal_annotation_target_kind =
   | InvalidExpression
@@ -426,6 +439,8 @@ and kind =
       unpack_problem: unpack_problem;
     }
   | UnsupportedOperand of unsupported_operand_kind
+  | UnsupportedOperandWithReference of unsupported_operand_kind_with_reference
+
   | UnusedIgnore of int list
   | UnusedLocalMode of {
       unused_mode: Source.local_mode Node.t;
@@ -517,6 +532,10 @@ val join_at_define : resolution:GlobalResolution.t -> t list -> t list
 val join_at_source : resolution:GlobalResolution.t -> t list -> t list
 
 val deduplicate : t list -> t list
+
+val filter_typical_errors : exist:(Reference.t * Type.t -> bool) -> t list -> t list
+
+val get_reference_type : t list -> (Reference.t * Type.t) list
 
 val filter : resolution:GlobalResolution.t -> t list -> t list
 

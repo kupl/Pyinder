@@ -203,6 +203,8 @@ module ClassAttributes: sig
 
   
   val is_used_attr : t -> string -> bool
+
+  val str_attributes : unit -> t
   (*
   val is_subset_with_total_attributes : t -> AttrsSet.t -> bool
   *)
@@ -469,6 +471,8 @@ module OurSummary : sig
   val get_skip_set : t -> ReferenceSet.t
 
   val has_analysis : t -> bool
+
+  val get_functions_of_class : t -> Reference.t list list
 end
 
 val global_summary : string

@@ -47,12 +47,21 @@ module CallInfo = struct
       )
     )
 
+  let pp formatter { position; default; star; double_star; } =
+    let default_msg =
+      Identifier.Set.fold default ~init:"(" ~f:(fun msg ident ->
+        msg ^ ident ^ ","  
+      )
+    in
+    Format.fprintf formatter "position : %i \ndefault : %s\nstar: %b\ndouble_star: %b"
+      position default_msg star double_star
+
   let is_corresponding ~signature target =
     (* TODO: do more accurate *)
     if (not signature.star) && (not signature.double_star)
     then (
-      (* (target.position >= signature.position)
-      && *) (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
+      (target.position >= signature.position)
+      && (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
       && (Identifier.Set.is_subset target.default ~of_:signature.default)
     ) else if (signature.star) && (not signature.double_star) then (
       (Identifier.Set.is_subset target.default ~of_:signature.default)
@@ -62,9 +71,13 @@ module CallInfo = struct
     )
 
   let is_more_corresponding ~signature target =
+    (target.position >= signature.position) &&
     (target.position + (Identifier.Set.length target.default)) <= (signature.position + (Identifier.Set.length signature.default))
       && (Identifier.Set.is_subset target.default ~of_:signature.default)
       && is_corresponding ~signature target
+
+  
+
 
 end
 
@@ -99,6 +112,35 @@ module AttributeStorage = struct
 
   let filter_keys t ~f =
     LocInsensitiveExpMap.filter_keys t ~f
+
+  let filter_single_class_param ~class_param t =
+    filter_keys t ~f:(fun { Node.value; _} ->
+      match value with
+      | Expression.Name name 
+      | Call { callee={ Node.value=Expression.Name name; _ }; _} ->
+        (match name_to_reference name with
+        | Some reference -> 
+          not (Reference.equal reference (Reference.create class_param))
+        | _ -> true
+        )
+      | _ -> true
+    )
+
+  let get_reference_list t =
+    LocInsensitiveExpMap.fold t ~init:[] ~f:(fun ~key:{ Node.value; _} ~data:{ attribute_set; _ } acc ->
+      match value with
+      | Expression.Name name 
+      | Call { callee={ Node.value=Expression.Name name; _ }; _} ->
+        (match name_to_reference name with
+        | Some reference -> 
+          Identifier.Set.fold attribute_set ~init:acc ~f:(fun acc attr ->
+            (Reference.combine reference (Reference.create attr))::acc  
+          )
+        | _ -> acc
+        )
+      | _ -> acc
+
+    )
 
   let pp_identifier_set formatter ident_set =
     let msg = 
@@ -175,7 +217,7 @@ module AttributeStorage = struct
     fold storage ~init:empty ~f:(fun ~key ~data new_storage ->
       match Node.value key with
       | Constant _ -> new_storage
-      | Call _ -> new_storage
+      | Call { callee={ Node.value=Expression.Name name; _ }; _ }
       | Name name ->
         (
         match name_to_reference name with
@@ -202,6 +244,7 @@ module AttributeStorage = struct
             *)
         | _ -> failwith (Format.sprintf "Why is in here by filter? %s" (Expression.show key))
         )
+      | Call _ -> new_storage
       | _ -> new_storage
     )
     
@@ -218,7 +261,7 @@ module AttributeStorage = struct
           if Reference.is_parameter reference
           then (
             if Reference.is_prefix ~prefix reference
-            then false
+            then true (* false *)
             else true
           )
           else (
