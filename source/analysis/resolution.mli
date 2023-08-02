@@ -29,6 +29,10 @@ val create
   unit ->
   t
 
+val set_resolve_expression : t -> (resolution:t -> Expression.t -> t * Annotation.t) -> t
+
+val set_resolve_statement : t -> (resolution:t -> Statement.t -> resolve_statement_result_t) -> t
+
 val resolve_expression : t -> Expression.t -> t * Type.t
 
 val resolve_expression_to_type : t -> Expression.t -> Type.t

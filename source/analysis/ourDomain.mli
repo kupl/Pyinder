@@ -176,13 +176,17 @@ module ReferenceHash : sig
       Ppx_sexp_conv_lib.Sexp.t -> 'a__002_ t
 end
 
+module ReferenceSet = Reference.Set
+
 module ReferenceMap : sig
   include Map.S with type Key.t = Reference.t
 
   val join : data_join:('a -> 'a -> 'a) -> equal:('a -> 'a -> bool) -> 'a t -> 'a t -> 'a t
+
+  val diff : Type.t t -> Type.t t -> ReferenceSet.t
 end
 
-module ReferenceSet = Reference.Set
+
 module IdentifierMap : Map.S with type Key.t = Identifier.t
 
 module CallerSet = ReferenceSet
@@ -215,7 +219,8 @@ module ClassSummary: sig
     class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
-    should_analysis: bool;
+    change_set: ReferenceSet.t;
+    (* should_analysis: bool; *)
   }
 
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
@@ -255,6 +260,8 @@ module ArgTypes : sig
 
   val empty : t
 
+  val map : f:(Type.t -> Type.t) -> t -> t
+
   val is_empty : t -> bool
 
   val add_arg_type : join:(Type.t -> Type.t -> Type.t) -> t -> string -> Type.t -> t
@@ -285,6 +292,7 @@ module Signatures : sig
     return_type: Type.t; (* Function의 Return Type *)
     should_analysis: bool;
     caller_analysis: bool;
+    caller_set : ReferenceSet.t;
   } [@@deriving sexp, equal]
 
   module ArgTypesMap : Map.S with type Key.t = ArgTypes.t
@@ -306,6 +314,7 @@ module type FunctionSummary = sig
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
+    unique_analysis : UniqueAnalysis.UniqueStruct.t;
     (*usedef_tables: UsedefStruct.t option;*)
   }
 (*   type t = {
@@ -343,6 +352,7 @@ module FunctionSummary : sig
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
+    unique_analysis : UniqueAnalysis.UniqueStruct.t;
     (*usedef_tables: UsedefStruct.t option;*)
   }
 
@@ -391,7 +401,7 @@ module OurSummary : sig
 
   val find_signature : t -> Reference.t -> ArgTypes.t -> (* Signatures.t *) Signatures.return_info option
 
-  val add_new_signature : join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t -> unit
+  val add_new_signature : join:(Type.t -> Type.t -> Type.t) -> ?caller_name:Reference.t -> t -> Reference.t -> ArgTypes.t -> unit
 
 (*   val add_arg_types : join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> (Identifier.t * Type.t) list -> t *)
 
@@ -414,7 +424,10 @@ module OurSummary : sig
   val set_callers : t -> Reference.t -> CallerSet.t -> unit
 
   val set_usage_attributes : t -> Reference.t -> AttributeStorage.t -> unit
-(*
+
+  val set_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t -> unit
+
+  (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)
   val get_class_table : t -> ClassTable.t
@@ -436,7 +449,9 @@ module OurSummary : sig
 
   val get_preprocess : t -> Reference.t -> Type.t ExpressionMap.t
 
-  val get_callable : type_join:(Type.t -> Type.t -> Type.t) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
+  val get_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t
+
+  val get_callable : join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
 
   val get_callable_return_type :  t -> ArgTypes.t -> Type.Callable.t -> Type.t
   

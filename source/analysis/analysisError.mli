@@ -521,6 +521,8 @@ val due_to_analysis_limitations : t -> bool
 
 val less_or_equal : resolution:GlobalResolution.t -> t -> t -> bool
 
+val join_without_resolution : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
+
 val join : resolution:GlobalResolution.t -> t -> t -> t
 
 val meet : resolution:GlobalResolution.t -> t -> t -> t

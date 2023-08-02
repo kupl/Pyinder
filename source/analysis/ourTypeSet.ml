@@ -140,7 +140,7 @@ module ClassSummaryResolution = struct
       ) annotation
     in
 
-    let class_var_type = 
+    let new_class_var_type = 
       let x =
       ReferenceMap.empty
       |> annotation_fold method_postcondition.annotations
@@ -151,7 +151,9 @@ module ClassSummaryResolution = struct
       |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join class_var_type
     in
 
-    ClassSummary.{ t with class_var_type }
+    (* let change_set = ReferenceMap.diff class_var_type new_class_var_type |> ReferenceSet.union change_set in *)
+
+    ClassSummary.{ t with class_var_type=new_class_var_type;  }
 
 end
 

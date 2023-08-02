@@ -259,6 +259,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       ~inputs:qualifiers
       ()
   in
+  List.iter qualifiers ~f:(fun q -> Log.dump "Qual : %a" Reference.pp q);
   let our_model = !OurDomain.our_model in
 
   let mode = OurDomain.load_mode () in
@@ -308,9 +309,11 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         | Some t when String.equal mode "preprocess" ->
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let expression_map = OurDomain.OurSummary.get_preprocess cur_summary define in
-            OurDomain.ExpressionMap.iteri expression_map ~f:(fun ~key ~data -> 
-              OurDomain.OurSummary.set_preprocess our_model define key data
-            );
+          let unique_analysis = OurDomain.OurSummary.get_unique_analysis cur_summary define in
+          OurDomain.ExpressionMap.iteri expression_map ~f:(fun ~key ~data -> 
+            OurDomain.OurSummary.set_preprocess our_model define key data
+          );
+          OurDomain.OurSummary.set_unique_analysis our_model define unique_analysis;
           our_errors
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
@@ -322,8 +325,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define); *)
 
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
-          let our_errors = OurErrorDomain.OurErrorList.add ~key:define ~data:errors our_errors in
-
+          let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors our_errors in
+          (* Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary; *)
            (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;

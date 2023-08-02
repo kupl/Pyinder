@@ -180,9 +180,9 @@
               if (k >= 12) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
               then (
                 Log.dump "Done";
-                let functions_list = Analysis.OurDomain.OurSummary.get_functions_of_class our_model in
+                (* let functions_list = Analysis.OurDomain.OurSummary.get_functions_of_class our_model in
                 Analysis.OurErrorDomain.our_errors := List.fold functions_list ~init:!Analysis.OurErrorDomain.our_errors ~f:(fun our_errors functions -> Analysis.OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
-                
+                 *)
                 (* Log.dump "Error : %i" (Analysis.OurErrorDomain.OurErrorList.num !Analysis.OurErrorDomain.our_errors); *)
                 
                 let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in
@@ -209,7 +209,7 @@
                     next_skip_set, our_model
                   else
                     let next_skip_set = Analysis.OurDomain.OurSummary.get_skip_set our_model in
-                     Analysis.OurDomain.OurSummary.change_analysis our_model;
+                    (* Analysis.OurDomain.OurSummary.change_analysis our_model; *)
                     next_skip_set, our_model
                 in
                 let n =

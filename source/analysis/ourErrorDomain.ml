@@ -2,7 +2,7 @@ open Ast
 open Core
 module Error = AnalysisError
 module OurErrorListReadOnly = OurErrorDomainReadOnly.OurErrorListReadOnly
-module ReferenceMap = Map.Make (Reference)
+module LocationMap = Map.Make (Location.WithModule)
 
 module RefTyp = struct
   type t = Reference.t * Type.t [@@deriving sexp, equal, compare]
@@ -12,27 +12,31 @@ module RefTypSet = Set.Make (RefTyp)
 
 module OurErrorList = struct
   type errors = Error.t list [@@deriving sexp]
-  type t = errors ReferenceMap.t [@@deriving sexp]
+  type t = Error.t LocationMap.t [@@deriving sexp]
 
-  let empty = ReferenceMap.empty
+  let empty = LocationMap.empty
 
-  let set ~key ~data t = ReferenceMap.set ~key ~data t
+  let set ~key ~data t = LocationMap.set ~key ~data t
 
-  let get ~key t = ReferenceMap.find t key
+  let get ~key t = LocationMap.find t key
 
-  let add ~key ~data t =
-    let errors =
-      get ~key t
-      |> Option.value ~default:[]
-    in
-    set ~key ~data:((errors@data) |> Error.deduplicate) t
-
-  let num t =
-    ReferenceMap.fold t ~init:0 ~f:(fun ~key:_ ~data acc ->
-      List.length data + acc  
+  let add ~join ~(errors : Error.t list) t =
+    List.fold errors ~init:t ~f:(fun t error -> 
+      LocationMap.update t error.location ~f:(fun v ->
+        match v with
+        | Some origin_error -> Error.join_without_resolution ~type_join:join origin_error error
+        | _ -> error   
+      )
     )
 
-  let get_repeated_errors t key_list =
+
+  let num t =
+    LocationMap.length t
+    (* LocationMap.fold t ~init:0 ~f:(fun ~key:_ ~data acc ->
+      List.length data + acc  
+    ) *)
+
+  (* let get_repeated_errors t key_list =
     let reference_type_map =
     ReferenceMap.filter_keys t ~f:(fun key -> List.exists key_list ~f:(Reference.equal key))
     |> ReferenceMap.map ~f:(fun errors ->
@@ -95,7 +99,7 @@ module OurErrorList = struct
     )
       in
     (* Log.dump "END"; *)
-    x
+    x *)
 
   (*
   let equal left right =
@@ -106,7 +110,16 @@ end
 type errors = Error.t list [@@deriving sexp]
 
 let read_only (our_error_list: OurErrorList.t) =
-  ReferenceMap.fold our_error_list ~init:OurErrorListReadOnly.empty ~f:(fun ~key ~data read_only -> 
+  let reference_map =
+    LocationMap.fold our_error_list ~init:Reference.Map.empty ~f:(fun ~key:_ ~data ref_map -> 
+      let signature = Node.value data.signature in
+      let key = signature.name in
+      let error_list = Reference.Map.find ref_map key |> Option.value ~default:[] in
+      
+      Reference.Map.set ref_map ~key ~data:(data::error_list)
+    )
+  in
+  Reference.Map.fold reference_map ~init:OurErrorListReadOnly.empty ~f:(fun ~key ~data read_only -> 
     OurErrorListReadOnly.set ~key ~data:(sexp_of_errors data) read_only
   )
 

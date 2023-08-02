@@ -113,7 +113,25 @@ module AttributeStorage = struct
   let filter_keys t ~f =
     LocInsensitiveExpMap.filter_keys t ~f
 
-  let filter_single_class_param ~class_param t =
+  let get_all_attributes t =
+    LocInsensitiveExpMap.fold t ~init:Identifier.Set.empty ~f:(fun ~key:_ ~data:{ attribute_set; _ } acc -> 
+      Identifier.Set.union acc attribute_set  
+    )
+
+  let get_single_class_param t =
+    filter_keys t ~f:(fun { Node.value; _ } ->
+      match value with
+      | Expression.Name name 
+      | Call { callee={ Node.value=Expression.Name name; _ }; _} ->
+        (match name_to_reference name with
+        | Some reference -> 
+          (Reference.equal reference (Reference.create "$parameter$self")) || (Reference.equal reference (Reference.create "$parameter$cls"))
+        | _ -> false
+        )
+      | _ -> false
+    )
+
+ let filter_single_class_param ~class_param t =
     filter_keys t ~f:(fun { Node.value; _} ->
       match value with
       | Expression.Name name 

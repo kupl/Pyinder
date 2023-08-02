@@ -190,21 +190,22 @@ module Make (State : PossibleState) = struct
       *)
       (* let timer = Timer.start () in *)
 
-      (* if String.is_substring (Reference.show func_name) ~substring:"rasa.shared.core.training_data.visualization.visualize_neighborhood"
+      (* if String.is_substring (Reference.show func_name) ~substring:"salt.client.LocalClient.pub"
         then (
-          Log.dump "START %a" Reference.pp func_name;
+          Log.dump "START %a %i" Reference.pp func_name (Cfg.Node.id node);
           Log.dump "%a" Cfg.Node.pp node;
         ); *)
 
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
 
-      (* let trans_time = Timer.stop_in_sec timer in
+      let trans_time = Timer.stop_in_sec timer in
+      let _ = trans_time in
 
-      if Float.(>) trans_time 2.0 (* && String.is_substring (Reference.show func_name) ~substring:"rasa.shared.core.trackers.DialogueStateTracker.update" *)
+      (* if (* Float.(>) trans_time 2.0 && *) String.is_substring (Reference.show func_name) ~substring:"salt.client.LocalClient.pub"
         then (
-          Log.dump "THISIS!! %.3f %a" trans_time Reference.pp func_name;
-          Log.dump "%a" Cfg.Node.pp node;
+          Log.dump "END %i" (Cfg.Node.id node);
+          (* Log.dump "%a" Cfg.Node.pp node; *)
         ); *)
       
       (*

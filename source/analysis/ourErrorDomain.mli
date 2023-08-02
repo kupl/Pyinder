@@ -3,22 +3,22 @@ open Core
 module OurErrorListReadOnly = OurErrorDomainReadOnly.OurErrorListReadOnly
 module Error = AnalysisError
 
-module ReferenceMap : Map.S with type Key.t = Reference.t
+module LocationMap : Map.S with type Key.t = Location.WithModule.t
 
 module OurErrorList : sig
-    type t = Error.t list ReferenceMap.t [@@deriving sexp]
+    type t = Error.t LocationMap.t [@@deriving sexp]
 
     val empty : t
 
-    val set : key:Reference.t -> data:Error.t list -> t -> t
+    val set : key:Location.WithModule.t -> data:Error.t -> t -> t
 
-    val get : key:Reference.t -> t -> Error.t list option
+    val get : key:Location.WithModule.t -> t -> Error.t option
 
-    val add : key:Reference.t -> data:Error.t list -> t -> t
+    val add : join:(Type.t -> Type.t -> Type.t) -> errors:Error.t list -> t -> t
 
     val num : t -> int
 
-    val get_repeated_errors : t -> Reference.t list -> t
+    (* val get_repeated_errors : t -> Reference.t list -> t *)
 end
 
 type errors = Error.t list [@@deriving sexp]

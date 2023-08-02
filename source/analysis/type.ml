@@ -7126,20 +7126,28 @@ let rec top_to_bottom t =
   | Unknown -> Unknown
 
 
-let rec get_dict_value_type ?(with_key = None) t =
+let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
+  let value_type = weaken_literals value_type in
   match t with
   | Parametric { name = "dict"; parameters } -> (
       match parameters with
       | [Single key_parameter; Single value_parameter] ->
-        if can_unknown key_parameter then Unknown else value_parameter
+        let _ = key_parameter in
+        value_parameter
+        (* if can_unknown value_type then Unknown
+        else
+          (match key_parameter with
+          | Union t_list -> if List.exists t_list ~f:(equal value_type) then value_parameter else Unknown
+          | t -> if equal t value_type then value_parameter else Unknown
+          ) *)
       | _ -> Log.dump "HMM??"; Unknown
   )
   | OurTypedDictionary { general; typed_dict } -> (
       match with_key with
       | Some key -> 
         OurTypedDictionary.get_field_annotation typed_dict key
-        |> Option.value ~default:(get_dict_value_type general)
-      | _ -> get_dict_value_type general
+        |> Option.value ~default:(get_dict_value_type ~value_type general)
+      | _ -> get_dict_value_type ~value_type general
   )
   | _ -> Unknown  
 

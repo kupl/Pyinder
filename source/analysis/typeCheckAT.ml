@@ -1319,106 +1319,7 @@ module TypeCheckAT (Context : Context) = struct
       (*
       Log.dump "Callee %a Type %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
       *)
-      let resolved_dict_getitem callee_resolved t =
-        match callee_resolved with
-        | Type.Parametric (* dict.__getitem__ 처리 *)
-          { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); Single origin] } 
-          when String.equal (Reference.show name) "dict.__getitem__"
-          -> 
-            if List.length arguments = 1
-            then
-              (
-              let annotation_type = origin in
-              let reversed_arguments =
-                let forward_argument reversed_arguments argument =
-                  let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
-                  |> fun { resolved; _ } ->
-                    { AttributeResolution.Argument.kind; expression = Some expression; resolved }
-                    :: reversed_arguments
-                in
-                List.fold arguments ~f:forward_argument ~init:[]
-              in
-              let arguments = List.rev reversed_arguments in
-
-              (* value 원소는 literal이어야 한다 *)
-              let value_arg = List.nth_exn arguments 0 in
-              let result = 
-                if Type.contains_literal value_arg.resolved
-                then Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
-                else Type.get_dict_value_type annotation_type 
-              in
-
-              result
-              )
-              (*
-              match (Callee.expression callee) with
-              | { Node.value = Name name; _ } ->
-                Log.dump "TEST %a" Expression.pp (Callee.expression callee);
-                let t1, t2, annotation_opt = Resolution.partition_name resolution ~name in
-                Log.dump "Partition %a , %a" Reference.pp t1 Reference.pp t2;
-                (match annotation_opt with
-                  | Some annotation ->
-                    let annotation_type = annotation |> Annotation.annotation in
-                    Log.dump "TESTTEST : %a" Type.pp annotation_type;
-                    let reversed_arguments =
-                      let forward_argument reversed_arguments argument =
-                        let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                        forward_expression ~resolution expression
-                        |> fun { resolved; _ } ->
-                          { AttributeResolution.Argument.kind; expression = Some expression; resolved }
-                          :: reversed_arguments
-                      in
-                      List.fold arguments ~f:forward_argument ~init:[]
-                    in
-                    let arguments = List.rev reversed_arguments in
       
-                    (* value 원소는 literal이어야 한다 *)
-                    let value_arg = List.nth_exn arguments 0 in
-                    let result = 
-                      if Type.contains_literal value_arg.resolved
-                      then Type.get_dict_value_type ~with_key:(Some (Expression.show (Option.value_exn value_arg.expression))) annotation_type
-                      else Type.get_dict_value_type annotation_type 
-                    in
-                    Log.dump "OK %a" Type.pp result;
-                    result
-
-                  | None -> t
-                  )
-
-              | _ -> t
-              *)
-              (*
-              let reversed_arguments =
-                let forward_argument reversed_arguments argument =
-                  let expression, kind = Ast.Expression.Call.Argument.unpack argument in
-                  forward_expression ~resolution expression
-                  |> fun { resolved; _ } ->
-                    { AttributeResolution.Argument.kind; expression = Some expression; resolved }
-                    :: reversed_arguments
-                in
-                List.fold arguments ~f:forward_argument ~init:[]
-              in
-              let arguments = List.rev reversed_arguments in
-
-              (* value 원소는 literal이어야 한다 *)
-              let value_arg = List.nth_exn arguments 1 in
-
-              if Type.contains_literal value_arg.resolved
-                then
-
-                else
-                  let value = Option.value_exn value_arg.expression |> Expression.show in
-                  Type.OurTypedDictionary.get_field_type value
-            *)
-            else (
-              failwith "GetItem Callee Length is not 1"
-            )
-            
-
-        | _ -> t
-      in
-
       let update_dict_setitem callee_resolved =
         match callee_resolved with
         | Type.Parametric (* dict.__setitem__ 처리 *)
@@ -1547,7 +1448,7 @@ module TypeCheckAT (Context : Context) = struct
             | Name (Name.Attribute { attribute = "__set__"; _}) -> Type.set (Type.union resolved_arguments)
             | Name (Name.Attribute { attribute = "__tuple__"; _}) -> Type.tuple resolved_arguments
             | Name (Name.Attribute { attribute = "__dict__"; _}) -> Type.dictionary ~key:Type.Any ~value:Type.Any
-            | _ -> resolved_dict_getitem (Callee.resolved callee) t
+            | _ -> t
           in
 
           resolved

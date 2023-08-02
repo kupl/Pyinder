@@ -121,6 +121,10 @@ module ReferenceMap = struct
       | _ -> refset
     )
 
+  let to_set t =
+    keys t
+    |> List.fold ~init:ReferenceSet.empty ~f:(fun set key -> ReferenceSet.add set key)
+
   let pp ~data_pp format t =
     iteri ~f:(fun ~key ~data ->
       Format.fprintf format "%a => %a\n" Reference.pp key data_pp data
@@ -150,8 +154,8 @@ module VarTypeMap = struct
 end
 *)
 
-module FunctionSet = ReferenceSet
-module CallerSet = ReferenceSet
+module CallerSet = Reference.Set
+module FunctionSet = Reference.Set
 module StoreMap = ReferenceMap
 module ClassMap = ReferenceMap
 module FunctionMap = ReferenceMap
@@ -270,6 +274,12 @@ module ArgTypes = struct
   let make_arg_types arg_typ_list =
     List.fold arg_typ_list ~init:empty ~f:(fun arg_types (arg, typ) -> set_arg_type arg_types arg typ)
 end
+
+module ArgTypesOpt = struct
+  type t = ArgTypes.t option [@@deriving sexp, compare]
+end
+
+module ArgTypesOptSet = Set.Make (ArgTypesOpt)
 
 module ArgTypesKey = struct
   type t = Reference.t * (Identifier.t * Type.t) list [@@deriving sexp, compare, hash, show]
@@ -417,6 +427,7 @@ module ClassSummary = struct
   let join ~type_join left right =
     let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
     let change_set = ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) in
+
     (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
@@ -437,7 +448,7 @@ module ClassSummary = struct
   let pp format t =
     Format.fprintf format "%a\n%a\n%a" pp_class_var_type t pp_class_info t pp_usage_attributes t
 
-  (* let has_analysis { should_analysis; _ } = should_analysis *)
+  let has_analysis { change_set; _ } = not (ReferenceSet.is_empty change_set)
 end
 
 module type ClassTable = sig
@@ -485,12 +496,19 @@ module ClassTable = struct
       Format.fprintf format "[[[ Class : %a ]]] \n%a\n" Reference.pp key ClassSummary.pp data
     ) t
 
-  let get_analysis_set ~get_functions t =
-    ClassHash.fold t ~init:ReferenceSet.empty ~f:(fun ~key ~data ref_set ->
-      if ClassSummary.should_analysis data then
-        get_functions key |> ReferenceSet.union ref_set
+  let get_analysis_set ~get_functions ~get_usage_self_attributes t =
+    let _ = get_usage_self_attributes in
+    ClassHash.fold t ~init:ReferenceMap.empty ~f:(fun ~key ~data map ->
+      if ClassSummary.has_analysis data then (
+        get_functions key
+        |> ReferenceSet.filter ~f:(fun func_name -> 
+          not (ReferenceSet.is_empty (ReferenceSet.inter data.change_set (get_usage_self_attributes func_name)))
+        )
+        |> ReferenceSet.fold ~init:map ~f:(fun map ref -> 
+          ReferenceMap.set map ~key:ref ~data:(ArgTypesOptSet.singleton None))
+      )
       else
-        ref_set
+        map
     )
 
   let has_analysis t =
@@ -525,6 +543,7 @@ module Signatures = struct
     return_type: Type.t; (* Function의 Return Type *)
     should_analysis: bool;
     caller_analysis: bool;
+    caller_set : ReferenceSet.t;
   } [@@deriving sexp, equal]
 
   module ArgTypesMap = Map.Make (ArgTypes)
@@ -539,6 +558,7 @@ module Signatures = struct
     return_type = Unknown;
     should_analysis = true;
     caller_analysis = true;
+    caller_set = ReferenceSet.empty;
   }
 
   (* let equal_except_parameter left right =
@@ -563,6 +583,7 @@ module Signatures = struct
     (* let tt1 = Timer.stop_in_sec timer in *)
     let should_analysis = left.should_analysis || right.should_analysis in
     let caller_analysis = (not (Type.equal return_type right.return_type)) in
+    let caller_set = ReferenceSet.union left.caller_set right.caller_set in
     (* let tt2 = Timer.stop_in_sec timer in
     let total_time = Timer.stop_in_sec timer in *)
     let x =
@@ -571,6 +592,7 @@ module Signatures = struct
       return_type; (* Function의 Return Type *)
       should_analysis;
       caller_analysis;
+      caller_set;
     }
   in
 
@@ -589,6 +611,7 @@ module Signatures = struct
       return_type = type_join left.return_type right.return_type; (* Function의 Return Type *)
       should_analysis = left.should_analysis || right.should_analysis;
       caller_analysis = left.caller_analysis || right.caller_analysis;
+      caller_set = ReferenceSet.union left.caller_set right.caller_set;
     }
     
 
@@ -691,7 +714,8 @@ module Signatures = struct
       ); *)
       x *)
 
-  let add_new_signature ~join t arg_typ_list =
+
+  let add_new_signature ~join ?caller_name t arg_typ_list =
     let _ = join in
     (* TODO : is right filter unknown? *)
     (*let new_arg_types = List.fold arg_typ_list ~init:ArgTypes.empty ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg (typ |> Type.filter_unknown)) in*)
@@ -701,8 +725,22 @@ module Signatures = struct
     (* | signature when ArgTypesMap.is_empty signature -> 
       merge_arg_types ~type_join:join t new_arg_types empty_return_info
     | _ -> t *)
-    | Some _ -> t
-    | None -> ArgTypesMap.set t ~key:new_arg_types ~data:empty_return_info
+    | Some v -> 
+      let data =
+        (match caller_name with
+        | Some caller -> { v with caller_set = ReferenceSet.add v.caller_set caller }
+        | _ -> v
+        )
+      in
+      ArgTypesMap.set t ~key:new_arg_types ~data
+    | None -> 
+      let data =
+        (match caller_name with
+        | Some caller -> { empty_return_info with caller_set = ReferenceSet.singleton caller }
+        | _ -> empty_return_info
+        )
+      in
+      ArgTypesMap.set t ~key:new_arg_types ~data
 
   (*let add_return_info t arg_types return_var_type return_type =
     ArgTypesMap.set t ~key:arg_types ~data:{ return_var_type; return_type; should_analysis=false; }
@@ -763,17 +801,51 @@ module Signatures = struct
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
     ArgTypesMap.set t ~key:arg_types ~data:{ data with should_analysis=false; }
 
+
+  let analysis_caller_set t =
+    ArgTypesMap.fold t ~init:(false, ReferenceMap.empty) ~f:(fun ~key ~data:{ caller_analysis; caller_set; _ } (all_flag, acc) -> 
+      if caller_analysis
+      then (
+        
+        if ReferenceSet.is_empty caller_set
+        then (all_flag, acc)
+        else 
+          let caller_set = ReferenceSet.fold caller_set ~init:ReferenceMap.empty ~f:(fun map caller -> 
+              let arg_types_opt_set = ReferenceMap.find map caller |> Option.value ~default:ArgTypesOptSet.empty in
+              ReferenceMap.set map ~key:caller ~data:(ArgTypesOptSet.add arg_types_opt_set (Some key))
+            ) 
+          in
+          (all_flag, ReferenceMap.join caller_set acc ~data_join:ArgTypesOptSet.union ~equal:ArgTypesOptSet.equal) 
+      ) 
+      else (all_flag, acc) 
+    )
+
   let change_analysis t =
     ArgTypesMap.map t ~f:(fun return_info -> { return_info with should_analysis=true;} )
+
+  let change_analysis_of_arg_types t arg_types_opt_set =
+    ArgTypesMap.mapi t ~f:(fun ~key ~data -> 
+      if ArgTypesOptSet.mem arg_types_opt_set (Some key)
+      then { data with should_analysis=true; }
+      else data
+    )    
 
   let change_analysis_to_false t =
     ArgTypesMap.map t ~f:(fun return_info -> { return_info with should_analysis=false;} )
 
-  let should_analysis t =
+  (* let should_analysis t =
     ArgTypesMap.fold t ~init:false ~f:(fun ~key:_ ~data:{ should_analysis; _ } flag -> flag || should_analysis)
+ *)
+  let get_should_analysis t =
+    ArgTypesMap.fold t ~init:ArgTypesOptSet.empty ~f:(fun ~key ~data:{ should_analysis; _ } set -> 
+      if should_analysis then
+        ArgTypesOptSet.add set (Some key)
+      else
+        set
+    )
 
-  let caller_analysis t =
-    ArgTypesMap.fold t ~init:false ~f:(fun ~key:_ ~data:{ caller_analysis; _ } flag -> flag || caller_analysis)
+  (* let caller_analysis t =
+    ArgTypesMap.fold t ~init:false ~f:(fun ~key:_ ~data:{ caller_analysis; _ } flag -> flag || caller_analysis) *)
 
   (* let is_changed_return_info left right =
     ArgTypesMap.fold2 left right ~init:false ~f:(fun ~key:_ ~data flag ->
@@ -791,8 +863,8 @@ module Signatures = struct
   
 end
 
-module type FunctionSummary = sig
 
+module type FunctionSummary = sig
   type t = {
     signatures: Signatures.t;
     (* arg_types: ArgTypes.t; (* Argumets의 Input Type *)
@@ -801,6 +873,7 @@ module type FunctionSummary = sig
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
+    unique_analysis : UniqueAnalysis.UniqueStruct.t;
     (*usedef_tables: UsedefStruct.t option;*)
   } 
 
@@ -819,6 +892,7 @@ module FunctionSummary = struct
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
+    unique_analysis : UniqueAnalysis.UniqueStruct.t;
     (*usedef_tables: UsedefStruct.t option;*)
   } [@@deriving sexp, equal]
 
@@ -831,14 +905,15 @@ module FunctionSummary = struct
     return_type= Type.Unknown; (* Function의 Return Type *) *)
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
+    unique_analysis=UniqueAnalysis.UniqueStruct.empty;
     (*usedef_tables=None;*)
   }
 
   let find_signature {signatures; _} arg_types =
     Signatures.find_signature signatures arg_types
 
-  let add_new_signature ~join ({signatures; _} as t) arg_type_list =
-    { t with signatures=Signatures.add_new_signature ~join signatures arg_type_list }
+  let add_new_signature ~join ?caller_name ({signatures; _} as t) arg_type_list =
+    { t with signatures=Signatures.add_new_signature ~join ?caller_name signatures arg_type_list }
   (* let add_arg_types ~join ({arg_types; _} as t) arg_typ_list =
     { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg typ) }
  *)
@@ -866,6 +941,9 @@ module FunctionSummary = struct
 
   let set_usage_attributes t usage_attributes =
     { t with usage_attributes }
+
+  let set_unique_analysis t unique_analysis =
+    { t with unique_analysis }
 
   (* let add_return_var_type ({ return_var_type; _ } as t) reference typ =
     { t with return_var_type=(ReferenceMap.set return_var_type ~key:reference ~data:typ); } *)
@@ -909,6 +987,8 @@ module FunctionSummary = struct
 
   let get_preprocess { preprocess; _} = preprocess
 
+  let get_unique_analysis { unique_analysis; _ } = unique_analysis
+
 
 
 
@@ -942,6 +1022,7 @@ module FunctionSummary = struct
     preprocess;
     callers;
     usage_attributes;
+    unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
     (*usedef_tables=usedef_tables;*)
   }
 (*   let join ~type_join left right = 
@@ -981,12 +1062,13 @@ module FunctionSummary = struct
         Format.fprintf format "%a, " data_pp data
       ) t
 
-  let pp format { signatures; usage_attributes; callers; _} =
+  let pp format { signatures; usage_attributes; callers; unique_analysis; _ } =
     Format.fprintf format 
-      "<Signatures>\n%a\n\n<Usage Attributes>\n%a\n<Callers>\n%a\n" 
+      "<Signatures>\n%a\n\n<Usage Attributes>\n%a\n\n<Callers>\n%a\n\n<Unique Analysis>\n%a\n" 
       Signatures.pp signatures 
       AttributeStorage.pp usage_attributes
       (pp_reference_set ~data_pp:Reference.pp) callers
+      UniqueAnalysis.UniqueStruct.pp unique_analysis
 (*   let pp format {arg_types; arg_annotation; return_var_type; return_type; usage_attributes; callers; _} =
     Format.fprintf format 
       "<Arg Types>\n%a\n\n<Arg Anno>\n%a\n\n<Return Var Type>\n%a\n\n<Return Type> %a\n\n<Usage Attributes>\n%a\n<Callers>\n%a\n" 
@@ -1037,12 +1119,13 @@ module FunctionSummary = struct
       preprocess;
       callers;
       usage_attributes;
+      unique_analysis=next.unique_analysis; 
       (*usedef_tables=usedef_tables;*)
     }
   
 
 
-  let get_implementation ~type_join { signatures; _ } arg_types callable =
+  let get_implementation ~join ~less_or_equal { signatures; _ } arg_types callable =
     (* let arg_callable = 
       Type.Callable.map_parameters callable ~f:(fun parameter ->
         match parameter with
@@ -1084,7 +1167,10 @@ module FunctionSummary = struct
         | _ -> parameter
       )
     in *)
-    let _ = arg_types, type_join in
+    let _ = arg_types, join in
+    let arg_types = 
+      ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal) arg_types 
+    in
     let return_type = Signatures.get_return_type signatures arg_types in
     
     let arg_callable = Type.Callable.map_parameters callable ~f:(fun x -> x) in 
@@ -1112,9 +1198,10 @@ module FunctionSummary = struct
     Signatures.get_module_var_type signatures attribute
 
   let analysis_caller_set { signatures; callers; _ } = 
-    if Signatures.caller_analysis signatures
-    then callers
-    else ReferenceSet.empty
+    let _ = callers in
+    let _, caller_set = Signatures.analysis_caller_set signatures in
+    caller_set
+    (* if all_flag then callers else caller_set *)
   (* let analysis_caller_set prev next = 
     if Signatures.is_changed_return_info prev.signatures next.signatures
     then next.callers
@@ -1123,6 +1210,13 @@ module FunctionSummary = struct
   let change_analysis ({ signatures; _ } as t) =
     { t with signatures=Signatures.change_analysis signatures; }
 
+  let change_analysis_of_arg_types ({ signatures; _ } as t) arg_types_opt_set = 
+    if ArgTypesOptSet.mem arg_types_opt_set None
+    then (
+      change_analysis t
+    )
+    else { t with signatures=Signatures.change_analysis_of_arg_types signatures arg_types_opt_set; }
+
   let change_analysis_to_false ({ signatures; _ } as t) =
     { t with signatures=Signatures.change_analysis_to_false signatures; }
 
@@ -1130,10 +1224,8 @@ module FunctionSummary = struct
     { t with signatures=Signatures.end_analysis signatures arg_types; }
 
   let get_analysis_set t =
-    let should_analysis = 
-      if (Signatures.should_analysis t.signatures)
-      then true
-      else false
+    let should_analysis_set = 
+      Signatures.get_should_analysis t.signatures
     in
 
     (* TODO: skip return_var_type? *)
@@ -1145,10 +1237,16 @@ module FunctionSummary = struct
 
     let analysis_set = analysis_caller_set t in
     
-    should_analysis, analysis_set
+    should_analysis_set, analysis_set
 
   let has_analysis { signatures; _ } =
     Signatures.has_analysis signatures
+
+  let get_usage_self_attributes { usage_attributes; _ } =
+    AttributeAnalysis.AttributeStorage.get_single_class_param usage_attributes
+    |> AttributeAnalysis.AttributeStorage.get_all_attributes
+    |> Identifier.Set.fold ~init:ReferenceSet.empty ~f:(fun acc ref -> ReferenceSet.add acc (Reference.create ref))
+    
 end
 
 module type FunctionTable = sig
@@ -1164,9 +1262,9 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.find_signature func_summary arg_types
 
-  let add_new_signature ~join t reference arg_typ_list =
+  let add_new_signature ~join ?caller_name t reference arg_typ_list =
     let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
-    let func_summary = FunctionSummary.add_new_signature ~join func_summary arg_typ_list in
+    let func_summary = FunctionSummary.add_new_signature ~join ?caller_name func_summary arg_typ_list in
     FunctionHash.set ~key:reference ~data:func_summary t
   (* let add_arg_types ~join t reference arg_typ_list =
     let func_summary = FunctionMap.find t reference |> Option.value ~default:FunctionSummary.empty in
@@ -1215,6 +1313,11 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_usage_attributes func_summary usage_attributes) t
 
+  let set_unique_analysis t func unique_analysis =
+    let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionHash.set ~key:func ~data:(FunctionSummary.set_unique_analysis func_summary unique_analysis) t
+
+
 (*   let set_return_var_type t func return_var_type =
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionMap.set ~key:func ~data:(FunctionSummary.set_return_var_type func_summary return_var_type) t
@@ -1261,6 +1364,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_preprocess func_summary
 
+  let get_unique_analysis t func_name =
+    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_unique_analysis func_summary
+
   let update ~type_join prev next =
     FunctionHash.join prev next ~equal:FunctionSummary.equal ~data_join:(FunctionSummary.update ~type_join)
 
@@ -1278,11 +1385,11 @@ module FunctionTable = struct
       Format.fprintf format "[[[ Function Info ]]] \n%a \n%a \n" Reference.pp key FunctionSummary.pp data
     ) table
 
-  let get_callable ~type_join t arg_types (callable: Type.Callable.t) =
+  let get_callable ~join ~less_or_equal t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
       let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in
-      let callable = FunctionSummary.get_implementation ~type_join func_summary arg_types callable in
+      let callable = FunctionSummary.get_implementation ~join ~less_or_equal func_summary arg_types callable in
       callable
     | _ -> callable
 
@@ -1302,6 +1409,11 @@ module FunctionTable = struct
       ReferenceSet.add ref_set key
     )
 
+  let get_usage_self_attributes t func_name =
+    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_usage_self_attributes func_summary
+
+
   let get_all_functions t =
     List.fold (FunctionHash.keys t) ~init:ReferenceSet.empty ~f:(fun ref_set key ->
       ReferenceSet.add ref_set key
@@ -1319,12 +1431,18 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_module_var_type func_summary attribute
 
-  let change_analysis t callers =
-    ReferenceSet.iter callers ~f:(fun caller -> 
-      match FunctionHash.find t caller with
+  let change_analysis_of_argtypes t callers =
+    ReferenceMap.iteri callers ~f:(fun ~key ~data -> 
+      match FunctionHash.find t key with
       | Some func_summary -> 
-        let func_summary = FunctionSummary.change_analysis func_summary in
-        FunctionHash.set ~key:caller ~data:func_summary t
+        (* Log.dump "%a ..." Reference.pp key;
+        ArgTypesOptSet.iter data ~f:(fun arg_types -> 
+          match arg_types with
+          | None -> Log.dump "NONE";
+          | _ -> Log.dump "Somethingh";  
+        ); *)
+        let func_summary = FunctionSummary.change_analysis_of_arg_types func_summary data in
+        FunctionHash.set ~key ~data:func_summary t
       | _ -> ()
     )
   
@@ -1344,11 +1462,14 @@ module FunctionTable = struct
     | _ -> ()
 
   let get_analysis_set t =
-    FunctionHash.fold t ~init:(ReferenceSet.empty, ReferenceSet.empty) ~f:(fun ~key ~data (self, callers) ->
-      let should_analysis, analysis_set = FunctionSummary.get_analysis_set data in
-      (if should_analysis
-      then ReferenceSet.add self key, analysis_set |> ReferenceSet.union callers 
-      else self, analysis_set |> ReferenceSet.union callers 
+    FunctionHash.fold t ~init:(ReferenceMap.empty, ReferenceMap.empty) ~f:(fun ~key ~data (self, callers) ->
+      let should_analysis_set, analysis_set = FunctionSummary.get_analysis_set data in
+      let new_analysis_set = analysis_set |> ReferenceMap.join ~data_join:ArgTypesOptSet.union ~equal:ArgTypesOptSet.equal callers in
+      (if ArgTypesOptSet.is_empty should_analysis_set
+      then self, new_analysis_set
+      else 
+        let self_data = ReferenceMap.find self key |> Option.value ~default:ArgTypesOptSet.empty in
+        ReferenceMap.set self ~key ~data:(ArgTypesOptSet.union self_data should_analysis_set), new_analysis_set
       )
     )
 
@@ -1401,8 +1522,8 @@ module OurSummary = struct
  let find_signature {function_table; _ } reference arg_types =
   FunctionTable.find_signature function_table reference arg_types
 
- let add_new_signature ~join { function_table; _} reference arg_typ_list =
-  FunctionTable.add_new_signature ~join function_table reference arg_typ_list
+ let add_new_signature ~join ?caller_name { function_table; _} reference arg_typ_list =
+  FunctionTable.add_new_signature ~join ?caller_name function_table reference arg_typ_list
 
 (*   let add_arg_types ~join ({ function_table; _} as t) reference arg_typ_list =
     { t with function_table = FunctionTable.add_arg_types ~join function_table reference arg_typ_list }
@@ -1449,6 +1570,9 @@ module OurSummary = struct
   let set_usage_attributes {function_table; _} func_name usage_attributes =
     FunctionTable.set_usage_attributes function_table func_name usage_attributes
 
+  let set_unique_analysis { function_table; _ } func_name unique_analysis =
+    FunctionTable.set_unique_analysis function_table func_name unique_analysis
+
   let get_class_table { class_table; _ } = class_table
 (*
   let get_usedef_tables {function_table; _} func_name = 
@@ -1475,11 +1599,14 @@ module OurSummary = struct
   let get_preprocess { function_table; _ } func_name =
     FunctionTable.get_preprocess function_table func_name
 
-  let get_callable ~type_join { function_table; _ } arg_types callable =
-    FunctionTable.get_callable ~type_join function_table arg_types callable
+  let get_callable ~join ~less_or_equal { function_table; _ } arg_types callable =
+    FunctionTable.get_callable ~join ~less_or_equal function_table arg_types callable
 
   let get_callable_return_type { function_table; _ } arg_types callable =
-  FunctionTable.get_callable_return_type function_table arg_types callable
+    FunctionTable.get_callable_return_type function_table arg_types callable
+
+  let get_unique_analysis { function_table; _ } func_name =
+    FunctionTable.get_unique_analysis function_table func_name
 
   let add_class_attribute {class_table; _} parent attr =
     ClassTable.add_attribute class_table parent attr 
@@ -1526,10 +1653,16 @@ module OurSummary = struct
       FunctionTable.get_functions function_table
     in
 
-    let class_functions = ClassTable.get_analysis_set ~get_functions class_table in
+    let get_usage_self_attributes =
+      FunctionTable.get_usage_self_attributes function_table
+    in
+
+    let class_functions = ClassTable.get_analysis_set ~get_functions ~get_usage_self_attributes class_table in
     let self, callers = FunctionTable.get_analysis_set function_table in 
-    let total_analysis_set = ReferenceSet.union class_functions self |> ReferenceSet.union callers in
-    FunctionTable.change_analysis function_table callers;
+    let join = ReferenceMap.join ~data_join:ArgTypesOptSet.union ~equal:ArgTypesOptSet.equal in
+    let total_analysis_set = join class_functions self |> join callers in
+
+    FunctionTable.change_analysis_of_argtypes function_table total_analysis_set;
 
     total_analysis_set
 
@@ -1542,7 +1675,7 @@ module OurSummary = struct
 
   let change_analysis { function_table; _ } =
     let _, callers = FunctionTable.get_analysis_set function_table in 
-    FunctionTable.change_analysis function_table callers
+    FunctionTable.change_analysis_of_argtypes function_table callers
 
   let end_analysis { function_table; _ } func_name arg_types =
     FunctionTable.end_analysis function_table func_name arg_types
@@ -1556,7 +1689,7 @@ module OurSummary = struct
   let get_skip_set ({function_table; _ } as t) =
     let analysis_set = get_analysis_set t in
     let get_all_functions= FunctionTable.get_all_functions function_table in
-    ReferenceSet.diff get_all_functions analysis_set
+    ReferenceSet.diff get_all_functions (ReferenceMap.to_set analysis_set)
 
 
   let has_analysis { class_table; function_table; } =

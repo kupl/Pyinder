@@ -12951,7 +12951,7 @@ module PossibleState (Context : OurContext) = struct
       match rt_type with
       | Unreachable -> rt_type
       | Value resolution ->
-        let rt_resolution, rt_errors = TypeCheckRT.forward_statement ~resolution ~at_resolution ~statement in
+        let rt_resolution, rt_errors = TypeCheckRT.forward_statement_first ~resolution ~at_resolution ~statement in
         let post_resolution, errors = rt_resolution, rt_errors in
         (*Format.printf "[ Statement ] \n\n%a \n\n" Statement.pp statement;*)
         
@@ -13862,10 +13862,13 @@ let exit_state ~resolution (module Context : OurContext) =
     let our_model = !Context.our_summary in
     let final_model = !OurDomain.our_model in 
     let join = GlobalResolution.join global_resolution in
-
+    let less_or_equal = GlobalResolution.less_or_equal global_resolution in
       match initial.rt_type with
       | Value resolution ->
-        let arg_types = OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution in
+        let arg_types = 
+          OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution 
+          |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
+        in
 
         (* if OurDomain.ArgTypes.is_empty arg_types then our_model
         else *)
@@ -14217,9 +14220,12 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let initial = { initial with rt_type=Value resolution; } in
       
-
-      (* Log.dump "%a GO" Reference.pp name;
-      Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution; *)
+      (* if String.equal (Reference.show name) "salt.client.LocalClient.pub"
+        then (
+          Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
+        ); *)
+      
+        (* Log.dump "%a >>> %a" Reference.pp name Resolution.pp resolution; *)
       
       (* if String.is_substring (Reference.show name) ~substring:"rasa.shared.core.trackers.DialogueStateTracker.update"
         then (
@@ -14394,13 +14400,22 @@ let exit_state ~resolution (module Context : OurContext) =
       errors, local_annotations, callees
     in
 
+    (* Log.dump "START %a (%i)" Reference.pp name (List.length check_arg_types_list); *)
+
+    (* if String.equal (Reference.show name) "salt.client.LocalClient.pub"
+      then (
+        Log.dump "START %a (%i)" Reference.pp name (List.length check_arg_types_list);
+      ); *)
+
     let errors, local_annotations, callees = 
       (* check_define_of_arg_types Context.entry_arg_types *)
-      List.fold check_arg_types_list ~init:([], LocalAnnotationMap.empty (), []) ~f:(fun (errors, _, callees) arg_types ->
+      List.foldi check_arg_types_list ~init:([], LocalAnnotationMap.empty (), []) ~f:(fun _ (errors, _, callees) arg_types ->
         let new_errors, new_local_annotations, new_callees = check_define_of_arg_types arg_types in
         errors@new_errors |> Error.deduplicate, new_local_annotations, callees@new_callees
       )
     in
+
+    (* Log.dump "END %a (%i)" Reference.pp name (List.length check_arg_types_list); *)
 
     let total_time = Timer.stop_in_sec timer in
     let _ = init_time, save_time, total_time in

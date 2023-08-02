@@ -1211,7 +1211,7 @@ val callable_name : t -> Reference.t option
 
 val top_to_bottom : t -> t
 
-val get_dict_value_type : ?with_key:string option -> type_t -> type_t
+val get_dict_value_type : ?with_key:string option -> ?value_type:type_t -> type_t -> type_t
 
 val can_union : f:(t -> bool) -> t -> bool
 

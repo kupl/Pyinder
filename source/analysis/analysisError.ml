@@ -3190,6 +3190,555 @@ let less_or_equal ~resolution left right =
       false
 
 
+let join_without_resolution ~type_join left right =
+  let join_mismatch left right =
+    {
+      expected = type_join left.expected right.expected;
+      actual = type_join left.actual right.actual;
+      due_to_invariance = left.due_to_invariance || right.due_to_invariance;
+    }
+  in
+  let join_missing_annotation
+      (left : missing_annotation) (* Ohcaml... *)
+      (right : missing_annotation)
+      : missing_annotation
+    =
+    let join_annotation_options = Option.merge ~f:(type_join) in
+    {
+      left with
+      annotation = join_annotation_options left.annotation right.annotation;
+      given_annotation = join_annotation_options left.given_annotation right.given_annotation;
+      evidence_locations =
+        List.dedup_and_sort
+          ~compare:Location.WithPath.compare
+          (left.evidence_locations @ right.evidence_locations);
+      thrown_at_source = left.thrown_at_source || right.thrown_at_source;
+    }
+  in
+  let kind =
+    match left.kind, right.kind with
+    | AnalysisFailure left, AnalysisFailure right when [%compare.equal: analysis_failure] left right
+      ->
+        AnalysisFailure left
+    | ( BroadcastError { expression = left_expression; left = first_left; right = first_right },
+        BroadcastError { expression = right_expression; left = second_left; right = second_right } )
+      when [%compare.equal: Expression.t] left_expression right_expression ->
+        BroadcastError
+          {
+            expression = left_expression;
+            left = type_join first_left second_left;
+            right = type_join first_right second_right;
+          }
+    | ParserFailure left_message, ParserFailure right_message
+      when String.equal left_message right_message ->
+        ParserFailure left_message
+    | DeadStore left, DeadStore right when Identifier.equal left right -> DeadStore left
+    | Deobfuscation left, Deobfuscation right when [%compare.equal: Source.t] left right ->
+        Deobfuscation left
+    | ( IllegalAnnotationTarget { target = left; kind = InvalidExpression },
+        IllegalAnnotationTarget { target = right; kind = InvalidExpression } )
+      when [%compare.equal: Expression.t] left right ->
+        IllegalAnnotationTarget { target = left; kind = InvalidExpression }
+    | ( IllegalAnnotationTarget { target = left; kind = Reassignment },
+        IllegalAnnotationTarget { target = right; kind = Reassignment } )
+      when [%compare.equal: Expression.t] left right ->
+        IllegalAnnotationTarget { target = left; kind = Reassignment }
+    | IncompatibleAsyncGeneratorReturnType left, IncompatibleAsyncGeneratorReturnType right ->
+        IncompatibleAsyncGeneratorReturnType (type_join left right)
+    | IncompatibleAwaitableType left, IncompatibleAwaitableType right ->
+        IncompatibleAwaitableType (type_join left right)
+    | ( IncompleteType
+          { target = left_target; annotation = left; attempted_action = left_attempted_action },
+        IncompleteType
+          { target = right_target; annotation = right; attempted_action = right_attempted_action } )
+      when [%compare.equal: Expression.t] left_target right_target
+           && [%compare.equal: illegal_action_on_incomplete_type]
+                left_attempted_action
+                right_attempted_action ->
+        IncompleteType
+          {
+            target = left_target;
+            annotation = type_join left right;
+            attempted_action = left_attempted_action;
+          }
+    | InvalidTypeParameters left, InvalidTypeParameters right
+      when [%compare.equal: AttributeResolution.type_parameters_mismatch] left right ->
+        InvalidTypeParameters left
+    | ( MissingArgument { callee = left_callee; parameter = Named left_name },
+        MissingArgument { callee = right_callee; parameter = Named right_name } )
+      when Option.equal Reference.equal_sanitized left_callee right_callee
+           && Identifier.equal_sanitized left_name right_name ->
+        left.kind
+    | ( MissingArgument { callee = left_callee; parameter = PositionalOnly left_index },
+        MissingArgument { callee = right_callee; parameter = PositionalOnly right_index } )
+      when Option.equal Reference.equal_sanitized left_callee right_callee
+           && left_index = right_index ->
+        left.kind
+    | MissingCaptureAnnotation left_name, MissingCaptureAnnotation right_name
+      when Identifier.equal_sanitized left_name right_name ->
+        left.kind
+    | MissingParameterAnnotation left, MissingParameterAnnotation right
+      when Reference.equal_sanitized left.name right.name ->
+        MissingParameterAnnotation (join_missing_annotation left right)
+    | MissingReturnAnnotation left, MissingReturnAnnotation right ->
+        MissingReturnAnnotation (join_missing_annotation left right)
+    | MissingAttributeAnnotation left, MissingAttributeAnnotation right
+      when Reference.equal_sanitized left.missing_annotation.name right.missing_annotation.name
+           && Type.equal left.parent right.parent ->
+        MissingAttributeAnnotation
+          {
+            parent = left.parent;
+            missing_annotation =
+              join_missing_annotation left.missing_annotation right.missing_annotation;
+          }
+    | MissingGlobalAnnotation left, MissingGlobalAnnotation right
+      when Reference.equal_sanitized left.name right.name ->
+        MissingGlobalAnnotation (join_missing_annotation left right)
+    | MissingOverloadImplementation left, MissingOverloadImplementation right
+      when Reference.equal left right ->
+        MissingOverloadImplementation left
+    | NotCallable left, NotCallable right ->
+        NotCallable (type_join left right)
+    | ( ProhibitedAny { is_type_alias = is_type_alias_left; missing_annotation = left },
+        ProhibitedAny { is_type_alias = is_type_alias_right; missing_annotation = right } )
+      when Bool.equal is_type_alias_left is_type_alias_right ->
+        ProhibitedAny
+          {
+            is_type_alias = is_type_alias_left;
+            missing_annotation = join_missing_annotation left right;
+          }
+    | RedundantCast left, RedundantCast right ->
+        RedundantCast (type_join left right)
+    | RevealedLocals left, RevealedLocals right
+      when List.equal
+             (fun { name = left_name; annotation = _ } { name = right_name; annotation = _ } ->
+               [%compare.equal: Reference.t] left_name right_name)
+             left
+             right ->
+        let revealed_local_join
+            { name = left_name; annotation = left_annotation }
+            { name = _; annotation = right_annotation }
+          =
+          {
+            name = left_name;
+            annotation =
+              Annotation.join
+                ~type_join:(type_join)
+                left_annotation
+                right_annotation;
+          }
+        in
+        RevealedLocals (List.map2_exn ~f:revealed_local_join left right)
+    | ( RevealedType
+          { annotation = left_annotation; expression = left_expression; qualify = left_qualify },
+        RevealedType
+          { annotation = right_annotation; expression = right_expression; qualify = right_qualify }
+      )
+      when [%compare.equal: Expression.t] left_expression right_expression ->
+        RevealedType
+          {
+            expression = left_expression;
+            annotation =
+              Annotation.join
+                ~type_join:(type_join)
+                left_annotation
+                right_annotation;
+            qualify = left_qualify || right_qualify (* lol *);
+          }
+    | IncompatibleParameterType left, IncompatibleParameterType right
+      when Option.equal Identifier.equal_sanitized left.name right.name
+           && left.position = right.position
+           && Option.equal Reference.equal_sanitized left.callee right.callee ->
+        let mismatch = join_mismatch left.mismatch right.mismatch in
+        IncompatibleParameterType { left with mismatch }
+    | IncompatibleParameterTypeWithReference left, IncompatibleParameterTypeWithReference right
+      when Option.equal Identifier.equal_sanitized left.name right.name
+           && left.position = right.position
+           && Option.equal Reference.equal_sanitized left.callee right.callee ->
+        let mismatch = join_mismatch left.mismatch right.mismatch in
+        IncompatibleParameterTypeWithReference { left with mismatch }
+    | IncompatibleConstructorAnnotation left, IncompatibleConstructorAnnotation right ->
+        IncompatibleConstructorAnnotation (type_join left right)
+    | IncompatibleReturnType left, IncompatibleReturnType right ->
+        IncompatibleReturnType
+          {
+            mismatch = join_mismatch left.mismatch right.mismatch;
+            is_implicit = left.is_implicit && right.is_implicit;
+            is_unimplemented = left.is_unimplemented && right.is_unimplemented;
+            define_location = right.define_location;
+          }
+    | IncompatibleAttributeType left, IncompatibleAttributeType right
+      when Type.equal left.parent right.parent
+           && Reference.equal left.incompatible_type.name right.incompatible_type.name ->
+        let mismatch =
+          join_mismatch left.incompatible_type.mismatch right.incompatible_type.mismatch
+        in
+        IncompatibleAttributeType
+          { parent = left.parent; incompatible_type = { left.incompatible_type with mismatch } }
+    | IncompatibleVariableType left, IncompatibleVariableType right
+      when Reference.equal left.incompatible_type.name right.incompatible_type.name ->
+        IncompatibleVariableType
+          {
+            left with
+            incompatible_type =
+              {
+                left.incompatible_type with
+                mismatch =
+                  join_mismatch left.incompatible_type.mismatch right.incompatible_type.mismatch;
+              };
+          }
+    | ( InconsistentOverride ({ override = StrengthenedPrecondition left_issue; _ } as left),
+        InconsistentOverride ({ override = StrengthenedPrecondition right_issue; _ } as right) )
+      -> (
+        match left_issue, right_issue with
+        | Found left_mismatch, Found right_mismatch ->
+            let mismatch = join_mismatch left_mismatch right_mismatch in
+            InconsistentOverride { left with override = StrengthenedPrecondition (Found mismatch) }
+        | NotFound _, _ -> InconsistentOverride left
+        | _, NotFound _ -> InconsistentOverride right)
+    | ( InconsistentOverride ({ override = WeakenedPostcondition left_mismatch; _ } as left),
+        InconsistentOverride { override = WeakenedPostcondition right_mismatch; _ } ) ->
+        let mismatch = join_mismatch left_mismatch right_mismatch in
+        InconsistentOverride { left with override = WeakenedPostcondition mismatch }
+    | InvalidArgument (Keyword left), InvalidArgument (Keyword right)
+      when Option.equal [%compare.equal: Expression.t] left.expression right.expression ->
+        InvalidArgument
+          (Keyword
+             {
+               left with
+               annotation = type_join left.annotation right.annotation;
+             })
+    | InvalidArgument (ConcreteVariable left), InvalidArgument (ConcreteVariable right)
+      when Option.equal [%compare.equal: Expression.t] left.expression right.expression ->
+        InvalidArgument
+          (ConcreteVariable
+             {
+               left with
+               annotation = type_join left.annotation right.annotation;
+             })
+    | InvalidAssignment left, InvalidAssignment right
+      when [%compare.equal: invalid_assignment_kind] left right ->
+        InvalidAssignment left
+    | InvalidDecoration left, InvalidDecoration right
+      when [%compare.equal: invalid_decoration] left right ->
+        InvalidDecoration left
+    | InvalidException left, InvalidException right
+      when [%compare.equal: Expression.t] left.expression right.expression ->
+        InvalidException
+          {
+            expression = left.expression;
+            annotation = type_join left.annotation right.annotation;
+          }
+    | InvalidMethodSignature left, InvalidMethodSignature right
+      when Identifier.equal left.name right.name ->
+        InvalidMethodSignature
+          {
+            left with
+            annotation =
+              Option.merge ~f:(type_join) left.annotation right.annotation;
+          }
+    | ( InvalidType (InvalidType { annotation = left; expected }),
+        InvalidType (InvalidType { annotation = right; _ }) )
+      when Type.equal left right ->
+        InvalidType (InvalidType { annotation = left; expected })
+    | ( InvalidTypeVariable { annotation = left; origin = left_origin },
+        InvalidTypeVariable { annotation = right; origin = right_origin } )
+      when Type.Variable.equal left right
+           && [%compare.equal: type_variable_origin] left_origin right_origin ->
+        InvalidTypeVariable { annotation = left; origin = left_origin }
+    | ( InvalidTypeVariance { annotation = left; origin = left_origin },
+        InvalidTypeVariance { annotation = right; origin = right_origin } )
+      when Type.equal left right && [%compare.equal: type_variance_origin] left_origin right_origin
+      ->
+        InvalidTypeVariance { annotation = left; origin = left_origin }
+    | TooManyArguments left, TooManyArguments right
+      when Option.equal Reference.equal_sanitized left.callee right.callee
+           && left.expected = right.expected
+           && left.provided = right.provided ->
+        TooManyArguments left
+    | UninitializedAttribute left, UninitializedAttribute right
+      when String.equal left.name right.name && Type.equal left.parent right.parent ->
+        UninitializedAttribute { left with mismatch = join_mismatch left.mismatch right.mismatch }
+    | UnawaitedAwaitable left, UnawaitedAwaitable right
+      when [%compare.equal: unawaited_awaitable] left right ->
+        UnawaitedAwaitable left
+    | UnboundName left_name, UnboundName right_name
+      when Identifier.equal_sanitized left_name right_name ->
+        left.kind
+    | UninitializedLocal left_name, UninitializedLocal right_name
+      when Identifier.equal_sanitized left_name right_name ->
+        left.kind
+    | ( DuplicateTypeVariables { variable = left; base = GenericBase },
+        DuplicateTypeVariables { variable = right; base = GenericBase } )
+      when Type.Variable.equal left right ->
+        DuplicateTypeVariables { variable = left; base = GenericBase }
+    | ( DuplicateTypeVariables { variable = left; base = ProtocolBase },
+        DuplicateTypeVariables { variable = right; base = ProtocolBase } )
+      when Type.Variable.equal left right ->
+        DuplicateTypeVariables { variable = left; base = ProtocolBase }
+    | ( UndefinedAttribute
+          {
+            origin = Class { class_origin = ClassType left; parent_module_path = left_module };
+            attribute = left_attribute;
+          },
+        UndefinedAttribute
+          {
+            origin = Class { class_origin = ClassType right; parent_module_path = right_module };
+            attribute = right_attribute;
+          } )
+      when Identifier.equal_sanitized left_attribute right_attribute
+           && Option.equal ModulePath.equal left_module right_module ->
+        let annotation = type_join left right in
+        UndefinedAttribute
+          {
+            origin = Class { class_origin = ClassType annotation; parent_module_path = left_module };
+            attribute = left_attribute;
+          }
+    | ( UndefinedAttribute { origin = Module (ImplicitModule left); attribute = left_attribute },
+        UndefinedAttribute { origin = Module (ImplicitModule right); attribute = right_attribute } )
+      when Identifier.equal_sanitized left_attribute right_attribute
+           && Reference.equal_sanitized left right ->
+        UndefinedAttribute { origin = Module (ImplicitModule left); attribute = left_attribute }
+    | ( UndefinedAttribute { origin = Module (ExplicitModule left); attribute = left_attribute },
+        UndefinedAttribute { origin = Module (ExplicitModule right); attribute = right_attribute } )
+      when Identifier.equal_sanitized left_attribute right_attribute && ModulePath.equal left right
+      ->
+        UndefinedAttribute { origin = Module (ExplicitModule left); attribute = left_attribute }
+    | UndefinedType left, UndefinedType right when Type.equal left right -> UndefinedType left
+    | UnexpectedKeyword left, UnexpectedKeyword right
+      when Option.equal Reference.equal_sanitized left.callee right.callee
+           && Identifier.equal left.name right.name ->
+        UnexpectedKeyword left
+    | UndefinedImport left, UndefinedImport right when [%compare.equal: undefined_import] left right
+      ->
+        UndefinedImport left
+      | ( UnsupportedOperandWithReference
+
+          (BinaryWithReference
+            ({
+              operator_name = left_operator_name;
+              left_operand = left_operand_for_left;
+              right_operand = right_operand_for_left;
+              left_reference = left_reference_for_left;
+              right_reference = right_reference_for_left;
+            } as left)),
+        UnsupportedOperandWithReference
+
+        (BinaryWithReference
+          {
+            operator_name = right_operator_name;
+            left_operand = left_operand_for_right;
+            right_operand = right_operand_for_right;
+            left_reference = left_reference_for_right;
+            right_reference = right_reference_for_right;
+          }) 
+        )
+    when Identifier.equal_sanitized left_operator_name right_operator_name 
+    && Reference.equal left_reference_for_left right_reference_for_left
+    && Reference.equal left_reference_for_right right_reference_for_right
+    ->
+      UnsupportedOperandWithReference
+        (BinaryWithReference
+           {
+             left with
+             left_operand =
+               type_join left_operand_for_left left_operand_for_right;
+             right_operand =
+               type_join right_operand_for_left right_operand_for_right;
+            left_reference = left_reference_for_left;
+            right_reference = right_reference_for_left;
+           })
+    | ( UnsupportedOperandWithReference
+        (UnaryWithReference ({ operator_name = left_operator_name; operand = left_operand; reference=left_reference; } as left)),
+        UnsupportedOperandWithReference 
+        (UnaryWithReference { operator_name = right_operator_name; operand = right_operand; reference=right_reference; })
+    )
+    when Identifier.equal_sanitized left_operator_name right_operator_name && Reference.equal left_reference right_reference ->
+      UnsupportedOperandWithReference
+        (UnaryWithReference { left with operand = type_join left_operand right_operand; reference = left_reference;})
+
+
+    | ( UnsupportedOperand
+          (Binary
+            ({
+               operator_name = left_operator_name;
+               left_operand = left_operand_for_left;
+               right_operand = right_operand_for_left;
+             } as left)),
+        UnsupportedOperand
+          (Binary
+            {
+              operator_name = right_operator_name;
+              left_operand = left_operand_for_right;
+              right_operand = right_operand_for_right;
+            }) )
+      when Identifier.equal_sanitized left_operator_name right_operator_name ->
+        UnsupportedOperand
+        
+          (Binary
+             {
+               left with
+               left_operand =
+                 type_join left_operand_for_left left_operand_for_right;
+               right_operand =
+                 type_join right_operand_for_left right_operand_for_right;
+             })
+             
+    | ( UnsupportedOperand
+          (Unary ({ operator_name = left_operator_name; operand = left_operand } as left)),
+        UnsupportedOperand (Unary { operator_name = right_operator_name; operand = right_operand })
+      )
+      when Identifier.equal_sanitized left_operator_name right_operator_name ->
+        UnsupportedOperand
+          (Unary { left with operand = type_join left_operand right_operand })
+    | UnusedIgnore left, UnusedIgnore right ->
+        UnusedIgnore (IntSet.to_list (IntSet.union (IntSet.of_list left) (IntSet.of_list right)))
+    | ( Unpack { expected_count = left_count; unpack_problem = UnacceptableType left },
+        Unpack { expected_count = right_count; unpack_problem = UnacceptableType right } )
+      when left_count = right_count ->
+        Unpack
+          {
+            expected_count = left_count;
+            unpack_problem = UnacceptableType (type_join left right);
+          }
+    | ( Unpack { expected_count = left_count; unpack_problem = CountMismatch left },
+        Unpack { expected_count = right_count; unpack_problem = CountMismatch right } )
+      when left_count = right_count && left = right ->
+        Unpack { expected_count = left_count; unpack_problem = CountMismatch left }
+    | TypedDictionaryKeyNotFound left, TypedDictionaryKeyNotFound right
+      when Identifier.equal left.typed_dictionary_name right.typed_dictionary_name
+           && String.equal left.missing_key right.missing_key ->
+        TypedDictionaryKeyNotFound left
+    | TypedDictionaryAccessWithNonLiteral left, TypedDictionaryAccessWithNonLiteral right
+      when List.equal String.equal left right ->
+        TypedDictionaryAccessWithNonLiteral left
+    | TypedDictionaryInvalidOperation left, TypedDictionaryInvalidOperation right
+      when Identifier.equal_sanitized left.typed_dictionary_name right.typed_dictionary_name
+           && Identifier.equal_sanitized left.field_name right.field_name
+           && Identifier.equal_sanitized left.method_name right.method_name ->
+        let mismatch = join_mismatch left.mismatch right.mismatch in
+        TypedDictionaryInvalidOperation { left with mismatch }
+    | ( TypedDictionaryInitializationError
+          (FieldTypeMismatch
+            ({
+               field_name = left_field_name;
+               class_name = left_class_name;
+               actual_type = left_actual_type;
+               expected_type = left_expected_type;
+             } as mismatch)),
+        TypedDictionaryInitializationError
+          (FieldTypeMismatch
+            {
+              field_name = right_field_name;
+              class_name = right_class_name;
+              actual_type = right_actual_type;
+              expected_type = right_expected_type;
+            }) )
+      when Identifier.equal left_field_name right_field_name
+           && Identifier.equal left_class_name right_class_name ->
+        TypedDictionaryInitializationError
+          (FieldTypeMismatch
+             {
+               mismatch with
+               actual_type = type_join left_actual_type right_actual_type;
+               expected_type =
+                 type_join left_expected_type right_expected_type;
+             })
+    | ( TypedDictionaryInitializationError
+          (MissingRequiredField { field_name = left_field_name; class_name = left_class_name }),
+        TypedDictionaryInitializationError
+          (MissingRequiredField { field_name = right_field_name; class_name = right_class_name }) )
+      when Identifier.equal left_field_name right_field_name
+           && Identifier.equal left_class_name right_class_name ->
+        left.kind
+    | Top, _
+    | _, Top ->
+        Top
+    | AnalysisFailure _, _
+    | BroadcastError _, _
+    | ParserFailure _, _
+    | DeadStore _, _
+    | Deobfuscation _, _
+    | IllegalAnnotationTarget _, _
+    | IncompatibleAsyncGeneratorReturnType _, _
+    | IncompatibleAttributeType _, _
+    | IncompatibleAwaitableType _, _
+    | IncompatibleConstructorAnnotation _, _
+    | IncompatibleParameterType _, _
+    | IncompatibleParameterTypeWithReference _, _
+    | IncompatibleReturnType _, _
+    | IncompatibleOverload _, _
+    | IncompleteType _, _
+    | IncompatibleVariableType _, _
+    | InconsistentOverride _, _
+    | InvalidArgument _, _
+    | InvalidDecoration _, _
+    | InvalidException _, _
+    | InvalidMethodSignature _, _
+    | InvalidType _, _
+    | InvalidTypeParameters _, _
+    | InvalidTypeVariable _, _
+    | InvalidTypeVariance _, _
+    | InvalidInheritance _, _
+    | InvalidOverride _, _
+    | InvalidAssignment _, _
+    | InvalidClassInstantiation _, _
+    | MissingArgument _, _
+    | MissingAttributeAnnotation _, _
+    | MissingCaptureAnnotation _, _
+    | MissingGlobalAnnotation _, _
+    | MissingOverloadImplementation _, _
+    | MissingParameterAnnotation _, _
+    | MissingReturnAnnotation _, _
+    | MutuallyRecursiveTypeVariables _, _
+    | NotCallable _, _
+    | PrivateProtocolProperty _, _
+    | ProhibitedAny _, _
+    | RedefinedClass _, _
+    | RedundantCast _, _
+    | RevealedLocals _, _
+    | RevealedType _, _
+    | UnsafeCast _, _
+    | TooManyArguments _, _
+    | TupleConcatenationError _, _
+    | TypedDictionaryAccessWithNonLiteral _, _
+    | TypedDictionaryKeyNotFound _, _
+    | TypedDictionaryInvalidOperation _, _
+    | TypedDictionaryInitializationError _, _
+    | UnawaitedAwaitable _, _
+    | UnboundName _, _
+    | UninitializedLocal _, _
+    | DuplicateTypeVariables _, _
+    | UndefinedAttribute _, _
+    | UndefinedAttributeWithReference _, _
+    | UndefinedImport _, _
+    | UndefinedType _, _
+    | UnexpectedKeyword _, _
+    | UninitializedAttribute _, _
+    | Unpack _, _
+    | UnsupportedOperand _, _
+    | UnsupportedOperandWithReference _, _
+    | UnusedIgnore _, _
+    | UnusedLocalMode _, _ ->
+        let { location; _ } = left in
+        Log.debug
+          "Incompatible type in error join at %a: %a %a"
+          Location.WithModule.pp
+          location
+          pp_kind
+          left.kind
+          pp_kind
+          right.kind;
+        Top
+  in
+  let location =
+    if Location.WithModule.compare left.location right.location <= 0 then
+      left.location
+    else
+      right.location
+  in
+  { location; kind; signature = left.signature; cause=None; }
+
 let join ~resolution left right =
   let join_mismatch left right =
     {

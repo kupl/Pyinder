@@ -22,7 +22,8 @@ let resolve_stringify_call ~resolution expression =
   in
 
   try
-    match Resolution.resolve_expression_to_type resolution string_callee |> Type.callable_name with
+    let x = Resolution.resolve_expression_to_type resolution string_callee |> Type.callable_name in
+    match x with
     | Some name ->
         if Reference.equal name (Reference.create "object.__str__") then "__repr__" else "__str__"
     | _ -> "__str__"

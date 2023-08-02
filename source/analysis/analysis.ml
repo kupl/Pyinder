@@ -72,5 +72,6 @@ module OurTypeSet = OurTypeSet
 module OurDomain = OurDomain
 module OurErrorDomain = OurErrorDomain
 module PossibleFixpoint = PossibleFixpoint
+module UniqueAnalysis = UniqueAnalysis
 module Usedef = Usedef
 module AttributeAnalysis = AttributeAnalysis

@@ -40,6 +40,10 @@ let get_annotation_store { annotation_store; _ } = annotation_store
 let set_annotation_store { global_resolution; type_variables; resolve_expression; resolve_statement; parent; _ } annotation_store =
   { global_resolution; annotation_store; type_variables; resolve_expression; resolve_statement; parent; }
 
+let set_resolve_expression t resolve_expression = { t with resolve_expression }
+
+let set_resolve_statement t resolve_statement = { t with resolve_statement }
+
 let pp format { annotation_store; type_variables; _ } =
   Type.Variable.Set.to_list type_variables
   |> List.map ~f:Type.Variable.show
@@ -100,13 +104,35 @@ let resolve_assertion ({ resolve_statement; _ } as resolution) ~asserted_express
   | Unreachable -> None
   | Reachable { resolution; _ } -> Some resolution
 
+let partition_name_without_annotation name =
+  let identifiers = Reference.as_list (Expression.name_to_reference_exn name) in
+  match identifiers with
+  | head :: attributes ->
+      let partition_attribute base attribute_list =
+          base, attribute_list
+      in
+      partition_attribute (Reference.create head) attributes
+      |> fun (base, attributes) ->
+      base, Reference.create_from_list attributes
+  | _ -> Reference.create_from_list identifiers, Reference.create ""
 
 let partition_name resolution ~name =
   let identifiers = Reference.as_list (Expression.name_to_reference_exn name) in
   match identifiers with
   | head :: attributes ->
       let rec partition_attribute base attribute_list =
+        (* if String.is_substring (Expression.Name.show name) ~substring:"airflow.login"
+          then (
+          Log.dump "Name: %s Base: %a" (Expression.Name.show name) Reference.pp base;
+        ); *)
+        
         let base_type = resolve_reference resolution base in
+
+        (* if String.is_substring (Expression.Name.show name) ~substring:"airflow.login"
+          then (
+          Log.dump "Name: %s Base Type : %a" (Expression.Name.show name) Type.pp base_type;
+        ); *)
+
         if Type.is_untyped base_type then
           match attribute_list with
           | [] -> Reference.create head, attributes, None
@@ -177,7 +203,8 @@ let get_local_with_attributes
     ~name
     ({ annotation_store; global_resolution; _ } as resolution)
   =
-  let name, attribute_path, _ = partition_name resolution ~name in
+  let _ = resolution in
+  let name, attribute_path = partition_name_without_annotation name in
   match Refinement.Store.get_annotation ~name ~attribute_path annotation_store with
   | Some _ as result -> result
   | None when global_fallback ->

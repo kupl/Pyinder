@@ -49,6 +49,8 @@ module AttributeStorage :
     val empty : t
     val map : t -> f:(data_set -> 'a) -> 'a LocInsensitiveExpMap.t
     val mapi : t -> f:(key:SkipMap.Key.t -> data:data_set -> 'a) -> 'a LocInsensitiveExpMap.t
+    val get_all_attributes : t -> Identifier.Set.t
+    val get_single_class_param : t -> t
     val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
     val filter_single_class_param : class_param:string -> t -> t
     val get_reference_list : t -> Reference.t list

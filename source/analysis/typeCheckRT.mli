@@ -7,6 +7,7 @@
 
 open TypeCheckUtil
 open Ast
+open Expression
 open Statement
 
 module Error = AnalysisError
@@ -36,6 +37,8 @@ module type RTSignature = sig
   val initial : resolution:Resolution.t -> t
 
   val forward_statement : resolution:Resolution.t -> at_resolution:Resolution.t option -> statement:statement Node.t -> t * Error.t list
+
+  val forward_statement_first : resolution:Resolution.t -> at_resolution:Resolution.t option -> statement:statement Node.t -> t * Error.t list
 
   val parse_and_check_annotation
     :  ?bind_variables:bool ->

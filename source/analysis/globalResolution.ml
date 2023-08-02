@@ -504,10 +504,11 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       | Type.Callable t -> (* TODO : Modify Resolution of callable *)
       (* Log.dump "Before ... %a" Type.pp (Callable t); *)
       
-      let type_join = join resolution in
+      let join = join resolution in
+      let less_or_equal = less_or_equal resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-      let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
+      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal final_model arg_types t in
       (* Log.dump "After ... %a" Type.pp (Callable callable); *)
       let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 1.0 then (
@@ -517,10 +518,11 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
       | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
       (* Log.dump "Before... %a" Type.pp (Callable t); *)
-      let type_join = join resolution in
+      let join = join resolution in
+      let less_or_equal = less_or_equal resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-      let callable = OurDomain.OurSummary.get_callable ~type_join final_model arg_types t in
+      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal final_model arg_types t in
       (* Log.dump "After... %a" Type.pp (Callable callable); *)
       let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 1.0 then (

@@ -88,7 +88,12 @@ let preprocess ~our_model ~global_resolution define =
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()
   );
-  
+  let { Node.value = { Define.signature = { Define.Signature.name; _ }; _ } as define; _ } = define in
+
+  let cfg = Cfg.create define in
+  let fixpoint = UniqueAnalysis.UniqueStruct.forward ~cfg ~initial:UniqueAnalysis.UniqueState.bottom in
+
+  OurDomain.OurSummary.set_unique_analysis our_model name fixpoint;
 
   our_model
 
@@ -129,10 +134,11 @@ let check_function_definition
 
     match body with
     | None -> aggregate_our_summary sibling_results;
+      
       { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_model; errors = aggregate_errors sibling_results; local_annotations = None; }
     | Some define_node ->
+      
         let ((our_summary, _, local_annotations) as body_result) = check_define define_node in
-
         { CheckResult.our_summary = OurDomain.OurSummary.sexp_of_t our_summary; errors = aggregate_errors (body_result :: sibling_results); local_annotations; }
   in
 
