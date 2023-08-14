@@ -44,7 +44,7 @@ module AttributeStorage :
     } [@@deriving sexp, equal, compare]
     
     type t = data_set LocInsensitiveExpMap.t
-    [@@deriving sexp, equal]
+    [@@deriving sexp, equal, compare]
 
     val empty : t
     val map : t -> f:(data_set -> 'a) -> 'a LocInsensitiveExpMap.t

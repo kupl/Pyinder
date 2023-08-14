@@ -175,6 +175,8 @@ let drop_head = function
   | [] -> [""]
   | _::tl -> tl
 
+let drop_last reference = List.rev (drop_head (List.rev reference))
+
 let first = function
   | [] -> ""
   | head :: _ -> head

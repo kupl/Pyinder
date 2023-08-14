@@ -109,21 +109,24 @@ let errors_from_not_found
             else
 
             let kind =
-              let target_reference =
+              let default_expression = Node.create_with_default_location (Expression.Name (Identifier "")) in
+              let target_expression =
                 (match arguments with
                 | Some args -> 
                   (* TODO : should check list length? *)
-                  if (position < 1) || (List.length args <= (position-1)) then Reference.empty
+                  if (position < 1) || (List.length args <= (position-1)) then default_expression
                   else
                     let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
                     (match expression with
-                    | Some exp -> Reference.create (Expression.show exp)
-                    | None ->  Reference.empty
+                    | Some exp -> exp
+                    | None -> default_expression
                     )
-                | None -> Reference.empty
+                | None -> default_expression
                 )
               in
-              let normal = Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_reference; mismatch } in
+              let normal = 
+                  Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_expression; mismatch }
+              in
               
               let typed_dictionary_error
                   ~method_name
@@ -214,24 +217,33 @@ let errors_from_not_found
                           actual, self_annotation
                       in
 
-                      (match Node.value base with
-                      | Expression.Name name 
-                      | Call { callee={ Node.value=Expression.Name name; _ }; _} -> 
-                        (match name_to_reference name with
-                        | Some left_reference when not (Reference.equal Reference.empty target_reference) -> 
+                      if ((String.equal operator_name "+") && Type.is_list left_operand && Type.is_list right_operand)
+                        || ((String.equal operator_name "+") && Type.is_tuple left_operand && Type.is_tuple right_operand)
+                      then normal
+                      else
+                        Error.UnsupportedOperandWithReference
+                        (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_expression; right_reference=base;})
+                        (* (match Node.value base with
+                        | Expression.Name name 
+                        | Call { callee={ Node.value=Expression.Name name; _ }; _} -> 
+                          (match name_to_reference name with
+                          | Some right_reference (* when not (Reference.equal Reference.empty target_reference) *) -> 
+                            Error.UnsupportedOperandWithReference
+                            (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_reference; right_reference;})
+                          | _ -> 
+                            Error.UnsupportedOperandWithReference
+                            (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_reference; right_reference=Reference.create (Expression.show base);})
+                          )
+                        | Constant _ when not (Reference.equal Reference.empty target_reference) ->
                           Error.UnsupportedOperandWithReference
-                          (BinaryWithReference { operator_name; left_operand; right_operand; left_reference; right_reference=target_reference;})
+                          (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_reference; right_reference=Reference.empty;})
                         | _ -> 
-                          Error.UnsupportedOperand
-                          (Binary { operator_name; left_operand; right_operand })
-                        )
-                        | _ -> 
-                          Error.UnsupportedOperand
-                          (Binary { operator_name; left_operand; right_operand })
-                      )
+                          Error.UnsupportedOperandWithReference
+                          (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_reference; right_reference=Reference.create (Expression.show base);})
+                        ) *)
 
-                      (* Error.UnsupportedOperand
-                        (Binary { operator_name; left_operand; right_operand }) *)
+                        (* Error.UnsupportedOperand
+                          (Binary { operator_name; left_operand; right_operand }) *)
                   | _ -> normal)
               | Some annotation, Some [_; method_name] when Type.is_dict annotation ->
                 (* Log.dump "HERE? %a %s" Type.pp annotation method_name; *)
@@ -716,6 +728,10 @@ module TypeCheckRT (Context : OurContext) = struct
       | Attribute { expression; _ }
       | NonAttribute { expression; _ } ->
           expression
+
+    let get_base = function
+      | Attribute { base={ expression; _ }; _ }
+      | NonAttribute { expression; _ } -> expression
   end
 
   module CallableApplicationData = struct
@@ -1125,12 +1141,18 @@ module TypeCheckRT (Context : OurContext) = struct
                         | Some module_path -> Error.ExplicitModule module_path
                         | None -> Error.ImplicitModule qualifier
                       in
+
+                      let expression =
+                        Node.create_with_default_location (Expression.Name (create_name_from_reference_without_location (Reference.drop_last reference)))
+                      in
+
+
                       emit_error
                         ~errors
                         ~location
                         ~kind:
                           (Error.UndefinedAttributeWithReference
-                              { reference; attribute = Reference.last reference; origin = Error.Module origin })
+                              { reference=expression; attribute = Reference.last reference; origin = Error.Module origin })
                     else
                       errors
                 | _ -> errors
@@ -1225,7 +1247,7 @@ module TypeCheckRT (Context : OurContext) = struct
                     ~kind:
                       (Error.UndefinedAttributeWithReference
                           {
-                            reference=reference |> Option.value ~default:Reference.empty;
+                            reference=base;
                             attribute;
                             origin =
                               Error.Class
@@ -1267,10 +1289,10 @@ module TypeCheckRT (Context : OurContext) = struct
 
               let (rev_annotations, resolution) = attributes |> List.foldi ~init:([], resolution) ~f:(fun i (acc, resolution) attribute -> 
                 let annotation = Annotated.Attribute.annotation attribute in
+                (* Log.dump "??? %s => %b" (Annotated.Attribute.name attribute) (Annotated.Attribute.property attribute); *)
 
                 
                 let new_annotation, resolution =
-                  if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
                     let class_data = List.nth_exn class_datas i in
                     match Annotation.annotation annotation with
                     | Type.Top | Unknown | Any when NamedTuple.is_named_tuple ~global_resolution ~annotation:(class_data.instantiated) ->
@@ -1323,8 +1345,6 @@ module TypeCheckRT (Context : OurContext) = struct
 
                       annotation, resolution *)
                     | _ -> annotation, resolution
-                  else
-                    annotation, resolution
                 in
                 new_annotation::acc, resolution
                 ) 
@@ -1389,7 +1409,7 @@ module TypeCheckRT (Context : OurContext) = struct
                         ~kind:
                           (Error.UndefinedAttributeWithReference
                               {
-                                reference=reference |> Option.value ~default:Reference.empty;
+                                reference=base;
                                 attribute = attribute_name;
                                 origin =
                                   Error.Class
@@ -1471,6 +1491,12 @@ module TypeCheckRT (Context : OurContext) = struct
               (*
               |> apply_class_info
               *)
+            in
+
+            let resolved_annotation =
+              match Annotation.annotation resolved_annotation with
+              | Type.Top | Any -> Annotation.create_mutable Type.Unknown
+              | _ -> resolved_annotation
             in
             
             {
@@ -2375,8 +2401,9 @@ module TypeCheckRT (Context : OurContext) = struct
                     AstEnvironment.ReadOnly.get_module_path ast_environment qualifier
                   in
                   Some
-                    (Error.UndefinedAttribute
+                    (Error.UndefinedAttributeWithReference
                         {
+                          reference = Callee.get_base callee;
                           attribute = name;
                           origin =
                             Error.Class
@@ -2909,13 +2936,13 @@ module TypeCheckRT (Context : OurContext) = struct
                       |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
                     in
 
-                    if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+                    (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then *)
                       let { StatementDefine.Signature.name; _ } = define_signature in
                       let our_summary = !Context.our_summary in
                       OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) ~caller_name:name our_summary reference arg_types;
                       ();
                       (* Context.our_summary := our_summary; *)
-                    else ();
+                    (* else (); *)
 
                     resolution
                   | _ -> 
@@ -3988,7 +4015,7 @@ module TypeCheckRT (Context : OurContext) = struct
                     | _ ->
                         let errors =
                           let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
-                          let default_kind = 
+                          (* let default_kind = 
                             (Error.UnsupportedOperand
                                   (Unary
                                     {
@@ -3999,9 +4026,20 @@ module TypeCheckRT (Context : OurContext) = struct
                                           operator;
                                       operand = resolved;
                                     }))
-                          in
+                          in *)
                           let kind =
-                            (match Node.value right with
+                            (Error.UnsupportedOperandWithReference
+                                  (UnaryWithReference
+                                    {
+                                      operator_name =
+                                        Format.asprintf
+                                          "%a"
+                                          ComparisonOperator.pp_comparison_operator
+                                          operator;
+                                      operand = resolved;
+                                      reference=right;
+                                    }))
+                            (* (match Node.value right with
                             | Expression.Name name 
                             | Call { callee={ Node.value=Expression.Name name; _ }; _ } ->
                               (match name_to_reference name with
@@ -4021,7 +4059,7 @@ module TypeCheckRT (Context : OurContext) = struct
                                 default_kind
                               )
                             | _ -> default_kind
-                            )
+                            ) *)
                           in
                           emit_error
                             ~errors
@@ -4416,7 +4454,7 @@ module TypeCheckRT (Context : OurContext) = struct
             in
 
             
-            (* Log.dump "%a => %a" Expression.pp base Type.pp resolved_base; *)
+            
             let errors, resolved_base =
               if Type.Variable.contains_escaped_free_variable resolved_base then
                 let errors =
@@ -5120,10 +5158,10 @@ module TypeCheckRT (Context : OurContext) = struct
         refine_resolution_for_assert ~resolution ~at_resolution left
     | Name name when is_simple_name name -> (
         match existing_annotation name with
-        | Some { Annotation.annotation = Type.NoneType; _ } -> Unreachable
+        | Some { Annotation.annotation = Type.NoneType | Type.Literal (Boolean (false)) ; _ } -> Unreachable
         | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
             let refined_annotation =
-              List.filter parameters ~f:(fun parameter -> not (Type.is_none parameter))
+              List.filter parameters ~f:(fun parameter -> not ((Type.is_none parameter) || Type.is_falsy parameter))
             in
             (* Log.dump "Name : %a => %a" Name.pp name Type.pp (Type.union refined_annotation); *)
             let resolution =
@@ -5304,7 +5342,7 @@ module TypeCheckRT (Context : OurContext) = struct
   and forward_assignment ~resolution ~at_resolution ~location ~target ~annotation ~value =
     (* Log.dump "[Forward Assignment] Target %a \n %a" Expression.pp target Resolution.pp resolution; *)
     
-    let { Node.value = { Define.signature = { parent; _ }; _ } as define; _ } = Context.define in
+    let { Node.value = { Define.signature = { name; parent; _ }; _ } as define; _ } = Context.define in
     let global_resolution = Resolution.global_resolution resolution in
     let errors, is_final, original_annotation =
       match annotation with
@@ -5395,8 +5433,15 @@ module TypeCheckRT (Context : OurContext) = struct
         (* Processing actual value assignments. *)
         let resolution, errors, resolved_value =
           let { Resolved.resolution; errors = new_errors; resolved; _ } =
-            (* 여기서 expression의 resolved_value가 정해지고 이것의 타입이 곧 annotation이 된다 *)
+            let _ = name in
             forward_expression ~resolution ~at_resolution value
+            (* 여기서 expression의 resolved_value가 정해지고 이것의 타입이 곧 annotation이 된다 *)
+            (* (match Node.value value with
+            | Expression.Constant (NoneLiteral) when String.equal (Reference.last name) "__init__" ->
+              { Resolved.resolution; errors; resolved=Type.Unknown; resolved_annotation=None; base=None }
+            | _ -> forward_expression ~resolution ~at_resolution value
+            ) *)
+            
           in
           resolution, List.append new_errors errors, resolved
         in
@@ -5834,7 +5879,7 @@ module TypeCheckRT (Context : OurContext) = struct
                       in
                       let check_undefined_attribute_target errors =
                         match resolved_base, attribute with
-                        | `Attribute (_, parent), Some (attribute, _)
+                        | `Attribute ({ base; _ }, parent), Some (attribute, _)
                           when not (Annotated.Attribute.defined attribute) ->
                             let is_meta_typed_dictionary =
                               Type.is_meta parent
@@ -5892,7 +5937,7 @@ module TypeCheckRT (Context : OurContext) = struct
                                 ~kind:
                                   (Error.UndefinedAttributeWithReference
                                       {
-                                        reference = name_reference |> Option.value ~default:Reference.empty;
+                                        reference = base;
                                         attribute = AnnotatedAttribute.public_name attribute;
                                         origin =
                                           Error.Class
@@ -6619,7 +6664,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
         let { StatementDefine.Signature.name; _ } = define_signature in
         
-        if OurDomain.is_inference_mode (OurDomain.load_mode ()) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then
+        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) (not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) || is_implicit) then
           let our_summary = !Context.our_summary in
           let entry_arg_types = !Context.entry_arg_types in
           let convert_actual =
@@ -6730,12 +6775,27 @@ module TypeCheckRT (Context : OurContext) = struct
         (* Check that variance isn't widened on inheritence. Don't check for other errors. Nested
             classes and functions are analyzed separately. *)
         (* Class 에 모든 define body가 담겨 있음 *)
-        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+        if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
           (*let { StatementDefine.Signature.name; _ } = define_signature in*)
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
-            | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; _ }; _ } ->
+            | Define { Define.signature={ Define.Signature.name=define_name; parameters; parent; decorators; _ }; _ } ->
               let our_model = !Context.our_summary in
+
+              let exist_unknown_decorator = List.exists decorators ~f:(fun decorator ->
+                let deco_str = Expression.show decorator in
+                not (
+                  String.equal deco_str "staticmethod" 
+                || String.equal deco_str "classmethod" 
+                || String.equal deco_str "property"
+                || String.equal deco_str "asyncio.coroutine"
+                || String.equal deco_str "callback"
+                )
+              )
+              in
+              if exist_unknown_decorator then
+                OurDomain.OurSummary.set_unknown_decorator our_model define_name;
+
               let attribute_storage = AttributeAnalysis.AttributeStorage.empty in
               let attribute_storage, _ = AttributeAnalysis.forward_statement (attribute_storage, AttributeAnalysis.SkipMap.empty) ~statement in
               
@@ -6836,7 +6896,7 @@ module TypeCheckRT (Context : OurContext) = struct
           | _ -> errors
         in
 
-        if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+        if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
           (*let { StatementDefine.Signature.name=define_name; _ } = define_signature in*)
           let rec get_attributes_of_class ~our_model name = 
             let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show name)) in

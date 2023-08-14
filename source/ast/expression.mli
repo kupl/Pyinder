@@ -508,6 +508,8 @@ val create_name : location:Location.t -> string -> Name.t
 
 val create_name_from_reference : location:Location.t -> Reference.t -> Name.t
 
+val create_name_from_reference_without_location : Reference.t -> Name.t
+
 val from_reference : location:Location.t -> Reference.t -> t
 
 val name_to_identifiers : Name.t -> Identifier.t list option
@@ -524,11 +526,15 @@ val change_identifier_base : data:string -> t -> t
 
 val get_identifier_base : t -> Identifier.t option
 
+val get_first_name : t -> Name.t option
+
 val has_identifier_base : t -> bool
 
 val name_is : name:string -> t -> bool
 
 val sanitized : t -> t
+
+val equal_sanitized : t -> t -> bool
 
 val delocalize : t -> t
 
@@ -555,3 +561,5 @@ val inverse_operator : string -> string option
 val is_operator : string -> bool
 
 val operator_name_to_symbol : string -> string option
+
+val calc_similarity : expression -> expression -> float

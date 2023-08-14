@@ -15,7 +15,7 @@ open Refinement
 module ClassTableResolution : sig
   include ClassTable
 
-  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> string -> Refinement.Store.t -> unit
+  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> properties:AttrsSet.t -> t -> Reference.t -> string -> Refinement.Store.t -> unit
 end
 
 module ArgTypesResolution : sig

@@ -259,7 +259,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       ~inputs:qualifiers
       ()
   in
-  List.iter qualifiers ~f:(fun q -> Log.dump "Qual : %a" Reference.pp q);
+  (* List.iter qualifiers ~f:(fun q -> Log.dump "Qual : %a" Reference.pp q); *)
   let our_model = !OurDomain.our_model in
 
   let mode = OurDomain.load_mode () in
@@ -318,6 +318,13 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
+
+          (* if String.equal (Reference.show define) "test.ParserBase._should_parse_dates"
+            then (
+              Log.dump "OK!";
+              List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e)
+              
+            ); *)
           
           
             (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
@@ -337,7 +344,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
             );
  *)
-            (* if String.is_substring (Reference.show define) ~substring:"_should_parse_dates"
+            (* if String.is_substring (Reference.show define) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
               then (
                 Log.dump "%a >>> %a" Reference.pp define OurDomain.OurSummary.pp cur_summary;
                 List.iter errors ~f:(fun e -> Log.dump "Error : %a" Error.pp e);

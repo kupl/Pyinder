@@ -90,7 +90,7 @@ module AttributeStorage = struct
   } [@@deriving sexp, equal, compare]
   
   type t = data_set LocInsensitiveExpMap.t
-  [@@deriving sexp, equal]
+  [@@deriving sexp, equal, compare]
 
   
 
@@ -199,6 +199,9 @@ module AttributeStorage = struct
     in
     LocInsensitiveExpMap.set storage ~key:target ~data
     
+  let is_inner_method callee =
+    String.is_prefix callee ~prefix:"__" && String.is_suffix callee ~suffix:"__"
+
   let add_call target callee arguments storage =
     let call = 
       CallInfo.of_arguments arguments
@@ -375,7 +378,7 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
 
   let add_attribute ?arguments base attribute name =
     match name_to_reference name with
-    | Some reference when (Reference.is_local reference || Reference.is_parameter reference)  ->
+    | Some reference when (Reference.is_local reference || Reference.is_parameter reference) && not (AttributeStorage.is_inner_method attribute) ->
       if (not is_assign) && (is_in_skip_set skip_map base attribute)
       then
         (storage, skip_map) 

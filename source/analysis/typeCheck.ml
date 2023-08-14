@@ -166,7 +166,22 @@ let errors_from_not_found
             else
 
             let kind =
-              let target_reference =
+              let default_expression = Node.create_with_default_location (Expression.Name (Identifier "")) in
+              let target_expression =
+                (match arguments with
+                | Some args -> 
+                  (* TODO : should check list length? *)
+                  if (position < 1) || (List.length args <= (position-1)) then default_expression
+                  else
+                    let { AttributeResolution.Argument.expression; _ } = List.nth_exn args (position-1) in 
+                    (match expression with
+                    | Some exp -> exp
+                    | None -> default_expression
+                    )
+                | None -> default_expression
+                )
+              in
+              (* let target_reference =
                 (match arguments with
                 | Some args -> 
                   if (position < 1) || (List.length args <= (position-1)) then Reference.empty
@@ -178,8 +193,8 @@ let errors_from_not_found
                     )
                 | None -> Reference.empty
                 )
-              in
-              let normal = Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_reference; mismatch } in
+              in *)
+              let normal = Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_expression; mismatch } in
               
               let typed_dictionary_error
                   ~method_name
@@ -1032,12 +1047,15 @@ module State (Context : Context) = struct
                         | Some module_path -> Error.ExplicitModule module_path
                         | None -> Error.ImplicitModule qualifier
                       in
+                      let expression =
+                        Node.create_with_default_location (Expression.Name (create_name_from_reference_without_location (Reference.drop_last reference)))
+                      in
                       emit_error
                         ~errors
                         ~location
                         ~kind:
                           (Error.UndefinedAttributeWithReference
-                             { reference; attribute = Reference.last reference; origin = Error.Module origin })
+                             { reference=expression; attribute = Reference.last reference; origin = Error.Module origin })
                     else
                       errors
                 | _ -> errors
@@ -1113,7 +1131,7 @@ module State (Context : Context) = struct
                   ~kind:
                     (Error.UndefinedAttributeWithReference
                        {
-                         reference=reference |> Option.value ~default:Reference.empty;
+                         reference=base;
                          attribute;
                          origin =
                            Error.Class
@@ -1196,7 +1214,7 @@ module State (Context : Context) = struct
                       ~kind:
                         (Error.UndefinedAttributeWithReference
                            {
-                            reference=reference |> Option.value ~default:Reference.empty;
+                            reference=base;
                              attribute = attribute_name;
                              origin =
                                Error.Class
@@ -13867,6 +13885,7 @@ let exit_state ~resolution (module Context : OurContext) =
       | Value resolution ->
         let arg_types = 
           OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution 
+          |> OurDomain.ArgTypes.filter_keys ~f:(fun key -> not (String.equal key "$parameter$self" || String.equal key "$parameter$cls"))
           |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
         in
 
@@ -13887,15 +13906,11 @@ let exit_state ~resolution (module Context : OurContext) =
 
   
 
-  if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
-  then (
-    save_arg_types initial
-  );
+
+  save_arg_types initial;
   let timer = Timer.start () in
 
   let initial, our_summary = 
-    if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
-    then (
       let update_resolution resolution =
         let final_model = !OurDomain.our_model in
 
@@ -14087,11 +14102,15 @@ let exit_state ~resolution (module Context : OurContext) =
         | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type, our_summary
         | Value resolution ->
           let resolution, our_summary = 
+          if (OurDomain.is_inference_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+          then
             let resolution, our_summary = update_resolution resolution in
             resolution
             |> Resolution.top_to_unknown
             (* |> Resolution.add_unknown *)
             , our_summary
+          else
+            resolution, our_summary
           in
           (*
           Log.dump "Result : %a" Resolution.pp x;
@@ -14108,17 +14127,13 @@ let exit_state ~resolution (module Context : OurContext) =
       },
       our_summary
 
-    ) (*PossibleState.top_to_bottom initial*)
-    else initial, our_summary
+    (*PossibleState.top_to_bottom initial*)
   in
   
   let init_time = Timer.stop_in_sec timer in
 
   Context.our_summary := our_summary;
-  if OurDomain.is_inference_mode (OurDomain.load_mode ()) 
-    then (
-      save_arg_types initial
-    );
+  save_arg_types initial;
   
   
   (*
@@ -14149,6 +14164,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
     let check_arg_types_list = OurDomain.OurSummary.get_analysis_arg_types our_summary name in
 
+    
     (* if List.length check_arg_types_list > 1 then (
       Log.dump "HMM : %i (%a)" (List.length check_arg_types_list) Reference.pp name;
       List.iter check_arg_types_list ~f:(fun arg_types ->
@@ -14177,7 +14193,7 @@ let exit_state ~resolution (module Context : OurContext) =
           let resolved = Resolution.resolve_reference resolution reference in
           if Type.is_unknown resolved then (
             let value_resolved = Resolution.resolve_expression_to_type resolution e in
-            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
           ) else 
             resolution
           (* if Type.can_unknown resolved then (
@@ -14190,7 +14206,13 @@ let exit_state ~resolution (module Context : OurContext) =
         )
       in
 
-      let resolution = update_resolution_from_value resolution in
+      let resolution = 
+        if (OurDomain.is_inference_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+        then
+          update_resolution_from_value resolution 
+        else
+          resolution
+      in
 
       let cfg = Cfg.create define in
       
@@ -14220,7 +14242,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let initial = { initial with rt_type=Value resolution; } in
       
-      (* if String.equal (Reference.show name) "salt.client.LocalClient.pub"
+      (* if String.equal (Reference.show name) "test.ParserBase._should_parse_dates"
         then (
           Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
         ); *)
@@ -14233,11 +14255,12 @@ let exit_state ~resolution (module Context : OurContext) =
           Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
         ); *)
 
-        (* if String.is_substring (Reference.show name) ~substring:"rasa.shared.core.training_data.visualization.visualize_neighborhood"
+        (* if String.is_substring (Reference.show name) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
         then (
           Log.dump "START %a" Resolution.pp resolution;
           Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
         ); *)
+
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       let exit = PossibleFixpoint.exit fixpoint in
 
@@ -14337,7 +14360,7 @@ let exit_state ~resolution (module Context : OurContext) =
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
       let our_summary = !Context.our_summary in
-
+      if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
         (match last_state with
         | Some state ->
           (match state.rt_type with
@@ -14346,12 +14369,13 @@ let exit_state ~resolution (module Context : OurContext) =
             let _ =
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+              let properties = OurDomain.OurSummary.get_class_property final_model class_name in
 
               OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
 
               OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
-                class_table class_name class_param (Resolution.annotation_store v);
+              ~properties class_table class_name class_param (Resolution.annotation_store v);
 
               OurDomain.OurSummary.set_class_table our_summary class_table
             | _ ->           
@@ -14369,6 +14393,7 @@ let exit_state ~resolution (module Context : OurContext) =
           )
         | None -> ()
         );
+      
 
 
       OurDomain.OurSummary.end_analysis our_summary name arg_types;
@@ -14628,22 +14653,17 @@ let check_define
       Option.iter callees ~f:(fun callees -> 
         Callgraph.set ~caller ~callees
       );
-      if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
-          Option.iter callees ~f:(fun callees -> 
-              (* List.filter callees ~f:(fun callee ->
-                not (String.is_suffix ~suffix:"__init__" (Reference.show (Callgraph.get_callee_name ~callee:callee.callee))) 
-              ) 
-              |> *)
-              callees |>
-              List.iter ~f:(fun { Callgraph.callee; _}  ->
-                OurDomain.OurSummary.add_caller our_summary (
-                  Callgraph.get_callee_name ~callee:callee
-                ) ~caller:name
-              )
+      Option.iter callees ~f:(fun callees -> 
+          (* List.filter callees ~f:(fun callee ->
+            not (String.is_suffix ~suffix:"__init__" (Reference.show (Callgraph.get_callee_name ~callee:callee.callee))) 
+          ) 
+          |> *)
+          callees |>
+          List.iter ~f:(fun { Callgraph.callee; _}  ->
+            OurDomain.OurSummary.add_caller our_summary (
+              Callgraph.get_callee_name ~callee:callee
+            ) ~caller:name
           )
-
-      else (
-        ()
       )
     else (
       ()

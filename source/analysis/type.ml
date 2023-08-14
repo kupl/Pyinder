@@ -7209,7 +7209,7 @@ let rec get_depth parent_annotation =
   let x = fst (InstantiateTransform.visit 0 parent_annotation) in
   x+1
 
-  let narrow_iterable annotation =
+  let narrow_iterable ~max_depth annotation =
     let module InstantiateTransform = Transform.Make (struct
       type state = unit
   
@@ -7225,7 +7225,7 @@ let rec get_depth parent_annotation =
         in
 
         let annotation =
-          if depth > 3
+          if depth > max_depth
           then deep_to_any annotation
           else annotation
         in
@@ -7438,7 +7438,7 @@ let narrow_union ~join ~less_or_equal t =
 
     let x =
       loose_t_list
-      |> List.map ~f:narrow_iterable
+      |> List.map ~f:(narrow_iterable ~max_depth:3)
       |> List.map ~f:narrow_our_typed_dict
     in
 
@@ -7528,3 +7528,48 @@ let narrow_union ~join ~less_or_equal t =
     )
   | _ -> t
 
+let calc_type left right =
+  let is_match left right =
+    if equal left right then true
+    else (
+      match left, right with
+      | Callable _, Callable _ -> true
+      | Callable _, other
+      | other, Callable _ 
+      when is_unbound other -> true
+      | left, right when is_unbound left && is_unbound right -> true
+      | left, right when is_tuple left && is_tuple right -> true
+      | left, right when is_set left && is_set right -> true
+      | left, right when is_list left && is_list right -> true
+      | left, right when is_dict left && is_dict right -> true
+      | left, right when is_iterable left && is_iterable right -> true
+      | left, right when is_iterator left && is_iterator right -> true
+      | _ -> false
+    )
+  in
+  let left = 
+    left 
+    |> weaken_literals
+  in
+
+  let right =
+    right
+    |> weaken_literals
+  in
+
+  let rec calc left right =
+    match left, right with
+    | Union left_list, Union right_list ->
+      let inter =
+        List.map left_list ~f:(fun left -> List.exists right_list ~f:(is_match left))
+        |> List.filter ~f:(fun t -> t)
+        |> List.length
+      in
+      let union = (List.length left_list) + (List.length right_list) in
+      inter // (union - inter)
+
+    | Union t_list, other 
+    | other, Union t_list -> calc (Union t_list) (Union [other])
+    | left, right -> if is_match left right then 1.0 else 0.0
+  in
+  calc left right

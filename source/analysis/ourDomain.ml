@@ -193,6 +193,8 @@ module ArgTypes = struct
 
   let fold = IdentifierMap.fold
   let filter ~f t = IdentifierMap.filter ~f t
+
+  let filter_keys = IdentifierMap.filter_keys
   let map ~f t = IdentifierMap.map ~f t
 
   let set_arg_type t ident typ =
@@ -359,6 +361,8 @@ module ClassAttributes = struct
     in
     { t with methods=Identifier.Map.set methods ~key:meth ~data:(AttributeAnalysis.CallSet.add call_set call_info) }
 
+  let get_class_property { properties; _ } = properties
+
   let is_used_attr { attributes; properties; methods; } attr =
     let methods = AttrsSet.of_list (Identifier.Map.keys methods) in
     AttrsSet.exists (AttrsSet.union_list [attributes; properties; methods;]) ~f:(fun elem -> String.equal elem attr)
@@ -424,6 +428,10 @@ module ClassSummary = struct
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
 
+  let get_class_property { class_attributes; _ } =
+    ClassAttributes.get_class_property class_attributes
+  
+
   let join ~type_join left right =
     let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
     let change_set = ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) in
@@ -487,6 +495,8 @@ module ClassTable = struct
   let get_class_var_type t class_name = get t ~class_name ~f:ClassSummary.get_class_var_type
 
   let get_usage_attributes t class_name = get t ~class_name ~f:ClassSummary.get_usage_attributes
+
+  let get_class_property t class_name = get t ~class_name ~f:ClassSummary.get_class_property
 
   let join ~type_join left right =
     ClassHash.join left right ~equal:ClassSummary.equal ~data_join:(ClassSummary.join ~type_join)
@@ -693,7 +703,7 @@ module Signatures = struct
   let filter_unknown arg_types =
     
     arg_types
-    |> ArgTypes.map ~f:Type.narrow_iterable
+    |> ArgTypes.map ~f:(Type.narrow_iterable ~max_depth:1)
     |> ArgTypes.map ~f:Type.filter_unknown
     |> ArgTypes.filter ~f:(fun data -> not (Type.is_unknown data))
 
@@ -874,6 +884,7 @@ module type FunctionSummary = sig
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } 
 
@@ -893,6 +904,7 @@ module FunctionSummary = struct
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } [@@deriving sexp, equal]
 
@@ -906,13 +918,20 @@ module FunctionSummary = struct
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
     unique_analysis=UniqueAnalysis.UniqueStruct.empty;
+    unknown_decorator=false;
     (*usedef_tables=None;*)
   }
 
-  let find_signature {signatures; _} arg_types =
-    Signatures.find_signature signatures arg_types
+  let find_signature {signatures; unknown_decorator; _} arg_types =
+    if unknown_decorator 
+    then
+      Signatures.find_signature signatures ArgTypes.empty
+    else
+      Signatures.find_signature signatures arg_types
 
-  let add_new_signature ~join ?caller_name ({signatures; _} as t) arg_type_list =
+  let add_new_signature ~join ?caller_name ({signatures; unknown_decorator; _} as t) arg_type_list =
+    if unknown_decorator then t
+    else
     { t with signatures=Signatures.add_new_signature ~join ?caller_name signatures arg_type_list }
   (* let add_arg_types ~join ({arg_types; _} as t) arg_typ_list =
     { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg typ) }
@@ -944,6 +963,9 @@ module FunctionSummary = struct
 
   let set_unique_analysis t unique_analysis =
     { t with unique_analysis }
+
+  let set_unknown_decorator t =
+    { t with unknown_decorator=true; }
 
   (* let add_return_var_type ({ return_var_type; _ } as t) reference typ =
     { t with return_var_type=(ReferenceMap.set return_var_type ~key:reference ~data:typ); } *)
@@ -989,7 +1011,7 @@ module FunctionSummary = struct
 
   let get_unique_analysis { unique_analysis; _ } = unique_analysis
 
-
+  let get_unknown_decorator { unknown_decorator; _ } = unknown_decorator
 
 
   let join ~type_join left right = 
@@ -1023,6 +1045,7 @@ module FunctionSummary = struct
     callers;
     usage_attributes;
     unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
+    unknown_decorator=left.unknown_decorator || right.unknown_decorator
     (*usedef_tables=usedef_tables;*)
   }
 (*   let join ~type_join left right = 
@@ -1062,13 +1085,14 @@ module FunctionSummary = struct
         Format.fprintf format "%a, " data_pp data
       ) t
 
-  let pp format { signatures; usage_attributes; callers; unique_analysis; _ } =
+  let pp format { signatures; usage_attributes; callers; unknown_decorator; _ } =
     Format.fprintf format 
-      "<Signatures>\n%a\n\n<Usage Attributes>\n%a\n\n<Callers>\n%a\n\n<Unique Analysis>\n%a\n" 
+      "<Signatures>\n%a\n\n<Usage Attributes>\n%a\n\n<Callers>\n%a\n\n==>%b\n\n" 
       Signatures.pp signatures 
       AttributeStorage.pp usage_attributes
       (pp_reference_set ~data_pp:Reference.pp) callers
-      UniqueAnalysis.UniqueStruct.pp unique_analysis
+      unknown_decorator
+      (* UniqueAnalysis.UniqueStruct.pp unique_analysis *)
 (*   let pp format {arg_types; arg_annotation; return_var_type; return_type; usage_attributes; callers; _} =
     Format.fprintf format 
       "<Arg Types>\n%a\n\n<Arg Anno>\n%a\n\n<Return Var Type>\n%a\n\n<Return Type> %a\n\n<Usage Attributes>\n%a\n<Callers>\n%a\n" 
@@ -1120,12 +1144,13 @@ module FunctionSummary = struct
       callers;
       usage_attributes;
       unique_analysis=next.unique_analysis; 
+      unknown_decorator=prev.unknown_decorator || next.unknown_decorator
       (*usedef_tables=usedef_tables;*)
     }
   
 
 
-  let get_implementation ~join ~less_or_equal { signatures; _ } arg_types callable =
+  let get_implementation ~join ~less_or_equal { signatures; unknown_decorator; _ } arg_types callable =
     (* let arg_callable = 
       Type.Callable.map_parameters callable ~f:(fun parameter ->
         match parameter with
@@ -1169,7 +1194,11 @@ module FunctionSummary = struct
     in *)
     let _ = arg_types, join in
     let arg_types = 
-      ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal) arg_types 
+      if unknown_decorator
+      then
+        ArgTypes.empty
+      else
+        ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal) arg_types 
     in
     let return_type = Signatures.get_return_type signatures arg_types in
     
@@ -1223,24 +1252,30 @@ module FunctionSummary = struct
   let end_analysis ({ signatures; _ } as t) arg_types =
     { t with signatures=Signatures.end_analysis signatures arg_types; }
 
-  let get_analysis_set t =
-    let should_analysis_set = 
-      Signatures.get_should_analysis t.signatures
-    in
+  let get_analysis_set ({signatures; unknown_decorator; _ } as t) =
+    if unknown_decorator
+    then 
+      ArgTypesOptSet.empty, ReferenceMap.empty
+    else
+      let should_analysis_set = 
+        Signatures.get_should_analysis signatures
+      in
 
-    (* TODO: skip return_var_type? *)
-    (* let analysis_set = 
-      if not ((Type.equal prev.return_type next.return_type) && (ReferenceMap.equal Type.equal prev.return_var_type next.return_var_type))
-      then next.callers
-      else ReferenceSet.empty
-    in *)
+      (* TODO: skip return_var_type? *)
+      (* let analysis_set = 
+        if not ((Type.equal prev.return_type next.return_type) && (ReferenceMap.equal Type.equal prev.return_var_type next.return_var_type))
+        then next.callers
+        else ReferenceSet.empty
+      in *)
 
-    let analysis_set = analysis_caller_set t in
-    
-    should_analysis_set, analysis_set
+      let analysis_set = analysis_caller_set t in
+      
+      should_analysis_set, analysis_set
 
-  let has_analysis { signatures; _ } =
-    Signatures.has_analysis signatures
+  let has_analysis { signatures; unknown_decorator; _ } =
+    if unknown_decorator then false
+    else
+      Signatures.has_analysis signatures
 
   let get_usage_self_attributes { usage_attributes; _ } =
     AttributeAnalysis.AttributeStorage.get_single_class_param usage_attributes
@@ -1317,6 +1352,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_unique_analysis func_summary unique_analysis) t
 
+  let set_unknown_decorator t func =
+    let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionHash.set ~key:func ~data:(FunctionSummary.set_unknown_decorator func_summary) t
+
 
 (*   let set_return_var_type t func return_var_type =
     let func_summary = FunctionMap.find t func |> Option.value ~default:FunctionSummary.empty in
@@ -1367,6 +1406,10 @@ module FunctionTable = struct
   let get_unique_analysis t func_name =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_unique_analysis func_summary
+
+  let get_unknown_decorator t func_name =
+    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_unknown_decorator func_summary
 
   let update ~type_join prev next =
     FunctionHash.join prev next ~equal:FunctionSummary.equal ~data_join:(FunctionSummary.update ~type_join)
@@ -1573,6 +1616,9 @@ module OurSummary = struct
   let set_unique_analysis { function_table; _ } func_name unique_analysis =
     FunctionTable.set_unique_analysis function_table func_name unique_analysis
 
+  let set_unknown_decorator { function_table; _ } func_name =
+    FunctionTable.set_unknown_decorator function_table func_name
+
   let get_class_table { class_table; _ } = class_table
 (*
   let get_usedef_tables {function_table; _} func_name = 
@@ -1608,6 +1654,9 @@ module OurSummary = struct
   let get_unique_analysis { function_table; _ } func_name =
     FunctionTable.get_unique_analysis function_table func_name
 
+  let get_unknown_decorator { function_table; _ } func_name =
+    FunctionTable.get_unknown_decorator function_table func_name
+
   let add_class_attribute {class_table; _} parent attr =
     ClassTable.add_attribute class_table parent attr 
 
@@ -1628,6 +1677,9 @@ module OurSummary = struct
 
   let get_usage_attributes_from_class { class_table; _ } class_name = 
     ClassTable.get_usage_attributes class_table class_name
+
+  let get_class_property {class_table; _} parent =
+    ClassTable.get_class_property class_table parent 
 
   let pp_class format {class_table; _} =
     Format.fprintf format "%a" ClassTable.pp class_table
@@ -1741,6 +1793,8 @@ let cache = ref false;;
 let is_search_mode = String.equal "search"
 
 let is_inference_mode = String.equal "inference"
+
+let is_check_preprocess_mode = String.equal "check_preprocess"
 
 let save_mode (mode: string) =
   check_and_make_dir !data_path;

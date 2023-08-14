@@ -264,6 +264,8 @@ module ArgTypes : sig
 
   val is_empty : t -> bool
 
+  val filter_keys : t -> f:(string -> bool) -> t
+
   val add_arg_type : join:(Type.t -> Type.t -> Type.t) -> t -> string -> Type.t -> t
 
   val join: type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
@@ -315,6 +317,7 @@ module type FunctionSummary = sig
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
 (*   type t = {
@@ -353,6 +356,7 @@ module FunctionSummary : sig
     callers: CallerSet.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
 
@@ -427,6 +431,7 @@ module OurSummary : sig
 
   val set_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t -> unit
 
+  val set_unknown_decorator : t -> Reference.t -> unit
   (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)
@@ -451,6 +456,8 @@ module OurSummary : sig
 
   val get_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t
 
+  val get_unknown_decorator : t -> Reference.t -> bool
+
   val get_callable : join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
 
   val get_callable_return_type :  t -> ArgTypes.t -> Type.Callable.t -> Type.t
@@ -474,6 +481,8 @@ module OurSummary : sig
   val get_all_arg_types : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t
 
   val get_module_var_type : t -> Reference.t -> string -> Type.t
+
+  val get_class_property : t -> Reference.t -> AttrsSet.t
 
   val change_analysis : t -> unit
 
@@ -503,6 +512,8 @@ val our_summary : OurSummary.t ref
 val is_search_mode : string -> bool
 
 val is_inference_mode : string -> bool
+
+val is_check_preprocess_mode : string -> bool
 
 val save_mode : string -> unit
 

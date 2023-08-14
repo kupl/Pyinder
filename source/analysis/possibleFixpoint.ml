@@ -190,7 +190,7 @@ module Make (State : PossibleState) = struct
       *)
       (* let timer = Timer.start () in *)
 
-      (* if String.is_substring (Reference.show func_name) ~substring:"salt.client.LocalClient.pub"
+      (* if String.is_substring (Reference.show func_name) ~substring:"test.ParserBase._should_parse_dates"
         then (
           Log.dump "START %a %i" Reference.pp func_name (Cfg.Node.id node);
           Log.dump "%a" Cfg.Node.pp node;
@@ -207,7 +207,11 @@ module Make (State : PossibleState) = struct
           Log.dump "END %i" (Cfg.Node.id node);
           (* Log.dump "%a" Cfg.Node.pp node; *)
         ); *)
-      
+       (*  if String.is_substring (Reference.show func_name) ~substring:"test.ParserBase._should_parse_dates"
+          then (
+        Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+        Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+          ); *)
       (*
       if Int.equal 3 (Cfg.Node.id node)
         then

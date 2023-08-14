@@ -180,11 +180,12 @@
               if (k >= 12) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
               then (
                 Log.dump "Done";
+                
                 (* let functions_list = Analysis.OurDomain.OurSummary.get_functions_of_class our_model in
                 Analysis.OurErrorDomain.our_errors := List.fold functions_list ~init:!Analysis.OurErrorDomain.our_errors ~f:(fun our_errors functions -> Analysis.OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
                  *)
                 (* Log.dump "Error : %i" (Analysis.OurErrorDomain.OurErrorList.num !Analysis.OurErrorDomain.our_errors); *)
-                
+                Analysis.OurErrorDomain.our_errors := Analysis.OurErrorDomain.OurErrorList.cause_analysis !Analysis.OurErrorDomain.our_errors our_model;
                 let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_errors configuration
@@ -226,6 +227,8 @@
                 fixpoint n (k+1) environment next_our_model next_skip_set
               )
              in
+
+            Analysis.OurDomain.save_mode "check_preprocess"; 
 
             let () =
               fixpoint 0 0 read_write_environment !Analysis.OurDomain.our_model Ast.Reference.Set.empty
@@ -293,7 +296,7 @@
   
    
 
-   Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+   (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
    (*
    Log.dump "%s" "Type Error Searching...";
    

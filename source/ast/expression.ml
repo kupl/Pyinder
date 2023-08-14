@@ -2251,6 +2251,18 @@ let create_name_from_reference ~location reference =
   | { Node.value = Name name; _ } -> name
   | _ -> failwith "Impossible."
 
+let create_name_from_reference_without_location reference =
+  let rec create = function
+    | [] -> Name (Name.Identifier "") |> Node.create_with_default_location
+    | [identifier] -> Name (Name.Identifier identifier) |> Node.create_with_default_location
+    | identifier :: rest ->
+        Name (Name.Attribute { base = create rest; attribute = identifier; special = false })
+        |> Node.create_with_default_location
+  in
+  match create (List.rev (Reference.as_list reference)) with
+  | { Node.value = Name name; _ } -> name
+  | _ -> failwith "Impossible."
+
 
 let from_reference ~location reference =
   create_name_from_reference ~location reference |> (fun name -> Name name) |> Node.create ~location
@@ -2338,6 +2350,14 @@ let rec get_identifier_base expression =
   | Name (Name.Identifier identifier) -> Some identifier
   | _ -> None
 
+let rec get_first_name expression =
+  match Node.value expression with
+  | Call { callee= { Node.value=Name (Name.Attribute ({ base; _})); _ }; _ } -> get_first_name base
+  | Call { callee; _ } -> get_first_name callee
+  | Name name when is_simple_name name -> Some name 
+  | Name (Name.Attribute ({ base; _ })) -> get_first_name base
+  | _ -> None
+
 
 let has_identifier_base expression = get_identifier_base expression |> Option.is_some
 
@@ -2383,6 +2403,8 @@ let rec sanitized ({ Node.value; location } as expression) =
       |> Node.create ~location
   | _ -> expression
 
+let equal_sanitized left right =
+  location_insensitive_compare (left |> sanitized) (right |> sanitized) = 0
 
 let rec delocalize ({ Node.value; location } as expression) =
   let value =
@@ -2579,3 +2601,35 @@ let operator_name_to_symbol = function
   | "__or__" -> Some "|"
   | _ -> None
 
+let rec calc_similarity left right =
+  match left, right with
+  | Await _, Await _
+  | BooleanOperator _, BooleanOperator _ 
+  | Call _, Call _ 
+  | ComparisonOperator _, ComparisonOperator _ 
+  | Constant _, Constant _ 
+  | Dictionary _, Dictionary _ 
+  | DictionaryComprehension _, DictionaryComprehension _ 
+  | Generator _, Generator _ 
+  | FormatString _, FormatString _ 
+  | List _ , List _
+  | ListComprehension _, ListComprehension _ 
+  | Set _, Set _
+  | SetComprehension _, SetComprehension _ 
+  | Starred _ , Starred _ 
+  | Ternary _ , Ternary _
+  | Tuple _, Tuple _ 
+  | UnaryOperator _, UnaryOperator _
+  | WalrusOperator _, WalrusOperator _
+  | Yield _, Yield _
+  | YieldFrom _, YieldFrom _ -> 1.0
+  | Lambda { body=left_body; _ }, Lambda { body=right_body; _ }
+    -> calc_similarity (Node.value left_body) (Node.value right_body)
+  | Name (Identifier left), Name (Identifier right) -> if String.equal left right then 1.0 else 0.0 
+  | Name (Attribute { base=left_base; attribute=left_attribute; _ }), 
+    Name (Attribute { base=right_base; attribute=right_attribute; _ }) 
+    ->
+    if String.equal left_attribute right_attribute
+    then calc_similarity (Node.value left_base) (Node.value right_base)
+    else 0.0
+  | _ -> 0.0

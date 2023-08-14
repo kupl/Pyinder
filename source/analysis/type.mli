@@ -810,7 +810,7 @@ val top_to_unknown : t -> t
 
 val any_to_unknown : t -> t
 
-val narrow_iterable : t -> t
+val narrow_iterable : max_depth:int -> t -> t
 
 val weaken_literals : t -> t
 
@@ -1224,3 +1224,5 @@ val can_top : t -> bool
 val union_update : f:(t -> t) -> t -> t
 
 val union_fold_with_filter : f:(t -> t option) -> t -> t option
+
+val calc_type : t -> t -> float

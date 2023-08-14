@@ -245,14 +245,14 @@ and unsupported_operand_kind_with_reference =
   | BinaryWithReference of {
       operator_name: Identifier.t;
       left_operand: Type.t;
-      left_reference: Reference.t;
+      left_reference: Expression.t;
       right_operand: Type.t;
-      right_reference: Reference.t;
+      right_reference: Expression.t;
     }
   | UnaryWithReference of {
       operator_name: Identifier.t;
       operand: Type.t;
-      reference: Reference.t;
+      reference: Expression.t;
     }
 
 and illegal_annotation_target_kind =
@@ -318,7 +318,7 @@ and kind =
       name: Identifier.t option;
       position: int;
       callee: Reference.t option;
-      reference: Reference.t;
+      reference: Expression.t;
       mismatch: mismatch;
     }
   | IncompatibleReturnType of {
@@ -385,6 +385,10 @@ and kind =
   | MissingReturnAnnotation of missing_annotation
   | MutuallyRecursiveTypeVariables of Reference.t option
   | NotCallable of Type.t
+  | NotCallableWithExpression of { 
+      annotation: Type.t;
+      expression: Expression.t;
+    }
   | PrivateProtocolProperty of {
       name: Identifier.t;
       parent: Type.t;
@@ -427,7 +431,7 @@ and kind =
       origin: origin;
     }
   | UndefinedAttributeWithReference of {
-    reference : Reference.t;
+    reference : Expression.t;
     attribute: Identifier.t;
     origin: origin;
   }
@@ -514,6 +518,7 @@ let code_of_kind = function
   | TypedDictionaryKeyNotFound _ -> 27
   | UnexpectedKeyword _ -> 28
   | NotCallable _ -> 29
+  | NotCallableWithExpression _ -> 73
   | AnalysisFailure _ -> 30
   | InvalidType _ -> 31
   | InvalidArgument _ -> 32
@@ -594,6 +599,7 @@ let name_of_kind = function
   | MissingReturnAnnotation _ -> "Missing return annotation"
   | MutuallyRecursiveTypeVariables _ -> "Mutually recursive type variables"
   | NotCallable _ -> "Call error"
+  | NotCallableWithExpression _ -> "Call error with expression"
   | PrivateProtocolProperty _ -> "Private protocol property"
   | ProhibitedAny _ -> "Prohibited any"
   | RedefinedClass _ -> "Redefined class"
@@ -728,6 +734,7 @@ let weaken_literals kind =
   | IncompatibleAwaitableType annotation ->
       IncompatibleAwaitableType (Type.weaken_literals annotation)
   | NotCallable annotation -> NotCallable (Type.weaken_literals annotation)
+  | NotCallableWithExpression ({ annotation; _ } as t) -> NotCallableWithExpression { t with annotation=Type.weaken_literals annotation }
   | TypedDictionaryInvalidOperation ({ mismatch; _ } as record) ->
       TypedDictionaryInvalidOperation { record with mismatch = weaken_mismatch mismatch }
   | TypedDictionaryInitializationError mismatch ->
@@ -2040,9 +2047,20 @@ let rec messages ~concise ~signature location kind =
         | _ -> "anonymous call"
       in
       [Format.asprintf "Solving type variables for %s led to infinite recursion." callee]
-  | NotCallable
-      (Type.Callable { implementation = { parameters = ParameterVariadicTypeVariable _; _ }; _ } as
-      annotation) ->
+    | NotCallable (Type.Callable { implementation = { parameters = ParameterVariadicTypeVariable _; _ }; _ } as
+        annotation) ->
+        [
+          Format.asprintf
+            "`%a` cannot be safely called because the types and kinds of its parameters depend on a \
+             type variable."
+            pp_type
+            annotation;
+        ]
+  | NotCallableWithExpression {
+      annotation=(Type.Callable { implementation = { parameters = ParameterVariadicTypeVariable _; _ }; _ } as
+      annotation);
+      _
+    } ->
       [
         Format.asprintf
           "`%a` cannot be safely called because the types and kinds of its parameters depend on a \
@@ -2051,6 +2069,7 @@ let rec messages ~concise ~signature location kind =
           annotation;
       ]
   | NotCallable annotation -> [Format.asprintf "`%a` is not a function." pp_type annotation]
+  | NotCallableWithExpression { annotation; _ } -> [Format.asprintf "`%a` is not a function." pp_type annotation]
   | PrivateProtocolProperty { name; parent } ->
       [Format.asprintf "Protocol `%a` has private property `%a`." pp_type parent pp_identifier name]
   | ProhibitedAny { is_type_alias; missing_annotation = { given_annotation; _ } } when concise ->
@@ -2728,6 +2747,7 @@ let due_to_analysis_limitations { kind; _ } =
   | InvalidType (InvalidType { annotation = actual; _ })
   | InvalidType (FinalNested actual)
   | NotCallable actual
+  | NotCallableWithExpression { annotation = actual; _ }
   | ProhibitedAny { missing_annotation = { given_annotation = Some actual; _ }; _ }
   | RedundantCast actual
   | UninitializedAttribute { mismatch = { actual; _ }; _ }
@@ -2959,7 +2979,13 @@ let less_or_equal ~resolution left right =
       | _ -> false)
   | MissingOverloadImplementation left, MissingOverloadImplementation right ->
       Reference.equal left right
-  | NotCallable left, NotCallable right -> GlobalResolution.less_or_equal resolution ~left ~right
+  | NotCallable left, NotCallable right
+    -> 
+      GlobalResolution.less_or_equal resolution ~left ~right
+  | NotCallableWithExpression { annotation=left; expression=left_expression; }, NotCallableWithExpression { annotation=right; expression=right_expression; } 
+    when Expression.equal_sanitized left_expression right_expression
+    -> 
+      GlobalResolution.less_or_equal resolution ~left ~right
   | RedundantCast left, RedundantCast right ->
       GlobalResolution.less_or_equal resolution ~left ~right
   | RevealedLocals left, RevealedLocals right when List.length left == List.length right ->
@@ -3158,6 +3184,7 @@ let less_or_equal ~resolution left right =
   | MissingReturnAnnotation _, _
   | MutuallyRecursiveTypeVariables _, _
   | NotCallable _, _
+  | NotCallableWithExpression _, _
   | PrivateProtocolProperty _, _
   | ProhibitedAny _, _
   | RedefinedClass _, _
@@ -3297,8 +3324,13 @@ let join_without_resolution ~type_join left right =
     | MissingOverloadImplementation left, MissingOverloadImplementation right
       when Reference.equal left right ->
         MissingOverloadImplementation left
-    | NotCallable left, NotCallable right ->
-        NotCallable (type_join left right)
+    | NotCallable left, NotCallable right
+        ->
+          NotCallable (type_join left right)
+    | NotCallableWithExpression { annotation=left; expression=left_expression; }, NotCallableWithExpression { annotation=right; expression=right_expression; } 
+      when Expression.equal_sanitized left_expression right_expression
+      ->
+        NotCallableWithExpression { annotation=(type_join left right); expression=left_expression; }
     | ( ProhibitedAny { is_type_alias = is_type_alias_left; missing_annotation = left },
         ProhibitedAny { is_type_alias = is_type_alias_right; missing_annotation = right } )
       when Bool.equal is_type_alias_left is_type_alias_right ->
@@ -3504,6 +3536,81 @@ let join_without_resolution ~type_join left right =
       when Identifier.equal_sanitized left_attribute right_attribute && ModulePath.equal left right
       ->
         UndefinedAttribute { origin = Module (ExplicitModule left); attribute = left_attribute }
+
+    | ( UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassType left; parent_module_path = left_module };
+            attribute = left_attribute;
+            reference = left_reference;
+          },
+          UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassType right; parent_module_path = right_module };
+            attribute = right_attribute;
+            reference = right_reference;
+          } )
+      when Identifier.equal_sanitized left_attribute right_attribute
+           && Option.equal ModulePath.equal left_module right_module 
+           && Expression.equal_sanitized left_reference right_reference
+           ->
+        let annotation = type_join left right in
+        UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassType annotation; parent_module_path = left_module };
+            attribute = left_attribute;
+            reference = left_reference
+          }
+      | ( UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassType left; _ };
+            attribute = left_attribute;
+            reference = left_reference;
+          },
+          UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassInUnion right; parent_module_path = right_module };
+            attribute = right_attribute;
+            reference = right_reference;
+          } )
+      | ( 
+          UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassInUnion right; parent_module_path = right_module };
+            attribute = right_attribute;
+            reference = right_reference;
+          },
+          UndefinedAttributeWithReference
+          {
+            origin = Class { class_origin = ClassType left; _ };
+            attribute = left_attribute;
+            reference = left_reference;
+          }
+            )
+          
+      when Identifier.equal_sanitized left_attribute right_attribute
+           && Expression.equal_sanitized left_reference right_reference
+           && Type.equal (type_join left (Type.union right.unions)) (Type.union right.unions)
+           ->
+            UndefinedAttributeWithReference
+            {
+              origin = Class { class_origin = ClassInUnion right; parent_module_path = right_module };
+              attribute = right_attribute;
+              reference = right_reference;
+            }
+    | ( UndefinedAttributeWithReference { origin = Module (ImplicitModule left); reference = left_reference; attribute = left_attribute },
+      UndefinedAttributeWithReference { origin = Module (ImplicitModule right); reference = right_reference; attribute = right_attribute } )
+      when Identifier.equal_sanitized left_attribute right_attribute
+           && Reference.equal_sanitized left right 
+           && Expression.equal_sanitized left_reference right_reference
+           ->
+            UndefinedAttributeWithReference { origin = Module (ImplicitModule left); reference = left_reference; attribute = left_attribute }
+    | ( UndefinedAttributeWithReference { origin = Module (ExplicitModule left); reference = left_reference; attribute = left_attribute },
+        UndefinedAttributeWithReference { origin = Module (ExplicitModule right); reference = right_reference; attribute = right_attribute } )
+      when Identifier.equal_sanitized left_attribute right_attribute && ModulePath.equal left right
+      && Expression.equal_sanitized left_reference right_reference
+      ->
+        UndefinedAttributeWithReference { origin = Module (ExplicitModule left); reference = left_reference; attribute = left_attribute }
+
     | UndefinedType left, UndefinedType right when Type.equal left right -> UndefinedType left
     | UnexpectedKeyword left, UnexpectedKeyword right
       when Option.equal Reference.equal_sanitized left.callee right.callee
@@ -3534,8 +3641,8 @@ let join_without_resolution ~type_join left right =
           }) 
         )
     when Identifier.equal_sanitized left_operator_name right_operator_name 
-    && Reference.equal left_reference_for_left right_reference_for_left
-    && Reference.equal left_reference_for_right right_reference_for_right
+    && Expression.equal_sanitized left_reference_for_left left_reference_for_right
+    && Expression.equal_sanitized right_reference_for_left right_reference_for_right
     ->
       UnsupportedOperandWithReference
         (BinaryWithReference
@@ -3553,7 +3660,7 @@ let join_without_resolution ~type_join left right =
         UnsupportedOperandWithReference 
         (UnaryWithReference { operator_name = right_operator_name; operand = right_operand; reference=right_reference; })
     )
-    when Identifier.equal_sanitized left_operator_name right_operator_name && Reference.equal left_reference right_reference ->
+    when Identifier.equal_sanitized left_operator_name right_operator_name && Expression.equal_sanitized left_reference right_reference ->
       UnsupportedOperandWithReference
         (UnaryWithReference { left with operand = type_join left_operand right_operand; reference = left_reference;})
 
@@ -3692,6 +3799,7 @@ let join_without_resolution ~type_join left right =
     | MissingReturnAnnotation _, _
     | MutuallyRecursiveTypeVariables _, _
     | NotCallable _, _
+    | NotCallableWithExpression _, _
     | PrivateProtocolProperty _, _
     | ProhibitedAny _, _
     | RedefinedClass _, _
@@ -3848,6 +3956,10 @@ let join ~resolution left right =
         MissingOverloadImplementation left
     | NotCallable left, NotCallable right ->
         NotCallable (GlobalResolution.join resolution left right)
+    | NotCallableWithExpression { annotation=left; expression=left_expression; }, NotCallableWithExpression { annotation=right; expression=right_expression; } 
+      when Expression.equal_sanitized left_expression right_expression
+      ->
+        NotCallableWithExpression { annotation=(GlobalResolution.join resolution left right); expression=left_expression; }
     | ( ProhibitedAny { is_type_alias = is_type_alias_left; missing_annotation = left },
         ProhibitedAny { is_type_alias = is_type_alias_right; missing_annotation = right } )
       when Bool.equal is_type_alias_left is_type_alias_right ->
@@ -4083,8 +4195,8 @@ let join ~resolution left right =
           }) 
         )
     when Identifier.equal_sanitized left_operator_name right_operator_name 
-    && Reference.equal left_reference_for_left right_reference_for_left
-    && Reference.equal left_reference_for_right right_reference_for_right
+    && Expression.equal_sanitized left_reference_for_left left_reference_for_right 
+    && Expression.equal_sanitized right_reference_for_left right_reference_for_right
     ->
       UnsupportedOperandWithReference
         (BinaryWithReference
@@ -4102,7 +4214,7 @@ let join ~resolution left right =
         UnsupportedOperandWithReference 
         (UnaryWithReference { operator_name = right_operator_name; operand = right_operand; reference=right_reference; })
     )
-    when Identifier.equal_sanitized left_operator_name right_operator_name && Reference.equal left_reference right_reference ->
+    when Identifier.equal_sanitized left_operator_name right_operator_name && Expression.equal_sanitized left_reference right_reference ->
       UnsupportedOperandWithReference
         (UnaryWithReference { left with operand = GlobalResolution.join resolution left_operand right_operand; reference = left_reference;})
 
@@ -4241,6 +4353,7 @@ let join ~resolution left right =
     | MissingReturnAnnotation _, _
     | MutuallyRecursiveTypeVariables _, _
     | NotCallable _, _
+    | NotCallableWithExpression _, _
     | PrivateProtocolProperty _, _
     | ProhibitedAny _, _
     | RedefinedClass _, _
@@ -4395,10 +4508,37 @@ let filter_typical_errors ~exist errors =
       let actual = (fst (Type.split (List.nth_exn unions index))) in
       
       exist (reference, actual)
+    | NotCallableWithExpression { annotation; expression; } ->
+      exist (expression, annotation)
     | _ -> true
   )
 
-let get_reference_type errors =
+let get_expression_list { kind; _ } = 
+  match kind with
+    | UnsupportedOperandWithReference (BinaryWithReference {left_operand; right_operand; left_reference; right_reference; _ }) ->
+      let _ = left_operand, right_operand in
+      [left_reference; right_reference]
+
+    | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; _ }) ->
+      let _ = operand in
+      [reference]
+    | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; reference; _ }
+    ->
+      let _ = actual in
+      [reference]
+
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; _ } when
+      Type.is_none actual || Type.is_optional actual
+    ->
+      [reference]
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; reference; _ } when
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      Type.is_none actual || Type.is_optional actual ->
+      [reference]
+    | NotCallableWithExpression { expression; annotation } when Type.is_none annotation || Type.is_optional annotation-> [expression]
+    | _ -> 
+      []
+let get_expression_type errors =
   let tmp = 
   List.fold errors ~init:[] ~f:(fun acc { kind; _ } ->
     match kind with
@@ -4422,7 +4562,9 @@ let get_reference_type errors =
       Type.is_none actual || Type.is_optional actual ->
       let actual = (fst (Type.split (List.nth_exn unions index))) in
       (reference, actual)::acc
-
+    | NotCallableWithExpression { expression; annotation; } 
+      when Type.is_none annotation || Type.is_optional annotation ->
+      (expression, annotation)::acc
     | _ -> 
       acc
   )
@@ -4825,6 +4967,7 @@ let dequalify
     | MutuallyRecursiveTypeVariables callee ->
         MutuallyRecursiveTypeVariables (Option.map callee ~f:dequalify_reference)
     | NotCallable annotation -> NotCallable (dequalify annotation)
+    | NotCallableWithExpression { annotation; expression; } -> NotCallableWithExpression { annotation=(dequalify annotation); expression; }
     | PrivateProtocolProperty ({ parent; _ } as private_property) ->
         PrivateProtocolProperty { private_property with parent = dequalify parent }
     | ProhibitedAny { is_type_alias; missing_annotation = { annotation; _ } as missing_annotation }
@@ -5092,7 +5235,9 @@ let filter_type_error errors =
       (match kind with
       | UnsupportedOperand _ | UnsupportedOperandWithReference _
       | IncompatibleParameterType _ | IncompatibleParameterTypeWithReference _ 
-      | UndefinedAttribute _ | UndefinedAttributeWithReference _ | IncompatibleAttributeType _
+      | UndefinedAttribute _ | UndefinedAttributeWithReference _ 
+      | IncompatibleAttributeType _
+      | NotCallable _ | NotCallableWithExpression _
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _

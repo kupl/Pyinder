@@ -110,10 +110,13 @@ module ClassSummaryResolution = struct
     in
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
     
-  let join_with_merge_class_var_type ~type_join ({ class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
+  let join_with_merge_class_var_type ~type_join ~properties ({ class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
     (*
     여기서 postcondition의 변수 하나하나를 저장한다   
     *)
+    let check_properties reference =
+      AttrsSet.exists properties ~f:(String.equal (Reference.show reference))
+    in
 
 
     let filter_keys = Reference.create class_param in
@@ -125,7 +128,11 @@ module ClassSummaryResolution = struct
     
     and unit_fold ~unit ~base_reference class_var_type =
       let typ = unit |> Refinement.Unit.base >>| Annotation.annotation |> Option.value ~default:Type.Unknown in
-      let class_var_type = add_class_var_type ~type_join class_var_type base_reference typ in
+      (* Log.dump "%a => %a" Reference.pp base_reference Type.pp typ; *)
+      let class_var_type = 
+        if check_properties base_reference then class_var_type
+        else add_class_var_type ~type_join class_var_type base_reference typ 
+      in
       attribute_fold ~base_reference ~attributes:(unit |> Refinement.Unit.attributes) class_var_type
     in 
     
@@ -166,9 +173,9 @@ module ClassTableResolution = struct
 
   let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_self_attributes_tree
 
-  let join_with_merge_class_var_type ~type_join t class_name class_param method_postcondition =
+  let join_with_merge_class_var_type ~type_join ~properties t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
-    let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join class_summary class_param method_postcondition in
+    let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join ~properties class_summary class_param method_postcondition in
     ClassHash.set ~key:class_name ~data t
 
   let find_default_type_from_attributes ~key ~default_type:{ OurDomain.ClassAttributes.attributes; properties; methods } { AttributeStorage.attribute_set; call_set; } =
@@ -204,6 +211,7 @@ module ClassTableResolution = struct
       ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_classes ->
         let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
         let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
         let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
           flag &&  
           (match data with
@@ -359,6 +367,8 @@ module FunctionSummaryResolution = struct
   include FunctionSummary
 
   let store_to_return_var_type ?class_param ?(local=false) ({ signatures; _ } as t) arg_types (store: Refinement.Store.t) =
+    
+    
     let return_var_type = Signatures.get_return_var_type signatures arg_types in
 
     let class_param = class_param |> Option.value ~default:"" |> Reference.create in

@@ -18,6 +18,8 @@ module OurErrorList : sig
 
     val num : t -> int
 
+    val cause_analysis : t -> OurDomain.OurSummary.t -> t
+
     (* val get_repeated_errors : t -> Reference.t list -> t *)
 end
 

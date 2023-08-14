@@ -35,6 +35,8 @@ module UniqueState : sig
     relation_var_map : VarSet.t Reference.Map.t;
     conditions : condtion_var_set Int.Map.t
   } [@@deriving sexp, equal]
+
+  val get_all_relative_variables : reference:Reference.t -> t -> VarSet.t
   
   include UniqueState with type t := t
 end 
@@ -45,6 +47,7 @@ module type UniqueFixpoint = sig
   type t = {
     pre_variables: state Int.Table.t;
     post_variables: state Int.Table.t;
+    pre_statements: state Location.Table.t;
   } [@@deriving show, sexp, equal]
 
   val join : t -> t -> t
@@ -59,7 +62,7 @@ module type UniqueFixpoint = sig
 
   val find : t -> int -> state option
 
-  val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
+  val find_pre_statements_of_location : t -> Location.t -> state option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 

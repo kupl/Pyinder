@@ -236,14 +236,14 @@ and unsupported_operand_kind_with_reference =
   | BinaryWithReference of {
       operator_name: Identifier.t;
       left_operand: Type.t;
-      left_reference: Reference.t;
+      left_reference: Expression.t;
       right_operand: Type.t;
-      right_reference: Reference.t;
+      right_reference: Expression.t;
     }
   | UnaryWithReference of {
       operator_name: Identifier.t;
       operand: Type.t;
-      reference: Reference.t;
+      reference: Expression.t;
     }
 
 and illegal_annotation_target_kind =
@@ -309,7 +309,7 @@ and kind =
       name: Identifier.t option;
       position: int;
       callee: Reference.t option;
-      reference: Reference.t;
+      reference: Expression.t;
       mismatch: mismatch;
     }
   | IncompatibleReturnType of {
@@ -376,6 +376,10 @@ and kind =
   | MissingReturnAnnotation of missing_annotation
   | MutuallyRecursiveTypeVariables of Reference.t option
   | NotCallable of Type.t
+  | NotCallableWithExpression of {
+      annotation: Type.t;
+      expression: Expression.t;
+    }
   | PrivateProtocolProperty of {
       name: Identifier.t;
       parent: Type.t;
@@ -418,7 +422,7 @@ and kind =
       origin: origin;
     }
   | UndefinedAttributeWithReference of {
-      reference: Reference.t;
+      reference: Expression.t;
       attribute: Identifier.t;
       origin: origin;
     }
@@ -535,9 +539,11 @@ val join_at_source : resolution:GlobalResolution.t -> t list -> t list
 
 val deduplicate : t list -> t list
 
-val filter_typical_errors : exist:(Reference.t * Type.t -> bool) -> t list -> t list
+val filter_typical_errors : exist:(Expression.t * Type.t -> bool) -> t list -> t list
 
-val get_reference_type : t list -> (Reference.t * Type.t) list
+val get_expression_list : t -> Expression.t list
+
+val get_expression_type : t list -> (Expression.t * Type.t) list
 
 val filter : resolution:GlobalResolution.t -> t list -> t list
 

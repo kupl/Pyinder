@@ -25,7 +25,7 @@ end
 module UniqueState = struct
   module VarSet = struct 
     
-    type t = Reference.Set.t [@@deriving sexp, equal]
+    type t = Reference.Set.t [@@deriving sexp, equal, compare]
 
     let show t =
       (Reference.Set.fold t ~init:"(" ~f:(fun acc reference -> acc ^ (Reference.show reference) ^ ", "))
@@ -39,6 +39,10 @@ module UniqueState = struct
     
     let empty = Reference.Set.empty
     let singleton name = Reference.Set.singleton name
+
+    let add t data = Reference.Set.add t data
+
+    let mem t data = Reference.Set.mem t data
     let union left right = Reference.Set.union left right
 
     (* let inter left right = Reference.Set.inter left right *)
@@ -93,6 +97,20 @@ module UniqueState = struct
 
   let less_or_equal ~left:_ ~right:_ = true
 
+  let get_all_relative_variables ~reference { relation_var_map; _ } =
+    let rec get_relative_variables ~check_set reference =
+      if VarSet.mem check_set reference then VarSet.empty
+      else
+        let var_set = Reference.Map.find relation_var_map reference |> Option.value ~default:VarSet.empty in
+        VarSet.fold var_set ~init:VarSet.empty ~f:(fun var_set reference -> 
+          VarSet.add var_set reference
+          |> VarSet.union (get_relative_variables ~check_set:(VarSet.add check_set reference) reference)
+          
+        )
+    in
+
+    get_relative_variables ~check_set:VarSet.empty reference
+
   let join_relation_var_map left right = 
     Reference.Map.merge left right ~f:(fun ~key:_ data ->
       match data with
@@ -124,8 +142,10 @@ module UniqueState = struct
       if List.length names >= 2
       then Some (Reference.create_from_list [List.nth_exn names 0; List.nth_exn names 1])
       else None
-    else
+    else if Reference.is_parameter reference || Reference.is_local reference then
       Reference.head reference
+    else
+      Some reference
 
   let map_abstract_variable var_set =
     VarSet.filter_map var_set ~f:abstract_variable
@@ -234,6 +254,8 @@ module UniqueState = struct
       add_condition ~line ~test_variables ~true_branch state
     (* | Define { signature={ parameters; _ }; _ } ->
        *)
+    (* | For { target; iterator; _ } ->
+      forward_assignment ~target ~value:iterator state *)
     | _ -> state
 
   let forward ~statement_key:_ state ~statement =
@@ -250,6 +272,7 @@ module type UniqueFixpoint = sig
   type t = {
     pre_variables: state Int.Table.t;
     post_variables: state Int.Table.t;
+    pre_statements: state Location.Table.t;
   } [@@deriving show, sexp, equal]
 
   val join : t -> t -> t
@@ -263,7 +286,7 @@ module type UniqueFixpoint = sig
 
   val find : t -> int -> state option
 
-  val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
+  val find_pre_statements_of_location : t -> Location.t -> state option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 
@@ -281,6 +304,7 @@ module Make (State : UniqueState) = struct
   type t = {
     pre_variables: State.t Int.Table.t;
     post_variables: State.t Int.Table.t;
+    pre_statements: State.t Location.Table.t;
   } [@@deriving sexp, equal]
 
   (*
@@ -288,7 +312,7 @@ module Make (State : UniqueState) = struct
     Core.Hashtbl.equal f left.usedef_tables right.usedef_tables
   *)
 
-  let pp format { pre_variables; post_variables; } =
+  let pp format { pre_variables; post_variables; _ } =
     let print_state ~name ~key ~data =
       Format.fprintf format "%s %d -> \n%a\n" name key State.pp data
     in
@@ -307,6 +331,7 @@ module Make (State : UniqueState) = struct
   let empty = { 
     pre_variables=Int.Table.create ();
     post_variables=Int.Table.create (); 
+    pre_statements=Location.Table.create ();
   }
 
   let join_state left right =
@@ -320,22 +345,20 @@ module Make (State : UniqueState) = struct
     {
       pre_variables = join_state left.pre_variables right.pre_variables;
       post_variables = join_state left.post_variables right.post_variables;
+      pre_statements = left.pre_statements;
     }
 
   (* let get_usedef_tables { usedef_tables; _ } = usedef_tables *)
 
-  let find_usedef_table_of_location t (cfg: Cfg.t) location =
-    Int.Table.fold cfg ~init:None ~f:(fun ~key:node_id ~data:node state ->
-      if Option.is_some state then state
-      else
-        let statements = Cfg.Node.statements node in
-        List.fold statements ~init:state ~f:(fun state statement -> 
-          let start_contains = Location.contains_eq ~location:(Node.location statement) (Location.start location) in
-          let stop_contains = Location.contains_eq ~location:(Node.location statement) (Location.stop location) in
-          if start_contains && stop_contains then find t node_id else state
-        )
+  let find_pre_statements_of_location { pre_statements; _ } location =
+    Location.Table.fold pre_statements ~init:None ~f:(fun ~key ~data find ->
+      match find with
+      | Some _ -> find
+      | None -> 
+        let start_contains = Location.contains_eq ~location:key (Location.start location) in
+        let stop_contains = Location.contains_eq ~location:key (Location.stop location) in
+        if start_contains && stop_contains then Some data else find
     )
-
 
   let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
     (*
@@ -352,6 +375,7 @@ module Make (State : UniqueState) = struct
 
     let pre_variables = Int.Table.create () in
     let post_variables=Int.Table.create () in
+    let pre_statements = Location.Table.create () in
 
     let join_with_predecessors_usedef_tables node state =
       
@@ -372,7 +396,7 @@ module Make (State : UniqueState) = struct
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_usedef_tables node
       in
-      let post = transition node_id pre (Cfg.Node.statements node) in
+      let post = transition ~pre_statements node_id pre (Cfg.Node.statements node) in
       (*Format.printf "[[[ USEDEF TABLE: Node %d ]]] \n\n%a\n\n" node_id State.pp usedef_table;*)
       Hashtbl.set pre_variables ~key:node_id ~data:pre;
       Hashtbl.set post_variables ~key:node_id ~data:post;
@@ -438,12 +462,13 @@ module Make (State : UniqueState) = struct
     *)
     
 
-    { pre_variables; post_variables; }
+    { pre_variables; post_variables; pre_statements; }
 
   let forward ~cfg ~initial =
-    let transition node_id init statements =
-      let forward statement_index before statement =
+    let transition ~pre_statements node_id init statements =
+      let forward statement_index before ({ Node.location; _ } as statement) =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
+        Hashtbl.set pre_statements ~key:location ~data:before;
         let after = State.forward ~statement_key before ~statement in
         (*
         Format.printf "\n\n  {  %a  } \n\n"
@@ -508,7 +533,8 @@ module Make (State : UniqueState) = struct
 
 
   let backward ~cfg ~initial =
-    let transition node_id init statements =
+    let transition ~pre_statements node_id init statements =
+      let _ = pre_statements in
       let statement_index = ref (List.length statements) in
       let backward statement =
         statement_index := !statement_index - 1;

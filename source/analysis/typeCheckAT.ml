@@ -105,7 +105,7 @@ let errors_from_not_found
             else
 
             let kind =
-              let target_reference =
+              (* let target_reference =
                 (match arguments with
                 | Some args -> 
                   if (position < 1) || (List.length args <= (position-1)) then Reference.empty
@@ -117,8 +117,8 @@ let errors_from_not_found
                     )
                 | None -> Reference.empty
                 )
-              in
-              let normal = Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_reference; mismatch } in
+              in *)
+              let normal = Error.IncompatibleParameterType { name; position; callee; mismatch } in
               
               let typed_dictionary_error
                   ~method_name
@@ -1035,8 +1035,8 @@ module TypeCheckAT (Context : Context) = struct
                         ~errors
                         ~location
                         ~kind:
-                          (Error.UndefinedAttributeWithReference
-                             { reference; attribute = Reference.last reference; origin = Error.Module origin })
+                          (Error.UndefinedAttribute
+                             { attribute = Reference.last reference; origin = Error.Module origin })
                     else
                       errors
                 | _ -> errors
@@ -1110,9 +1110,8 @@ module TypeCheckAT (Context : Context) = struct
                   ~errors
                   ~location
                   ~kind:
-                    (Error.UndefinedAttributeWithReference
+                    (Error.UndefinedAttribute
                        {
-                         reference=reference |> Option.value ~default:Reference.empty;
                          attribute;
                          origin =
                            Error.Class
@@ -1194,9 +1193,8 @@ module TypeCheckAT (Context : Context) = struct
                       ~errors
                       ~location
                       ~kind:
-                        (Error.UndefinedAttributeWithReference
+                        (Error.UndefinedAttribute
                            {
-                             reference=reference |> Option.value ~default:Reference.empty;
                              attribute = attribute_name;
                              origin =
                                Error.Class
@@ -4682,9 +4680,8 @@ module TypeCheckAT (Context : Context) = struct
                                 ~errors
                                 ~location
                                 ~kind:
-                                  (Error.UndefinedAttributeWithReference
+                                  (Error.UndefinedAttribute
                                      {
-                                       reference = name_reference |> Option.value ~default:Reference.empty;
                                        attribute = AnnotatedAttribute.public_name attribute;
                                        origin =
                                          Error.Class

@@ -77,6 +77,8 @@ val head : t -> t option
 
 val drop_head : t -> t
 
+val drop_last : t -> t
+
 val first : t -> Identifier.t
 
 val last : t -> Identifier.t
