@@ -327,6 +327,10 @@ module TypeCheckAT (Context : Context) = struct
           errors
 
 
+  let is_reachable t =
+    match t with
+    | Unreachable -> false
+    | Value _ -> true
   let show state = Format.asprintf "%a" pp state
 
   and equal left right =

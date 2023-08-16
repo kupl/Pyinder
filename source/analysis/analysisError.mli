@@ -545,6 +545,8 @@ val get_expression_list : t -> Expression.t list
 
 val get_expression_type : t list -> (Expression.t * Type.t) list
 
+val filter_interesting_error : t list -> t list
+
 val filter : resolution:GlobalResolution.t -> t list -> t list
 
 val suppress : mode:Source.mode -> ignore_codes:int list -> t -> bool

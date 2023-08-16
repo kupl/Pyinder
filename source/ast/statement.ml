@@ -1978,3 +1978,95 @@ let is_generator statements =
         false
   and is_statements_generator statements = List.exists statements ~f:is_statement_generator in
   is_statements_generator statements
+
+
+(* let rec is_valid_none ~reference statement_list =
+  let is_used expression = Expression.is_used ~reference expression in
+  let is_check_none = Expression.is_check_none ~reference expression in
+
+  let rec check_statement statement =
+    match Node.value statement with
+    | Assign { target; value; _ } ->
+      if is_used value
+      then None
+      else Some (is_used target)
+    | Delete t_list ->
+      if List.fold t_list ~init:false ~f:(fun flag t -> flag || is_used t)
+      then None
+      else Some false 
+    | Expression t ->
+      if is_used t
+      then None
+      else Some false 
+    | For { iterator; body; orelse; _ } ->
+      if is_used iterator
+      then None
+      else (
+        match is_valid_none ~reference body with
+        | Some valid ->
+          if valid 
+          then Some valid
+          else is_valid_none ~reference orelse
+        | None -> None
+      ) 
+    | If { test; body; orelse; } ->
+      if is_check_none test
+      then Some true
+      else (
+        match is_valid_none ~reference body with
+        | Some valid ->
+          if valid 
+          then Some valid
+          else is_valid_none ~reference orelse
+        | None -> None
+      )
+    | Match { cases; _ } ->
+      List.fold cases ~init:(Some false) ~f:(fun valid { body; _ } -> 
+        match valid with
+        | Some valid when valid -> Some valid
+        | Some _ ->
+          (match is_valid_none ~reference body with
+          | Some new_valid -> Some new_valid
+          | None -> None
+          ) 
+        | _ -> None
+      )
+    | Try { body; orelse; finally; _ } ->
+      List.fold [body; orelse; finally] ~init:(Some false) ~f:(fun valid statement -> 
+        match valid with
+        | Some valid when valid -> Some valid
+        | Some _ ->
+          (match is_valid_none ~reference statement with
+          | Some new_valid -> Some new_valid
+          | None -> None
+          ) 
+        | _ -> None
+      )
+    | With { items; body; _ } ->
+      if List.fold items ~init:false ~f:(fun flag t -> flag || is_used t)
+      then None
+      else is_valid_none ~reference body
+    | While { test; body; orelse } ->
+      if is_used test
+      then None
+      else (
+        match is_valid_none ~reference body with
+        | Some valid ->
+          if valid 
+          then Some valid
+          else is_valid_none ~reference orelse
+        | None -> None
+      )
+    | _ -> Some false
+  in
+
+  List.fold statement_list ~init:(Some false) ~f:(fun valid statement -> 
+    match valid with
+    | Some valid when valid -> Some valid
+    | Some _ ->
+      (match check_statement statement with
+      | Some new_valid -> Some new_valid
+      | None -> None
+      ) 
+    | _ -> None
+  ) *)

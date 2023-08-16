@@ -197,6 +197,8 @@ module ArgTypes = struct
   let filter_keys = IdentifierMap.filter_keys
   let map ~f t = IdentifierMap.map ~f t
 
+  let mem = IdentifierMap.mem
+
   let set_arg_type t ident typ =
     let modified_typ = weaken_typ typ in
     let exn_typ = IdentifierMap.find t ident |> Option.value ~default:modified_typ in
@@ -428,6 +430,9 @@ module ClassSummary = struct
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
 
+  let set_class_var_type_to_empty t =
+    { t with class_var_type=ReferenceMap.empty }
+
   let get_class_property { class_attributes; _ } =
     ClassAttributes.get_class_property class_attributes
   
@@ -483,6 +488,9 @@ module ClassTable = struct
 
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummary.add_usage_attributes
 
+  let set_all_class_var_type_to_empty t =
+    ClassHash.map t ~f:(fun class_info -> (ClassSummary.set_class_var_type_to_empty class_info))
+    
   let set_class_info t class_name class_info =
     ClassHash.set t ~key:class_name ~data:class_info
 
@@ -1496,7 +1504,7 @@ module FunctionTable = struct
 
   let change_analysis_of_func t func_name =
     match FunctionHash.find t func_name with
-    | Some v -> FunctionHash.set ~key:func_name ~data:(FunctionSummary.change_analysis v) t
+    | Some v when not (String.is_suffix (Reference.show func_name) ~suffix:"__init__") -> FunctionHash.set ~key:func_name ~data:(FunctionSummary.change_analysis v) t
     | _ -> ()
 
   let change_analysis_to_false_of_func t func_name =
@@ -1669,6 +1677,10 @@ module OurSummary = struct
   let set_class_summary { class_table; _ } class_name class_info =
     ClassTable.set_class_info class_table class_name class_info 
 
+  let set_all_class_var_type_to_empty ({ class_table; _ } as t) =
+    let class_table = ClassTable.set_all_class_var_type_to_empty class_table in
+    { t with class_table; }
+
   let set_class_table t class_table =
     { t with class_table; }
 
@@ -1793,6 +1805,9 @@ let cache = ref false;;
 let is_search_mode = String.equal "search"
 
 let is_inference_mode = String.equal "inference"
+
+let is_error_mode = String.equal "error"
+
 
 let is_check_preprocess_mode = String.equal "check_preprocess"
 

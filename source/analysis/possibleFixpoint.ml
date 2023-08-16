@@ -23,6 +23,7 @@ module type PossibleState = sig
 
   val update_possible : t -> t -> Reference.t -> t
   *)
+  val is_reachable : t -> bool
   val bottom : t
 
   val less_or_equal : left:t -> right:t -> bool
@@ -56,6 +57,8 @@ module type PossibleFixpoint = sig
   val normal_exit : t -> state option
 
   val exit : t -> state option
+
+  val post_info : t -> bool Int.Map.t
 
   (*
   val exit_possible : t -> state option
@@ -102,6 +105,11 @@ module Make (State : PossibleState) = struct
   let normal_exit { postconditions; _ } = Hashtbl.find postconditions Cfg.normal_index
 
   let exit { postconditions; _ } = Hashtbl.find postconditions Cfg.exit_index
+
+  let post_info { postconditions; _ } =
+    Hashtbl.fold postconditions ~init:Int.Map.empty ~f:(fun ~key ~data acc ->
+     Int.Map.set acc ~key ~data:(State.is_reachable data)
+    )
     (*
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
     *)

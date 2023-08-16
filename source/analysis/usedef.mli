@@ -34,6 +34,7 @@ module UsedefState : sig
   type t = {
     defined: Reference.Set.t;
     undefined: Reference.Set.t;
+    total: Reference.Set.t;
     usedef_table: usedef Reference.Map.t;
   } 
   include UsedefState with type t := t
@@ -61,7 +62,7 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> post_info:bool Int.Map.t -> initial:state -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 

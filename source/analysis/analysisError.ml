@@ -4571,6 +4571,26 @@ let get_expression_type errors =
   in
   tmp
 
+let filter_interesting_error errors =
+  List.filter errors ~f:(fun error -> 
+    match error.kind with
+    | UnsupportedOperandWithReference _
+    | IncompatibleParameterTypeWithReference _ ->
+      true
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; _ } when
+      Type.is_none actual || Type.is_optional actual
+      -> true
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; _ } when
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      Type.is_none actual || Type.is_optional actual
+      -> true
+    | NotCallableWithExpression { annotation; _ } 
+      when Type.is_none annotation || Type.is_optional annotation ->
+      true
+    | _ -> 
+      false
+  )
+
 let filter ~resolution errors =
   let should_filter error =
     let is_mock_error { kind; _ } =

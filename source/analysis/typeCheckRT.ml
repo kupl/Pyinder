@@ -328,6 +328,10 @@ module TypeCheckRT (Context : OurContext) = struct
     | Unreachable
     | Value of Resolution.t
 
+  let is_reachable t =
+    match t with
+    | Unreachable -> false
+    | Value _ -> true
     (*
   let top_to_bottom t =
     match t with
@@ -4688,6 +4692,7 @@ module TypeCheckRT (Context : OurContext) = struct
           return_annotation ~global_resolution
           |> GlobalResolution.type_of_generator_send_and_return ~global_resolution
         in
+        (* Log.dump "Yield >>> %a" Type.pp send_type; *)
         { resolution; errors; resolved = send_type; resolved_annotation = None; base = None }
     | Expression.YieldFrom yielded_from ->
         let { Resolved.resolution; resolved; errors; _ } =
@@ -5158,7 +5163,9 @@ module TypeCheckRT (Context : OurContext) = struct
         refine_resolution_for_assert ~resolution ~at_resolution left
     | Name name when is_simple_name name -> (
         match existing_annotation name with
-        | Some { Annotation.annotation = Type.NoneType | Type.Literal (Boolean (false)) ; _ } -> Unreachable
+        | Some { Annotation.annotation = Type.NoneType | Type.Literal (Boolean (false)) ; _ } -> 
+          (* Log.dump ">>> %a" Name.pp name; *)
+          Unreachable
         | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
             let refined_annotation =
               List.filter parameters ~f:(fun parameter -> not ((Type.is_none parameter) || Type.is_falsy parameter))
@@ -5171,6 +5178,37 @@ module TypeCheckRT (Context : OurContext) = struct
             in
             Value resolution
         | _ -> Value resolution)
+      | UnaryOperator
+        {
+          UnaryOperator.operator = UnaryOperator.Not;
+          operand =
+            {
+              Node.value =
+                Name name
+              ;
+              _;
+            };
+        }
+      
+       when is_simple_name name -> (
+          match existing_annotation name with
+          | Some { Annotation.annotation; _ } when Type.is_truthy annotation -> 
+            (* Log.dump ">>> %a" Name.pp name; *)
+            Unreachable
+          | Some { Annotation.annotation = Type.OurTypedDictionary _ ; _ } ->
+            Unreachable
+          | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
+              let refined_annotation =
+                List.filter parameters ~f:(fun parameter -> not (Type.is_ourtyped_dictionary parameter || Type.is_truthy parameter))
+              in
+              (* Log.dump "Name : %a => %a" Name.pp name Type.pp (Type.union refined_annotation); *)
+              let resolution =
+                refine_local
+                  ~name
+                  { annotation with Annotation.annotation = Type.union refined_annotation }
+              in
+              Value resolution
+          | _ -> Value resolution)
     | Name _ ->
       (* Log.dump "Name : %a" Name.pp name; *)
       Value resolution
@@ -5434,14 +5472,16 @@ module TypeCheckRT (Context : OurContext) = struct
         let resolution, errors, resolved_value =
           let { Resolved.resolution; errors = new_errors; resolved; _ } =
             let _ = name in
-            forward_expression ~resolution ~at_resolution value
+            (* forward_expression ~resolution ~at_resolution value *)
             (* 여기서 expression의 resolved_value가 정해지고 이것의 타입이 곧 annotation이 된다 *)
-            (* (match Node.value value with
-            | Expression.Constant (NoneLiteral) when String.equal (Reference.last name) "__init__" ->
-              { Resolved.resolution; errors; resolved=Type.Unknown; resolved_annotation=None; base=None }
-            | _ -> forward_expression ~resolution ~at_resolution value
-            ) *)
-            
+            if (OurDomain.is_inference_mode (OurDomain.load_mode ())) then 
+              (match Node.value value with
+              | Expression.Constant _ when String.equal (Reference.last name) "__init__" ->
+                { Resolved.resolution; errors; resolved=Type.Unknown; resolved_annotation=None; base=None }
+              | _ -> forward_expression ~resolution ~at_resolution value
+              )
+            else
+              forward_expression ~resolution ~at_resolution value
           in
           resolution, List.append new_errors errors, resolved
         in
@@ -6664,7 +6704,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
         let { StatementDefine.Signature.name; _ } = define_signature in
         
-        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) (not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) || is_implicit) then
+        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name) || is_implicit) then
           let our_summary = !Context.our_summary in
           let entry_arg_types = !Context.entry_arg_types in
           let convert_actual =
@@ -8166,9 +8206,34 @@ module TypeCheckRT (Context : OurContext) = struct
           resolved_annotation |> Option.value ~default:(Annotation.create_mutable resolved) )
     in
 
+    (* let resolve_statement ~resolution statement =
+      forward_statement ~resolution ~at_resolution ~statement
+      |> fun ((resolution, errors)) ->
+      let errors = Error.filter_interesting_error errors in
+      match resolution with
+      | _ when List.length errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ())) -> Resolution.Unreachable
+      | Unreachable -> Resolution.Unreachable
+      | Value resolution -> Resolution.Reachable { resolution; errors }
+    in
+
+    let resolution = 
+      Resolution.set_resolve_expression resolution resolved_expression
+    in
+    let resolution = 
+      Resolution.set_resolve_statement resolution resolve_statement
+    in
+
+    forward_statement ~resolution ~at_resolution ~statement
+    |> fun ((resolution, errors)) ->
+    let errors = Error.filter_interesting_error errors in
+    if List.length errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ()))
+    then Unreachable, errors
+    else resolution, errors  *)
+
     let resolve_statement ~resolution statement =
       forward_statement ~resolution ~at_resolution ~statement
       |> fun ((resolution, errors)) ->
+      let errors = Error.filter_interesting_error errors in
       match resolution with
       | Unreachable -> Resolution.Unreachable
       | Value resolution -> Resolution.Reachable { resolution; errors }

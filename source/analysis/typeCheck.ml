@@ -6338,6 +6338,9 @@ module PossibleState (Context : OurContext) = struct
   }
   [@@deriving equal]
 
+  let is_reachable { rt_type; _ } =
+    TypeCheckRT.is_reachable rt_type
+
   (*
   let set_possibleconditions pre post =
     match pre, post with
@@ -13847,7 +13850,7 @@ let exit_state ~resolution (module Context : OurContext) =
   let module PossibleState = PossibleState (Context) in
   let module PossibleFixpoint = PossibleFixpoint.Make (PossibleState) in
   
-  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; _ } as define; _ } =
+  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; body; _ } as define; _ } =
     Context.define
   in
 
@@ -13903,8 +13906,6 @@ let exit_state ~resolution (module Context : OurContext) =
   in
 
   let initial = PossibleState.initial ~resolution in
-
-  
 
 
   save_arg_types initial;
@@ -14102,7 +14103,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type, our_summary
         | Value resolution ->
           let resolution, our_summary = 
-          if (OurDomain.is_inference_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+          if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
           then
             let resolution, our_summary = update_resolution resolution in
             resolution
@@ -14183,19 +14184,49 @@ let exit_state ~resolution (module Context : OurContext) =
       Log.dump "\n\n [[[ TEST ]]] \n%a" PossibleState.pp initial;
       *)
       let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
-      let resolution = OurTypeSet.ArgTypesResolution.join_to_resolution ~join:(GlobalResolution.join global_resolution) arg_types resolution in
+
+      let filter_annotation_arg_types = 
+        OurDomain.ArgTypes.filter_keys arg_types ~f:(fun arg -> 
+          not (List.exists parameters ~f:(fun { Node.value={ Parameter.name=class_param; annotation; _}; _ } -> 
+            String.equal arg class_param && Option.is_some annotation  
+          ))
+        )
+      in
+      let resolution = OurTypeSet.ArgTypesResolution.join_to_resolution ~join:(GlobalResolution.join global_resolution) filter_annotation_arg_types resolution in
+
+      (* Log.dump "==> %a" OurDomain.ArgTypes.pp arg_types; *)
 
       let update_resolution_from_value resolution =
         List.fold parameters ~init:resolution ~f:(fun resolution { Node.value={ Parameter.name=class_param; value; _}; _ } ->
         match value with
         | Some e -> 
           let reference = Reference.create class_param in
-          let resolved = Resolution.resolve_reference resolution reference in
-          if Type.is_unknown resolved then (
-            let value_resolved = Resolution.resolve_expression_to_type resolution e in
-            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
-          ) else 
+          let value_resolved = Resolution.resolve_expression_to_type resolution e in
+          if OurDomain.ArgTypes.mem arg_types class_param || (Resolution.has_nontemporary_annotation resolution ~reference && Type.is_unknown value_resolved) then 
             resolution
+          else (
+            match value_resolved with
+            | t when Type.is_none t -> 
+              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+              (* let is_valid_none = 
+                List.fold body ~init:(Some false) ~f:(fun valid statement -> 
+                  match valid with
+                  | Some valid when valid -> Some valid
+                  | Some _ ->
+                    (match Statement.is_valid_none statement with
+                    | Some new_valid -> Some new_valid
+                    | None -> None
+                    ) 
+                  | _ -> None
+                )
+              in
+
+              if (is_valid_none |> Option.value ~default:false)
+              then Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+              else resolution *)
+            | _ ->
+              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+          )
           (* if Type.can_unknown resolved then (
             let value_resolved = Resolution.resolve_expression_to_type resolution e in
             let new_resolved = GlobalResolution.join global_resolution resolved value_resolved in
@@ -14207,7 +14238,7 @@ let exit_state ~resolution (module Context : OurContext) =
       in
 
       let resolution = 
-        if (OurDomain.is_inference_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+        if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
         then
           update_resolution_from_value resolution 
         else
@@ -14217,6 +14248,7 @@ let exit_state ~resolution (module Context : OurContext) =
       let cfg = Cfg.create define in
       
       let our_summary = !Context.our_summary in
+      
       (*
       let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~initial:Usedef.UsedefState.bottom in
       let our_summary = OurDomain.OurSummary.set_usedef_tables our_summary name (Some usedef_tables) in 
@@ -14263,7 +14295,16 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       let exit = PossibleFixpoint.exit fixpoint in
+      let post_info = PossibleFixpoint.post_info fixpoint in 
+      let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom in
+      let usedef_table = 
+        match Usedef.UsedefStruct.exit usedef_tables with
+        | Some { total; _ } -> total
+        | _ -> Reference.Set.empty
+      in
 
+      (* Log.dump "%a >>>" Reference.pp name;
+      Reference.Set.iter usedef_table ~f:(fun r -> Log.dump "%a" Reference.pp r); *)
       (* (match PossibleFixpoint.exit_possible fixpoint with
       | Some n -> Format.printf "[[ Final Possible ]] \n\n%a\n\n" PossibleState.pp n
       | None -> print_endline "NOPE"
@@ -14365,13 +14406,19 @@ let exit_state ~resolution (module Context : OurContext) =
         | Some state ->
           (match state.rt_type with
           | Value v ->
-
+            
             let _ =
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+              
               let properties = OurDomain.OurSummary.get_class_property final_model class_name in
 
-              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param our_summary name arg_types (Resolution.get_annotation_store v);
+              (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v;
+              Reference.Set.iter usedef_table ~f:(fun r -> Log.dump "%a" Reference.pp r);
+              Log.dump "---"; *)
+              let _ = usedef_table, body in
+
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param (* ~usedef_table:None *) our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
 
               OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
@@ -14380,7 +14427,7 @@ let exit_state ~resolution (module Context : OurContext) =
               OurDomain.OurSummary.set_class_table our_summary class_table
             | _ ->           
               let local = String.is_suffix ~suffix:".$toplevel" (Reference.show name) in
-              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local our_summary name arg_types (Resolution.get_annotation_store v);
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local (* ~usedef_table *) our_summary name arg_types (Resolution.get_annotation_store v);
               our_summary
             )
             in

@@ -671,7 +671,7 @@ let type_of_generator_send_and_return ~global_resolution generator_type =
       | _ ->
           (* Fall back to Type.none because it's legal to use other annotations like `object` or
              `Iterator` on a generator function, but in those cases the send type is always NoneType *)
-          Type.none, Type.none)
+          Type.Unknown, Type.Unknown)
 
 
 let parse_annotation ({ dependency; _ } as resolution) =

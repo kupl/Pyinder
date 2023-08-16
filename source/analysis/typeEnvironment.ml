@@ -263,8 +263,10 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   let our_model = !OurDomain.our_model in
 
   let mode = OurDomain.load_mode () in
-  if String.equal mode "preprocess" then
-    List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define);
+  if String.equal mode "preprocess" || String.equal mode "error" then
+    List.iter all_defines ~f:(fun define -> 
+     OurDomain.OurSummary.change_analysis_of_func our_model define
+    );
 
   let filtered_defines =
     List.filter all_defines ~f:(fun name ->
@@ -286,7 +288,10 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   populate_for_definitions ~scheduler environment filtered_defines;
 
   let _ = type_join in
-  
+  if !OurDomain.is_first then 
+    OurDomain.our_model := OurDomain.OurSummary.set_all_class_var_type_to_empty our_model
+  else
+    ();
 
   
   if String.equal mode "preprocess" then
@@ -330,7 +335,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
 
             OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define); *)
+          
 
+          let our_model = !OurDomain.our_model in
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
           let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors our_errors in
           (* Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary; *)
@@ -393,7 +400,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       )
     in
     (* OurDomain.our_model := our_summary; *)
-    OurErrorDomain.our_errors := our_errors;
+    if String.equal mode "error" then
+      OurErrorDomain.our_errors := our_errors;
+    ()
   | _ -> Log.dump "No Join"
   )
   ;

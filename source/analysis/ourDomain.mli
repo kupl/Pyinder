@@ -266,6 +266,8 @@ module ArgTypes : sig
 
   val filter_keys : t -> f:(string -> bool) -> t
 
+  val mem : t -> string -> bool
+
   val add_arg_type : join:(Type.t -> Type.t -> Type.t) -> t -> string -> Type.t -> t
 
   val join: type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
@@ -470,6 +472,8 @@ module OurSummary : sig
 
   val set_class_summary : t -> Reference.t -> ClassSummary.t -> unit
 
+  val set_all_class_var_type_to_empty : t -> t
+
   val set_class_table : t -> ClassTable.t -> t
 
   val get_class_summary : t -> Reference.t -> ClassSummary.t
@@ -512,6 +516,8 @@ val our_summary : OurSummary.t ref
 val is_search_mode : string -> bool
 
 val is_inference_mode : string -> bool
+
+val is_error_mode : string -> bool
 
 val is_check_preprocess_mode : string -> bool
 

@@ -54,6 +54,7 @@ module UsedefState = struct
   type t = { 
     defined : Reference.Set.t;
     undefined : Reference.Set.t;
+    total : Reference.Set.t;
     usedef_table : usedef Reference.Map.t;
   } [@@deriving sexp]
 
@@ -87,7 +88,12 @@ module UsedefState = struct
   
   let usedef_create = Reference.Map.empty
 
-  let create = {defined=Reference.Set.empty; undefined=Reference.Set.empty; usedef_table=usedef_create}
+  let create = {
+    defined=Reference.Set.empty; 
+    undefined=Reference.Set.empty; 
+    total=Reference.Set.empty; 
+    usedef_table=usedef_create;
+    }
   let bottom = create
 
   let less_or_equal ~left:_ ~right:_ = true
@@ -100,7 +106,8 @@ module UsedefState = struct
   let join left right = 
     let undefined = Reference.Set.union left.undefined right.undefined in
     let defined = Reference.Set.diff (Reference.Set.union left.defined right.defined) undefined in
-    { defined; undefined; usedef_table=usedef_create; }
+    let total = Reference.Set.union left.total right.total in
+    { defined; undefined; total; usedef_table=usedef_create; }
 
   let widen ~previous:_ ~next ~iteration:_ = next
 
@@ -152,11 +159,16 @@ module UsedefState = struct
     in
     Reference.Set.diff undefined def_variables
 
+  let update_total t usedef_table =
+    Reference.Map.fold usedef_table ~init:t.total ~f:(fun ~key ~data:_ acc ->
+      Reference.Set.add acc key  
+    )
 
   let update_state t usedef_table =
     {
       defined=update_defined t usedef_table;
       undefined=update_undefined t usedef_table;
+      total=update_total t usedef_table;
       usedef_table;
     }
   
@@ -274,7 +286,7 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> post_info:bool Int.Map.t -> initial:state -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 
@@ -328,7 +340,7 @@ module Make (State : UsedefState) = struct
     )
 
 
-  let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =
+  let our_compute_fixpoint cfg ~initial_index ~initial ~post_info ~predecessors ~successors ~transition =
     (*
      * This is the implementation of a monotonically increasing chaotic fixpoint
      * iteration sequence with widening over a control-flow graph (CFG) using the
@@ -348,21 +360,27 @@ module Make (State : UsedefState) = struct
       if Int.equal (Cfg.Node.id node) initial_index then
         State.join state initial
       else
-        predecessors node
-        |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
-               Hashtbl.find usedef_tables predecessor_index
-               |> Option.value ~default:State.bottom
-               |> State.join sofar)
+          predecessors node
+          |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
+                Hashtbl.find usedef_tables predecessor_index
+                |> Option.value ~default:State.bottom
+                |> State.join sofar)
     in
 
     let analyze_node node =
       let node_id = Cfg.Node.id node in
       let usedef_table = 
-        Hashtbl.find usedef_tables node_id
-        |> Option.value ~default:State.bottom
-        |> join_with_predecessors_usedef_tables node
+        match Int.Map.find post_info (Cfg.Node.id node) with
+        | Some true ->
+          let usedef_table = 
+            Hashtbl.find usedef_tables node_id
+            |> Option.value ~default:State.bottom
+            |> join_with_predecessors_usedef_tables node
+          in
+          let usedef_table = transition node_id usedef_table (Cfg.Node.statements node) in
+          usedef_table
+        | _ -> State.bottom
       in
-      let usedef_table = transition node_id usedef_table (Cfg.Node.statements node) in
       (*Format.printf "[[[ USEDEF TABLE: Node %d ]]] \n\n%a\n\n" node_id State.pp usedef_table;*)
       Hashtbl.set usedef_tables ~key:node_id ~data:usedef_table;
 
@@ -429,7 +447,7 @@ module Make (State : UsedefState) = struct
 
     { usedef_tables; }
 
-  let forward ~cfg ~initial =
+  let forward ~cfg ~post_info ~initial =
     let transition node_id init statements =
       let forward statement_index before statement =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
@@ -457,6 +475,7 @@ module Make (State : UsedefState) = struct
       cfg
       ~initial_index:Cfg.entry_index
       ~initial
+      ~post_info
       ~predecessors:Cfg.Node.predecessors
       ~successors:Cfg.Node.successors
       ~transition
@@ -510,6 +529,7 @@ module Make (State : UsedefState) = struct
       cfg
       ~initial_index:Cfg.exit_index
       ~initial
+      ~post_info:Int.Map.empty
       ~predecessors:Cfg.Node.successors
       ~successors:Cfg.Node.predecessors
       ~transition

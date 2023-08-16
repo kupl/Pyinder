@@ -160,7 +160,7 @@
               let _ = prev_model in
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
 
-              if k >= 2 then
+              if k >= 3 then
                 Analysis.OurDomain.is_first := false;
           
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
@@ -177,10 +177,16 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 12) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
+              if (k >= 10) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
               then (
+              Log.dump "Check";
+                Analysis.OurDomain.save_mode "error";
+                let environment =
+                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
+                  |> Analysis.ErrorsEnvironment.set_environment environment
+                in
+                Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
                 Log.dump "Done";
-                
                 (* let functions_list = Analysis.OurDomain.OurSummary.get_functions_of_class our_model in
                 Analysis.OurErrorDomain.our_errors := List.fold functions_list ~init:!Analysis.OurErrorDomain.our_errors ~f:(fun our_errors functions -> Analysis.OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
                  *)
@@ -296,7 +302,7 @@
   
    
 
-   (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
+   Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
    (*
    Log.dump "%s" "Type Error Searching...";
    
