@@ -563,3 +563,7 @@ val is_operator : string -> bool
 val operator_name_to_symbol : string -> string option
 
 val calc_similarity : expression -> expression -> float
+
+val is_used : reference:Reference.t -> t -> bool
+
+val is_check_none : reference:Reference.t -> t -> bool

@@ -47,6 +47,12 @@ end
 module ReferenceMap = struct
   include Map.Make (Reference)
 
+  let update_default_value prev next =
+    merge prev next ~f:(fun ~key:_ data ->
+      match data with
+      | `Both (_, data) -> Some data
+      | `Left data | `Right data -> Some data
+    )
    
   let join_type ~type_join left right =
     (* merge_into ~src:left ~dst:right ~f:(fun ~key:_ src dst ->
@@ -396,6 +402,7 @@ end
 module ClassSummary = struct
   type t = {
     class_var_type: Type.t ReferenceMap.t;
+    temp_class_var_type : Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set : ReferenceSet.t;
@@ -404,6 +411,7 @@ module ClassSummary = struct
 
   let empty = {
     class_var_type=ReferenceMap.empty;
+    temp_class_var_type=ReferenceMap.empty;
     class_attributes=ClassAttributes.empty;
     usage_attributes=AttributeStorage.empty;
     change_set=ReferenceSet.empty;
@@ -412,6 +420,8 @@ module ClassSummary = struct
 
   (* let should_analysis { should_analysis; _ } = should_analysis *)
   let get_class_var_type { class_var_type; _ } = class_var_type
+
+  let get_temp_class_var_type { temp_class_var_type; _ } = temp_class_var_type
 
   let get_usage_attributes { usage_attributes; _ } = usage_attributes
 
@@ -437,13 +447,26 @@ module ClassSummary = struct
     ClassAttributes.get_class_property class_attributes
   
 
+  let update_default_value prev next =
+    let class_var_type = ReferenceMap.update_default_value prev.class_var_type next.class_var_type in
+    (* ReferenceMap.iteri next.class_var_type ~f:(fun ~key ~data -> Log.dump "%a ==> %a" Reference.pp key Type.pp data);
+    Log.dump "---";
+    ReferenceMap.iteri class_var_type ~f:(fun ~key ~data -> Log.dump "%a ==> %a" Reference.pp key Type.pp data); *)
+    let change_set = (ReferenceMap.diff class_var_type next.class_var_type) in
+    (* Reference.Set.iter change_set ~f:(fun r -> Log.dump ">>> %a" Reference.pp r); *)
+    {
+      next with class_var_type; change_set;
+    }
+
   let join ~type_join left right =
     let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
+    let temp_class_var_type = ReferenceMap.join_type left.temp_class_var_type right.temp_class_var_type ~type_join in
     let change_set = ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) in
 
     (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
+      temp_class_var_type;
       class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
       usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
       change_set;
@@ -502,10 +525,14 @@ module ClassTable = struct
 
   let get_class_var_type t class_name = get t ~class_name ~f:ClassSummary.get_class_var_type
 
+  let get_temp_class_var_type t class_name = get t ~class_name ~f:ClassSummary.get_temp_class_var_type
+
   let get_usage_attributes t class_name = get t ~class_name ~f:ClassSummary.get_usage_attributes
 
   let get_class_property t class_name = get t ~class_name ~f:ClassSummary.get_class_property
 
+  let update_default_value prev next =
+    ClassHash.join prev next ~equal:ClassSummary.equal ~data_join:ClassSummary.update_default_value
   let join ~type_join left right =
     ClassHash.join left right ~equal:ClassSummary.equal ~data_join:(ClassSummary.join ~type_join)
 
@@ -937,10 +964,15 @@ module FunctionSummary = struct
     else
       Signatures.find_signature signatures arg_types
 
-  let add_new_signature ~join ?caller_name ({signatures; unknown_decorator; _} as t) arg_type_list =
+  let add_new_signature ~join ?caller_name ({signatures; unknown_decorator; callers; _ } as t) arg_type_list =
+    let callers =
+      match caller_name with
+      | Some caller_name -> CallerSet.add callers caller_name
+      | _ -> callers
+    in
     if unknown_decorator then t
     else
-    { t with signatures=Signatures.add_new_signature ~join ?caller_name signatures arg_type_list }
+    { t with signatures=Signatures.add_new_signature ~join ?caller_name signatures arg_type_list; callers; }
   (* let add_arg_types ~join ({arg_types; _} as t) arg_typ_list =
     { t with arg_types = List.fold arg_typ_list ~init:arg_types ~f:(fun arg_types (arg, typ) -> ArgTypes.add_arg_type ~join arg_types arg typ) }
  *)
@@ -1485,7 +1517,8 @@ module FunctionTable = struct
   let change_analysis_of_argtypes t callers =
     ReferenceMap.iteri callers ~f:(fun ~key ~data -> 
       match FunctionHash.find t key with
-      | Some func_summary -> 
+      | Some func_summary when not (String.is_suffix (Reference.show key) ~suffix:"__init__") -> 
+        (* Log.dump "%a ..." Reference.pp key; *)
         (* Log.dump "%a ..." Reference.pp key;
         ArgTypesOptSet.iter data ~f:(fun arg_types -> 
           match arg_types with
@@ -1504,7 +1537,9 @@ module FunctionTable = struct
 
   let change_analysis_of_func t func_name =
     match FunctionHash.find t func_name with
-    | Some v when not (String.is_suffix (Reference.show func_name) ~suffix:"__init__") -> FunctionHash.set ~key:func_name ~data:(FunctionSummary.change_analysis v) t
+    | Some v when not (String.is_suffix (Reference.show func_name) ~suffix:"__init__") -> 
+      (* Log.dump "%a ..." Reference.pp func_name; *)
+      FunctionHash.set ~key:func_name ~data:(FunctionSummary.change_analysis v) t
     | _ -> ()
 
   let change_analysis_to_false_of_func t func_name =
@@ -1550,6 +1585,8 @@ module OurSummary = struct
     function_table=FunctionTable.empty ~size ();
   }
 
+  let update_default_value ~prev next =
+    ClassTable.update_default_value prev.class_table next.class_table
   let update ~type_join ~prev next = 
     (* let timer = Timer.start () in *)
     ClassTable.join ~type_join prev.class_table next.class_table;

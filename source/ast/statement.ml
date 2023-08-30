@@ -1980,11 +1980,11 @@ let is_generator statements =
   is_statements_generator statements
 
 
-(* let rec is_valid_none ~reference statement_list =
+let rec is_valid_none ~reference statement_list =
   let is_used expression = Expression.is_used ~reference expression in
-  let is_check_none = Expression.is_check_none ~reference expression in
+  let is_check_none expression = Expression.is_check_none ~reference expression in
 
-  let rec check_statement statement =
+  let check_statement statement =
     match Node.value statement with
     | Assign { target; value; _ } ->
       if is_used value
@@ -2043,7 +2043,7 @@ let is_generator statements =
         | _ -> None
       )
     | With { items; body; _ } ->
-      if List.fold items ~init:false ~f:(fun flag t -> flag || is_used t)
+      if List.fold items ~init:false ~f:(fun flag (t, _) -> flag || is_used t)
       then None
       else is_valid_none ~reference body
     | While { test; body; orelse } ->
@@ -2069,4 +2069,4 @@ let is_generator statements =
       | None -> None
       ) 
     | _ -> None
-  ) *)
+  )

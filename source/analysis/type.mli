@@ -748,6 +748,8 @@ val is_unbound : t -> bool
 
 val is_union : t -> bool
 
+val is_primitive_bool : t -> bool
+
 val is_falsy : t -> bool
 
 val is_truthy : t -> bool
@@ -1222,6 +1224,8 @@ val can_unknown : t -> bool
 val can_none : t -> bool
 
 val can_top : t -> bool
+
+val can_sqlalchemy : t -> bool
 
 val union_update : f:(t -> t) -> t -> t
 

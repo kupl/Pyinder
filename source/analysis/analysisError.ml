@@ -2725,7 +2725,7 @@ end)
 let due_to_analysis_limitations { kind; _ } =
   let is_due_to_analysis_limitations annotation =
     (* Type.contains_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation *)
-    Type.can_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation || Type.is_unknown annotation
+    Type.can_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation || Type.is_unknown annotation || Type.can_sqlalchemy annotation
   in
   match kind with
   | IncompatibleAwaitableType actual
@@ -4574,9 +4574,10 @@ let get_expression_type errors =
 let filter_interesting_error errors =
   List.filter errors ~f:(fun error -> 
     match error.kind with
-    | UnsupportedOperandWithReference _
-    | IncompatibleParameterTypeWithReference _ ->
-      true
+    | UnsupportedOperandWithReference _ -> true
+    (* | IncompatibleParameterTypeWithReference { name; _} ->
+      Log.dump "%s" (Option.value name ~default:"");
+      true *)
     | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; _ } when
       Type.is_none actual || Type.is_optional actual
       -> true
@@ -4584,8 +4585,8 @@ let filter_interesting_error errors =
       let actual = (fst (Type.split (List.nth_exn unions index))) in
       Type.is_none actual || Type.is_optional actual
       -> true
-    | NotCallableWithExpression { annotation; _ } 
-      when Type.is_none annotation || Type.is_optional annotation ->
+    | NotCallableWithExpression _ | NotCallable _
+      (* when Type.is_none annotation || Type.is_optional annotation  *)->
       true
     | _ -> 
       false

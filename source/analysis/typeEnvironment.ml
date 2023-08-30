@@ -268,8 +268,17 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
      OurDomain.OurSummary.change_analysis_of_func our_model define
     );
 
-  let filtered_defines =
+  let filter_test_defines =
     List.filter all_defines ~f:(fun name ->
+      not (String.is_substring (Reference.show name) ~substring:".test."
+      || String.is_substring (Reference.show name) ~substring:".tests."
+      || String.is_substring (Reference.show name) ~substring:".test_"
+      )
+    )
+  in
+
+  let filtered_defines =
+    List.filter filter_test_defines ~f:(fun name ->
       not (Reference.Set.exists skip_set ~f:(Reference.equal name))
     )
     (* |> List.fold ~init:[] ~f:(fun acc define -> 
@@ -288,14 +297,26 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   populate_for_definitions ~scheduler environment filtered_defines;
 
   let _ = type_join in
-  if !OurDomain.is_first then 
-    OurDomain.our_model := OurDomain.OurSummary.set_all_class_var_type_to_empty our_model
+  
+  let prev_model = !OurDomain.our_model in
+
+  if (!OurDomain.is_first) && not (String.equal mode "preprocess") then (
+    (* Log.dump "INIT"; *)
+    OurDomain.our_model := OurDomain.OurSummary.set_all_class_var_type_to_empty our_model;
+    (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model;
+    Log.dump "%a" OurDomain.OurSummary.pp prev_model *)
+    ()
+  )
   else
     ();
 
   
-  if String.equal mode "preprocess" then
+
+  
+  if String.equal mode "preprocess" then (
+    (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define)
+  )
   else
     List.iter filtered_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_to_false_of_func our_model define);
   
@@ -324,13 +345,12 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
 
-          (* if String.equal (Reference.show define) "test.ParserBase._should_parse_dates"
+          (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi.MultiIndex.format"
             then (
-              Log.dump "OK!";
-              List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e)
-              
-            ); *)
-          
+              Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
+             (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
+            );
+           *)
           
             (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
 
@@ -399,6 +419,13 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
         x
       )
     in
+    if (!OurDomain.is_first) && not (String.equal mode "preprocess") then  (
+      
+      OurDomain.OurSummary.update_default_value ~prev:prev_model !OurDomain.our_model;
+      (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
+    );
+
+    
     (* OurDomain.our_model := our_summary; *)
     if String.equal mode "error" then
       OurErrorDomain.our_errors := our_errors;

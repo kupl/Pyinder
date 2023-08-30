@@ -2633,3 +2633,70 @@ let rec calc_similarity left right =
     then calc_similarity (Node.value left_base) (Node.value right_base)
     else 0.0
   | _ -> 0.0
+
+let is_used ~reference expression =
+  let fold_name ~folder:_ ~state name =
+    match name_to_reference name with
+    | Some name_reference ->
+      Reference.equal name_reference reference
+    | _ -> state
+  in
+  let folder = Folder.create_with_uniform_location_fold ~fold_name () in
+  Folder.fold ~folder ~state:false expression
+
+let rec is_check_none ~reference expression =
+  let check_none expression =
+    match Node.value expression with
+    | Name name -> 
+      (match name_to_reference name with
+      | Some name_reference ->
+        Reference.equal name_reference reference
+      | _ -> false
+      )
+    | UnaryOperator { operator=UnaryOperator.Not; operand= { Node.value = Name name; _ }; } ->
+      (match name_to_reference name with
+      | Some name_reference ->
+        Reference.equal name_reference reference
+      | _ -> false
+      )
+    | ComparisonOperator { operator=ComparisonOperator.Is | ComparisonOperator.IsNot; right={ Node.value = Constant Constant.NoneLiteral; _ }; left= { Node.value = Name name; _ } } ->
+      (match name_to_reference name with
+      | Some name_reference ->
+        Reference.equal name_reference reference
+      | _ -> false
+      )
+    | Call
+      {
+        callee = { Node.value = Name (Name.Identifier "isinstance"); _ };
+        arguments =
+          [
+            { Call.Argument.name = None; value = { Node.value = Name name; _ } };
+            { Call.Argument.name = None; value = {
+              Node.value =
+                Call
+                  {
+                    callee = { Node.value = Name (Name.Identifier "type"); _ };
+                    arguments =
+                      [{ Call.Argument.name = None; value = { Node.value = Constant Constant.NoneLiteral; _ } }];
+                  };
+              _;
+            }; };
+          ];
+      } ->
+      (match name_to_reference name with
+      | Some name_reference ->
+        Reference.equal name_reference reference
+      | _ -> false
+      )
+    | _ -> false
+  in
+
+  if check_none expression
+  then true
+  else
+    let fold_boolean_operator ~folder:_ ~state:_ { BooleanOperator.left; right; _ } =
+      is_check_none ~reference left || is_check_none ~reference right
+    in
+
+    let folder = Folder.create_with_uniform_location_fold ~fold_boolean_operator () in
+    Folder.fold ~folder ~state:false expression

@@ -153,12 +153,15 @@
               Log.dump "Preprocess...";
               Analysis.OurDomain.save_mode "preprocess";
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+              (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
               Analysis.OurDomain.save_mode "inference";
             in
 
              let rec fixpoint n k environment prev_model skip_set =
               let _ = prev_model in
               Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
+
+              (* Ast.Reference.Set.iter skip_set ~f:(fun s -> Log.dump ">>> %a" Ast.Reference.pp s); *)
 
               if k >= 3 then
                 Analysis.OurDomain.is_first := false;
@@ -177,8 +180,9 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 10) || (n >= 2) || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model)))
+              if (k >= 10) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
+              Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
               Log.dump "Check";
                 Analysis.OurDomain.save_mode "error";
                 let environment =
@@ -302,7 +306,7 @@
   
    
 
-   Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+   (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
    (*
    Log.dump "%s" "Type Error Searching...";
    

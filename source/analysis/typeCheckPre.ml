@@ -85,6 +85,8 @@ let preprocess ~our_model ~global_resolution define =
     | Expression.Name _ ->
       let duck_type = Type.Primitive (Reference.show data) in
       (* Log.dump "Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
+      (* if String.is_substring (Reference.show name) ~substring:"" then *)
+        
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()
   );

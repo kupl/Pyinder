@@ -14058,6 +14058,35 @@ let exit_state ~resolution (module Context : OurContext) =
           OurTypeSet.ArgTypesResolution.join_to_resolution ~join:(GlobalResolution.join global_resolution) func_arg_types resolution
         in
         *)
+        let filtering_none resolution =
+          List.fold parameters ~init:resolution ~f:(fun resolution { Node.value={ Parameter.name=class_param; _}; _ } ->
+            let reference = Reference.create class_param in
+            let reference_type = Resolution.resolve_reference resolution reference in
+            match reference_type with
+            | t when Type.is_none t -> 
+              let is_valid_none = 
+                is_valid_none ~reference body |> Option.value ~default:false
+              in
+  
+              if is_valid_none
+              then resolution
+              else Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable Type.Unknown)
+            | Type.Union t_list as t when Type.is_optional t ->
+              let is_valid_none = 
+                is_valid_none ~reference body |> Option.value ~default:false
+              in
+  
+              if is_valid_none
+              then resolution
+              else Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.Union (List.filter t_list ~f:(fun t -> not (Type.is_none t)))))
+            | _ -> resolution
+          )
+        in
+  
+        let _ = filtering_none in 
+  
+        let resolution = filtering_none resolution in
+        
         let resolution_updated_attributes = 
           resolution 
           |> update_resolution_of_self ~final_model 
@@ -14185,6 +14214,8 @@ let exit_state ~resolution (module Context : OurContext) =
       *)
       let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
 
+      
+
       let filter_annotation_arg_types = 
         OurDomain.ArgTypes.filter_keys arg_types ~f:(fun arg -> 
           not (List.exists parameters ~f:(fun { Node.value={ Parameter.name=class_param; annotation; _}; _ } -> 
@@ -14198,35 +14229,65 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let update_resolution_from_value resolution =
         List.fold parameters ~init:resolution ~f:(fun resolution { Node.value={ Parameter.name=class_param; value; _}; _ } ->
+        let reference = Reference.create class_param in
         match value with
+        | Some { Node.value=(Expression.Starred (Once e)); _ } ->
+          let value_resolved = Resolution.resolve_expression_to_type resolution e in
+          (match value_resolved with
+          | Type.Union t_list ->
+            let t_list = List.filter t_list ~f:Type.is_tuple in
+            let new_type =
+              if List.length t_list = 0
+              then Type.tuple [Type.Unknown]
+              else if List.length t_list = 1
+              then List.nth_exn t_list 0
+              else Type.union t_list
+            in
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_type)
+
+          | t when Type.is_tuple t ->
+            resolution
+          | _ ->
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.tuple [Type.Unknown]))
+          )
+        | Some { Node.value=(Expression.Starred (Twice e)); _ } ->
+          let value_resolved = Resolution.resolve_expression_to_type resolution e in
+          (match value_resolved with
+          | Type.Union t_list ->
+            let t_list = List.filter t_list ~f:Type.is_dict in
+            let new_type =
+              if List.length t_list = 0
+              then Type.dictionary ~key:Type.Unknown ~value:Type.Unknown
+              else if List.length t_list = 1
+              then List.nth_exn t_list 0
+              else Type.union t_list
+            in
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable new_type)
+
+          | t when Type.is_dict t ->
+            resolution
+          | _ ->
+            Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.dictionary ~key:Type.Unknown ~value:Type.Unknown)) 
+          )
         | Some e -> 
-          let reference = Reference.create class_param in
           let value_resolved = Resolution.resolve_expression_to_type resolution e in
           if OurDomain.ArgTypes.mem arg_types class_param || (Resolution.has_nontemporary_annotation resolution ~reference && Type.is_unknown value_resolved) then 
             resolution
           else (
             match value_resolved with
             | t when Type.is_none t -> 
-              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
-              (* let is_valid_none = 
-                List.fold body ~init:(Some false) ~f:(fun valid statement -> 
-                  match valid with
-                  | Some valid when valid -> Some valid
-                  | Some _ ->
-                    (match Statement.is_valid_none statement with
-                    | Some new_valid -> Some new_valid
-                    | None -> None
-                    ) 
-                  | _ -> None
-                )
+              (* Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved) *)
+              let is_valid_none = 
+                is_valid_none ~reference body |> Option.value ~default:false
               in
 
-              if (is_valid_none |> Option.value ~default:false)
-              then Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
-              else resolution *)
+              if is_valid_none
+              then Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
+              else resolution
             | _ ->
-              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved)
+              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
           )
+          
           (* if Type.can_unknown resolved then (
             let value_resolved = Resolution.resolve_expression_to_type resolution e in
             let new_resolved = GlobalResolution.join global_resolution resolved value_resolved in
@@ -14396,14 +14457,14 @@ let exit_state ~resolution (module Context : OurContext) =
           )
         in
         *)
-      
 
       (* Arg Return Types 등록 *)
-      let last_state = Hashtbl.find fixpoint.postconditions Cfg.exit_index in
+      let last_state = Hashtbl.find fixpoint.postconditions Cfg.normal_index in
       let our_summary = !Context.our_summary in
-      if OurDomain.is_inference_mode (OurDomain.load_mode ()) then
+      if OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
         (match last_state with
         | Some state ->
+          
           (match state.rt_type with
           | Value v ->
             
@@ -14418,16 +14479,19 @@ let exit_state ~resolution (module Context : OurContext) =
               Log.dump "---"; *)
               let _ = usedef_table, body in
 
-              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param (* ~usedef_table:None *) our_summary name arg_types (Resolution.get_annotation_store v);
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
 
+              (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v; *)
+              (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
-              ~properties class_table class_name class_param (Resolution.annotation_store v);
+              ~properties ~usedef_table class_table class_name class_param (Resolution.annotation_store v);
 
+              (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurDomain.OurSummary.set_class_table our_summary class_table
             | _ ->           
               let local = String.is_suffix ~suffix:".$toplevel" (Reference.show name) in
-              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local (* ~usedef_table *) our_summary name arg_types (Resolution.get_annotation_store v);
+              OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               our_summary
             )
             in
@@ -14436,7 +14500,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
 
 
-          | Unreachable -> ()
+          | Unreachable ->  ()
           )
         | None -> ()
         );

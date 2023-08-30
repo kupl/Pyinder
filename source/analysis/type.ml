@@ -2015,6 +2015,9 @@ let is_variable = function
   | Variable _ -> true
   | _ -> false
 
+let is_primitive_bool = function
+  | Primitive "bool" -> true
+  | _ -> false
 
 let rec is_falsy = function
   | NoneType
@@ -7000,6 +7003,16 @@ let rec can_top t =
   | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_top t))
   | _ -> false
 
+let rec can_sqlalchemy t =
+  match t with
+  | Parametric (* Column 처리 *)
+          { name = "type" | "typing.Type"; parameters=[Single (Primitive s)]; } 
+  | Primitive s
+  when String.is_prefix s ~prefix:"sqlalchemy.sql" ->
+    true
+  | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_sqlalchemy t))
+  | _ -> false
+  
 let rec top_to_bottom t =
   let rec top_to_bottom_of_unpackable unpackable =
     match unpackable with
@@ -7133,7 +7146,20 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
       match parameters with
       | [Single key_parameter; Single value_parameter] ->
         let _ = key_parameter in
-        value_parameter
+        (match value_parameter with
+        | Union t_list ->
+          let filter_unknown_t_list = List.filter t_list ~f:(fun t -> not (is_unknown t)) in
+          if List.length filter_unknown_t_list = 1
+          then List.nth_exn filter_unknown_t_list 0
+          else 
+            (match key_parameter with
+            | Union t_list -> if List.exists t_list ~f:(equal value_type) then value_parameter else Unknown
+            | t -> if equal t value_type then value_parameter else Unknown
+            )
+        | t -> t
+        )
+        
+        (* value_parameter *)
         (* if can_unknown value_type then Unknown
         else
           (match key_parameter with

@@ -83,7 +83,7 @@ module ClassSummaryResolution = struct
 
   let get_type_of_class_attribute ~attribute { class_var_type; _ } =
     let name = Reference.create attribute in
-    ReferenceMap.find class_var_type name |> Option.value ~default:Type.Unknown
+    ReferenceMap.find class_var_type name
 
   let get_self_attributes_tree t =
     (*let name = Reference.create "$parameter$self" in*)
@@ -97,7 +97,9 @@ module ClassSummaryResolution = struct
 
   let add_class_var_type ~type_join class_var_type reference typ =
     ReferenceMap.update class_var_type reference ~f:(fun origin ->
-      origin |> Option.value ~default:Type.Bottom |> type_join typ
+      let _ = origin, type_join in
+      typ
+      (* origin |> Option.value ~default:Type.Bottom |> type_join typ *)
     )
 
   let add_parent_attributes ({ class_attributes; usage_attributes; _ } as t) storage =
@@ -110,7 +112,7 @@ module ClassSummaryResolution = struct
     in
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
     
-  let join_with_merge_class_var_type ~type_join ~properties ({ class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
+  let join_with_merge_class_var_type ~type_join ~properties ~usedef_table ({ class_var_type; temp_class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
     (*
     여기서 postcondition의 변수 하나하나를 저장한다   
     *)
@@ -118,6 +120,19 @@ module ClassSummaryResolution = struct
       AttrsSet.exists properties ~f:(String.equal (Reference.show reference))
     in
 
+    let check_usedef_defined reference =
+      Reference.Set.exists usedef_table.defined ~f:(fun ref ->
+        Reference.is_self ref &&
+        Reference.is_contain ~base:(Reference.drop_head ref) ~target:reference
+      )
+    in
+
+    let check_usedef_undefined reference =
+      Reference.Set.exists usedef_table.undefined ~f:(fun ref ->
+        Reference.is_self ref &&
+        Reference.is_contain ~base:(Reference.drop_head ref) ~target:reference
+      )
+    in
 
     let filter_keys = Reference.create class_param in
 
@@ -128,10 +143,11 @@ module ClassSummaryResolution = struct
     
     and unit_fold ~unit ~base_reference class_var_type =
       let typ = unit |> Refinement.Unit.base >>| Annotation.annotation |> Option.value ~default:Type.Unknown in
-      (* Log.dump "%a => %a" Reference.pp base_reference Type.pp typ; *)
       let class_var_type = 
         if check_properties base_reference then class_var_type
-        else add_class_var_type ~type_join class_var_type base_reference typ 
+        else if check_usedef base_reference
+        then add_class_var_type ~type_join class_var_type base_reference typ 
+        else class_var_type 
       in
       attribute_fold ~base_reference ~attributes:(unit |> Refinement.Unit.attributes) class_var_type
     in 
@@ -151,16 +167,30 @@ module ClassSummaryResolution = struct
       let x =
       ReferenceMap.empty
       |> annotation_fold method_postcondition.annotations
-      |> annotation_fold method_postcondition.temporary_annotations
+      (* |> annotation_fold method_postcondition.temporary_annotations *)
       in
+
+      (* ReferenceMap.iteri x ~f:(fun ~key ~data -> Log.dump "%a ====> %a" Reference.pp key Type.pp data); *)
 
       x
       |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join class_var_type
     in
 
+    let new_temp_class_var_type =
+      let x =
+        ReferenceMap.empty
+        |> annotation_fold method_postcondition.temporary_annotations
+        in
+  
+        (* ReferenceMap.iteri x ~f:(fun ~key ~data -> Log.dump "%a ====> %a" Reference.pp key Type.pp data); *)
+  
+        x
+        |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join temp_class_var_type
+    in
+
     (* let change_set = ReferenceMap.diff class_var_type new_class_var_type |> ReferenceSet.union change_set in *)
 
-    ClassSummary.{ t with class_var_type=new_class_var_type;  }
+    ClassSummary.{ t with class_var_type=new_class_var_type; temp_class_var_type=new_temp_class_var_type; }
 
 end
 
@@ -173,9 +203,9 @@ module ClassTableResolution = struct
 
   let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_self_attributes_tree
 
-  let join_with_merge_class_var_type ~type_join ~properties t class_name class_param method_postcondition =
+  let join_with_merge_class_var_type ~type_join ~properties ~usedef_table t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
-    let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join ~properties class_summary class_param method_postcondition in
+    let data = ClassSummaryResolution.join_with_merge_class_var_type ~type_join ~properties ~usedef_table class_summary class_param method_postcondition in
     ClassHash.set ~key:class_name ~data t
 
   let find_default_type_from_attributes ~key ~default_type:{ OurDomain.ClassAttributes.attributes; properties; methods } { AttributeStorage.attribute_set; call_set; } =
@@ -383,7 +413,7 @@ module FunctionSummaryResolution = struct
       let typ = unit |> Refinement.Unit.base >>| Annotation.annotation |> Option.value ~default:Type.Unknown in
       let return_var_type = 
         if Option.is_some usedef_table then
-          if Reference.equal class_param base_reference && (not (Reference.Set.exists (usedef_table |> Option.value ~default:Reference.Set.empty) ~f:(fun ref -> Reference.is_contain ~base:ref ~target:base_reference)))
+          if Reference.equal class_param base_reference 
           then return_var_type
           else ReferenceMap.set return_var_type ~key:base_reference ~data:typ 
         else
@@ -411,6 +441,7 @@ module FunctionSummaryResolution = struct
     let return_var_type = 
       let x =
       return_var_type
+      (* |> annotation_fold store.annotations *)
       |> annotation_fold store.annotations
       |> annotation_fold store.temporary_annotations
       in

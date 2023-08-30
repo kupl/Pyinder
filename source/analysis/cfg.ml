@@ -629,6 +629,7 @@ let create define =
          *       |          :
          *       v          :
          *    [orelse] -> [join] -> *)
+
         let split = Node.empty graph (Node.While loop) in
         let join = Node.empty graph Node.Join in
         let loop_jumps = { jumps with break = join; continue = split } in
@@ -648,9 +649,12 @@ let create define =
           in
           create orelse_statements jumps split
         in
+
+
         Node.connect_option orelse join;
-        if Set.is_empty join.predecessors then
+        if Set.is_empty join.predecessors then (
           Some split
+        )
         else
           create statements jumps join
     | statement :: statements -> (

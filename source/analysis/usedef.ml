@@ -372,6 +372,7 @@ module Make (State : UsedefState) = struct
       let usedef_table = 
         match Int.Map.find post_info (Cfg.Node.id node) with
         | Some true ->
+          (* Log.dump "??? %a" Cfg.Node.pp node; *)
           let usedef_table = 
             Hashtbl.find usedef_tables node_id
             |> Option.value ~default:State.bottom

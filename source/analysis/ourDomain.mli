@@ -217,6 +217,7 @@ end
 module ClassSummary: sig
   type t = {
     class_var_type: Type.t ReferenceMap.t;
+    temp_class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set: ReferenceSet.t;
@@ -226,6 +227,8 @@ module ClassSummary: sig
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
 
   val get_class_var_type : t -> Type.t ReferenceMap.t
+
+  val get_temp_class_var_type : t -> Type.t ReferenceMap.t
 
   val pp_class_var_type : Format.formatter -> t -> unit
 
@@ -246,6 +249,8 @@ module ClassTable: sig
   val get : class_name:Reference.t -> f:(ClassSummary.t -> 'a) -> t -> 'a
 
   val get_class_var_type : t -> Reference.t -> Type.t ReferenceMap.t
+
+  val get_temp_class_var_type : t -> Reference.t -> Type.t ReferenceMap.t
 
   val pp : Format.formatter -> t -> unit
 end
@@ -390,6 +395,8 @@ module OurSummary : sig
   [@@deriving equal, sexp]
 
   val empty : ?size:int -> unit -> t
+
+  val update_default_value : prev:t -> t -> unit
 
   val update : type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> unit
 

@@ -186,11 +186,12 @@ module Make (State : PossibleState) = struct
       in
       *)
       
-      
-      (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
-      
-      Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
-      *)
+
+(*         Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+        
+        Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition); *)
+
+     
       (*
       if Int.equal 3 (Cfg.Node.id node)
       then
@@ -215,8 +216,9 @@ module Make (State : PossibleState) = struct
           Log.dump "END %i" (Cfg.Node.id node);
           (* Log.dump "%a" Cfg.Node.pp node; *)
         ); *)
-       (*  if String.is_substring (Reference.show func_name) ~substring:"test.ParserBase._should_parse_dates"
+        (* if String.is_substring (Reference.show func_name) ~substring:"_query"
           then (
+        Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
         Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
         Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
           ); *)
@@ -226,8 +228,8 @@ module Make (State : PossibleState) = struct
       Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
       *)
       
-      (* Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
-      *)
+      (* Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition); *)
+     
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       
       (*

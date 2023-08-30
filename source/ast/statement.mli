@@ -452,3 +452,5 @@ type t = Statement.t [@@deriving compare, sexp, show, hash, to_yojson]
 val location_insensitive_compare : t -> t -> int
 
 val is_generator : t list -> bool
+
+val is_valid_none : reference:Reference.t -> t list -> bool option
