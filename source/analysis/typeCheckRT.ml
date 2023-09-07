@@ -127,6 +127,8 @@ let errors_from_not_found
               let normal = 
                   Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_expression; mismatch }
               in
+
+              (* Log.dump "HERE??"; *)
               
               let typed_dictionary_error
                   ~method_name
@@ -174,7 +176,7 @@ let errors_from_not_found
                         :: _) ) ->
                       Error.TypedDictionaryInvalidOperation
                         { typed_dictionary_name; field_name; method_name; mismatch }
-                  | _ -> normal
+                  | _ ->  normal
                   )
               in
 
@@ -194,6 +196,18 @@ let errors_from_not_found
                       { typed_dictionary_name="dictionary"; field_name=""; method_name; mismatch }
                   | _ -> normal
                   )
+              in
+
+              let list_error method_name
+              =
+                (match method_name, arguments with
+                | ( "__setitem__",
+                    Some
+                      _ ) ->
+                    Error.TypedDictionaryInvalidOperation
+                { typed_dictionary_name="dictionary"; field_name=""; method_name; mismatch }
+                | _ -> normal
+                )
               in
 
               match self_argument, callee >>| Reference.as_list with
@@ -217,9 +231,9 @@ let errors_from_not_found
                           actual, self_annotation
                       in
 
-                      if ((String.equal operator_name "+") && Type.is_list left_operand && Type.is_list right_operand)
-                        || ((String.equal operator_name "+") && Type.is_tuple left_operand && Type.is_tuple right_operand)
-                      then normal
+                      if ((String.equal operator_name "+") && Type.is_all_list left_operand && Type.is_all_list right_operand)
+                        || ((String.equal operator_name "+") && Type.is_all_tuple left_operand && Type.is_all_tuple right_operand)
+                      then Error.Top
                       else
                         Error.UnsupportedOperandWithReference
                         (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_expression; right_reference=base;})
@@ -252,6 +266,8 @@ let errors_from_not_found
                   GlobalResolution.get_typed_dictionary ~resolution:global_resolution annotation
                   >>| typed_dictionary_error ~method_name ~position
                   |> Option.value ~default:normal
+              | Some t, Some [_; method_name] when Type.is_list t ->
+                list_error method_name
               | _ -> normal
             in
             [Some location, kind]
@@ -4713,9 +4729,10 @@ module TypeCheckRT (Context : OurContext) = struct
               )
             )
           in
+          let _ = narrow in
           let concatenated_elements =
             let concatenate sofar next =
-              sofar >>= fun left -> Type.OrderedTypes.our_concatenate ~narrow ~left ~right:next
+              sofar >>= fun left -> Type.OrderedTypes.concatenate ~left ~right:next
             in
             List.fold resolved_elements ~f:concatenate ~init:(Some (Type.OrderedTypes.Concrete []))
           in
@@ -5197,13 +5214,52 @@ module TypeCheckRT (Context : OurContext) = struct
         
         match existing_annotation name with
         | Some previous ->
-            if annotation_less_or_equal ~left:refined ~right:previous then
+            if annotation_less_or_equal ~left:refined ~right:previous then (
               Value (refine_local ~name refined)
-            else
+            )
+            else (
+              
               (* Keeping previous state, since it is more refined. *)
               (* TODO: once T38750424 is done, we should really return bottom if previous is not <=
                   refined and refined is not <= previous, as this is an obvious contradiction. *)
               Value resolution
+            )
+        | None -> Value resolution)
+    | ComparisonOperator
+        {
+          ComparisonOperator.left = { Node.value = Name name; _ };
+          operator = ComparisonOperator.IsNot;
+          right;
+        }
+      when is_simple_name name -> (
+        
+        let { Resolved.resolved = refined_type; _ } = forward_expression ~resolution ~at_resolution right in
+        let refined = Annotation.create_mutable refined_type in
+        
+        match existing_annotation name with
+        | Some previous ->
+            let filter_refined_type =
+              (match previous.annotation with
+              | Type.Union t_list -> 
+                let new_list = (List.filter t_list ~f:(fun t -> Type.is_unknown t || not (GlobalResolution.less_or_equal global_resolution ~left:t ~right:refined_type))) in
+                if List.length new_list > 0
+                then Type.Union new_list
+                else Bottom
+              | Unknown -> Unknown
+              | t -> 
+                if GlobalResolution.less_or_equal global_resolution ~left:t ~right:refined_type
+                then Bottom
+                else t
+              )
+            in
+
+
+            if Type.is_bottom filter_refined_type then Unreachable
+            else (
+              let new_annotation = { refined with annotation=filter_refined_type; } in
+              Value (refine_local ~name new_annotation)
+            )
+
         | None -> Value resolution)
     | ComparisonOperator
         {
@@ -5244,6 +5300,41 @@ module TypeCheckRT (Context : OurContext) = struct
                 Value resolution
             | _ -> Value resolution)
         | _ -> Value resolution)
+
+    | ComparisonOperator
+        {
+          ComparisonOperator.left = { Node.value = Constant Constant.String { value = literal; kind = StringLiteral.String }; _ };
+          operator = ComparisonOperator.NotIn;
+          right = ({ Node.value = Name name; _ } as right);
+        } when is_simple_name name
+        ->  (
+        let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
+        let check_exist_field t name =
+          (match t with
+          | Type.OurTypedDictionary { typed_dict; _ } ->
+            Type.OurTypedDictionary.get_field_annotation typed_dict name
+            |> Option.is_some
+          | _ -> false
+          )
+        in
+        match resolved with
+        | Type.Union t_list ->
+            let new_list = (List.filter t_list ~f:(fun t -> not (check_exist_field t ("\"" ^ literal ^ "\"")))) in
+            if List.length new_list > 0 then (
+              let new_type = Type.union new_list in
+              let refined = Annotation.create_mutable new_type in
+              Value (refine_local ~name refined)
+            ) else (
+              Unreachable
+            )
+        | t when Type.is_dict t ->
+          if check_exist_field t ("\"" ^ literal ^ "\"")
+          then (
+            Unreachable
+          )
+          else Value resolution
+        | _ -> Value resolution
+        )
     (* Not-none checks (including ones that work over containers) *)
     | ComparisonOperator
         {
@@ -5294,12 +5385,16 @@ module TypeCheckRT (Context : OurContext) = struct
                 List.filter parameters ~f:(fun parameter -> not (Type.is_ourtyped_dictionary parameter || Type.is_truthy parameter))
               in
               (* Log.dump "Name : %a => %a" Name.pp name Type.pp (Type.union refined_annotation); *)
-              let resolution =
-                refine_local
-                  ~name
-                  { annotation with Annotation.annotation = Type.union refined_annotation }
-              in
-              Value resolution
+              if List.length refined_annotation > 0 then (
+                let resolution =
+                  refine_local
+                    ~name
+                    { annotation with Annotation.annotation = Type.union refined_annotation }
+                in
+                Value resolution
+              ) else (
+                Unreachable
+              )
           | _ -> Value resolution)
     | Name _ ->
       (* Log.dump "Name : %a" Name.pp name; *)
@@ -5418,20 +5513,27 @@ module TypeCheckRT (Context : OurContext) = struct
             in
             state
         | BooleanOperator.Or ->
-            let update resolution expression =
-              refine_resolution_for_assert ~resolution ~at_resolution expression
-              |> function
-              | Value post_resolution -> post_resolution
-              | Unreachable -> resolution
-            in
-            let left_resolution = update resolution left in
-            let right_resolution =
-              update resolution (normalize (negate left))
-              |> fun resolution -> update resolution right
-            in
-            Value (Resolution.outer_join_refinements left_resolution right_resolution))
+            let left_state = refine_resolution_for_assert ~resolution ~at_resolution left in
+            let right_state = refine_resolution_for_assert ~resolution ~at_resolution right in
+            (match left_state, right_state with
+            | Unreachable, Unreachable -> Unreachable
+            | _ -> 
+              let update resolution expression =
+                refine_resolution_for_assert ~resolution ~at_resolution expression
+                |> function
+                | Value post_resolution -> post_resolution
+                | Unreachable -> resolution
+              in
+              let left_resolution = update resolution left in
+              let right_resolution =
+                update resolution (normalize (negate left))
+                |> fun resolution -> update resolution right
+              in
+              Value (Resolution.outer_join_refinements left_resolution right_resolution))
+            )
+            
     (* Everything else has no refinement *)
-    | _ -> (* Log.dump "Expression : %a" Expression.pp test; *) Value resolution
+    | _ -> (* Log.dump "Expression : %a" Expression.pp test;  *)Value resolution
 
 
   and forward_assert ?(origin = Assert.Origin.Assertion) ~resolution ~at_resolution test =
@@ -6795,6 +6897,12 @@ module TypeCheckRT (Context : OurContext) = struct
             return_type
         in
 
+        (* Log.dump "Before %a" Type.pp actual; *)
+        let actual =
+          Type.narrow_union ~join:(GlobalResolution.join global_resolution) ~less_or_equal:(GlobalResolution.less_or_equal global_resolution) actual
+        in
+        (* Log.dump "After %a" Type.pp actual; *)
+
         let { StatementDefine.Signature.name; _ } = define_signature in
         
         if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name) || is_implicit) then
@@ -7620,6 +7728,7 @@ module TypeCheckRT (Context : OurContext) = struct
                     errors, Annotation.create_mutable annotation
                 | None -> errors, Annotation.create_mutable resolved)
             | _ -> (
+              
                 let errors, parsed_annotation =
                   match annotation with
                   | None -> errors, None
@@ -7714,6 +7823,7 @@ module TypeCheckRT (Context : OurContext) = struct
           else
             parse_as_unary ()
         in
+        
         ( Resolution.new_local ~reference:(make_parameter_name name) ~annotation new_resolution,
           errors )
       in
@@ -7811,6 +7921,7 @@ module TypeCheckRT (Context : OurContext) = struct
         let check_base old_errors base =
           let annotation_errors, parsed = parse_and_check_annotation ~resolution base in
           let errors = List.append annotation_errors old_errors in
+          
           match parsed with
           | Type.Parametric { name = "type"; parameters = [Single Type.Unknown] } ->
               (* Inheriting from type makes you a metaclass, and we don't want to
@@ -8280,7 +8391,11 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let resolution, errors = add_capture_annotations resolution [] in
 
+      (* Log.dump "111 %a" Resolution.pp resolution; *)
+
       let resolution, errors = check_parameter_annotations resolution errors in
+
+      (* Log.dump "222 %a" Resolution.pp resolution; *)
 
 (*       let resolution = Resolution.meet_refinements preresolution resolution in *)
 

@@ -52,8 +52,9 @@ module UsedefState = struct
     | _ -> false
 
   type t = { 
+    used_before_defined : Reference.Set.t;
     defined : Reference.Set.t;
-    undefined : Reference.Set.t;
+    used_after_defined : Reference.Set.t;
     total : Reference.Set.t;
     usedef_table : usedef Reference.Map.t;
   } [@@deriving sexp]
@@ -76,11 +77,14 @@ module UsedefState = struct
 
   let pp format t = 
     Format.fprintf format "%a\n\n" pp_table t.usedef_table;
+    Format.fprintf format "[ Used Before Variables ] => \n";
+    Reference.Set.iter t.used_after_defined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
+    Format.fprintf format "\n";
     Format.fprintf format "[ Defined Variables ] => \n";
     Reference.Set.iter t.defined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
     Format.fprintf format "\n";
-    Format.fprintf format "[ Undefined Variables ] => \n";
-    Reference.Set.iter t.undefined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
+    Format.fprintf format "[ Used After Variables ] => \n";
+    Reference.Set.iter t.used_after_defined ~f:(fun key -> Format.fprintf format "%a, " Reference.pp key);
     Format.fprintf format "\n"
 
   
@@ -89,8 +93,9 @@ module UsedefState = struct
   let usedef_create = Reference.Map.empty
 
   let create = {
+    used_before_defined=Reference.Set.empty;
     defined=Reference.Set.empty; 
-    undefined=Reference.Set.empty; 
+    used_after_defined=Reference.Set.empty; 
     total=Reference.Set.empty; 
     usedef_table=usedef_create;
     }
@@ -99,15 +104,17 @@ module UsedefState = struct
   let less_or_equal ~left:_ ~right:_ = true
 
   let equal left right =
+    Reference.Set.equal left.used_before_defined right.used_before_defined &&
     Reference.Set.equal left.defined right.defined &&
-    Reference.Set.equal left.undefined right.undefined &&
+    Reference.Set.equal left.used_after_defined right.used_after_defined &&
     Reference.Map.equal usedef_equal left.usedef_table right.usedef_table
 
   let join left right = 
-    let undefined = Reference.Set.union left.undefined right.undefined in
-    let defined = Reference.Set.diff (Reference.Set.union left.defined right.defined) undefined in
+    let used_before_defined = Reference.Set.union left.used_before_defined right.used_before_defined in
+    let defined = (* Reference.Set.diff *) (Reference.Set.union left.defined right.defined) (* undefined *) in
+    let used_after_defined = Reference.Set.union left.used_after_defined right.used_after_defined in
     let total = Reference.Set.union left.total right.total in
-    { defined; undefined; total; usedef_table=usedef_create; }
+    { used_before_defined; defined; used_after_defined; total; usedef_table=usedef_create; }
 
   let widen ~previous:_ ~next ~iteration:_ = next
 
@@ -144,30 +151,43 @@ module UsedefState = struct
     in
     Reference.Set.union t.defined def_variables
 
-  let update_undefined t usedef_table =
+  let update_used_before_defined t usedef_table =
     let use_variables = get_use_variables usedef_table in
-    let def_variables = get_def_variables usedef_table in 
-    let undefined = Reference.Map.fold usedef_table ~init:t.undefined ~f:(fun ~key ~data:_ varset -> 
-      if Reference.Set.mem t.defined key then varset else add_reference key varset
+    let used_before_defined = Reference.Set.fold use_variables ~init:t.used_before_defined ~f:(fun varset use_variable -> 
+      if Reference.Set.mem t.defined use_variable then varset else add_reference use_variable varset
     )
     in
+    used_before_defined
     (* if all use variabels are defined, then put def variables in defined set *)
-    let _ =
+    (* let _ =
     if Reference.Set.is_subset use_variables ~of_:t.defined 
     then undefined
     else  Reference.Set.union undefined def_variables
     in
     Reference.Set.diff undefined def_variables
-
-  let update_total t usedef_table =
-    Reference.Map.fold usedef_table ~init:t.total ~f:(fun ~key ~data:_ acc ->
-      Reference.Set.add acc key  
+ *)
+ let update_used_after_defined t ~defined usedef_table =
+  let use_variables = get_use_variables usedef_table in
+  let used_after_defined = Reference.Set.fold use_variables ~init:t.used_before_defined ~f:(fun varset use_variable -> 
+    if Reference.Set.mem t.defined use_variable then add_reference use_variable varset else varset
+    |> (fun varset -> 
+      if Reference.Set.mem defined use_variable then Reference.Set.remove varset use_variable else varset
     )
+  )
+  in
+  used_after_defined
+
+let update_total t usedef_table =
+  Reference.Map.fold usedef_table ~init:t.total ~f:(fun ~key ~data:_ acc ->
+    Reference.Set.add acc key  
+  )
 
   let update_state t usedef_table =
+    let defined = update_defined t usedef_table in
     {
-      defined=update_defined t usedef_table;
-      undefined=update_undefined t usedef_table;
+      used_before_defined = update_used_before_defined t usedef_table;
+      defined;
+      used_after_defined=update_used_after_defined ~defined t usedef_table;
       total=update_total t usedef_table;
       usedef_table;
     }
@@ -247,13 +267,35 @@ module UsedefState = struct
     let test_variables = forward_expression test in
     VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) test_variables
 
+  let forward_setitem ~callee ~(value: Call.Argument.t) usedef_map =
+    let target_variables = forward_expression callee in
+    let value_variables = forward_expression value.value in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Def) target_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) value_variables in
+    usedef_map
+
   let forward_statement ~(statement: Statement.t) state =
     match Node.value statement with
     | Assign { Assign.target; value; _} ->
       forward_assignment ~target ~value state
     | Assert { Assert.test; _ } -> 
       forward_assert test state
-    | _ -> state
+    | Expression { Node.value = Call { 
+        callee = {
+            Node.value = Name (Attribute {
+                attribute="__setitem__"; _
+              }
+            );
+            _
+          } as callee;
+        arguments= [ _; value ];
+        };
+        _
+      } ->
+        forward_setitem ~callee ~value state
+    | _ -> 
+      (* Log.dump "HMM? %a" Statement.pp statement; *)
+      state
 
   let forward ~statement_key:_ state ~statement =
     let usedef_table = forward_statement ~statement usedef_create in

@@ -263,7 +263,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   let our_model = !OurDomain.our_model in
 
   let mode = OurDomain.load_mode () in
-  if String.equal mode "preprocess" || String.equal mode "error" then
+  if !OurDomain.is_first || String.equal mode "error" then
     List.iter all_defines ~f:(fun define -> 
      OurDomain.OurSummary.change_analysis_of_func our_model define
     );
@@ -294,13 +294,18 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   if List.length filtered_defines < 20 then
     List.iter filtered_defines ~f:(fun r -> Log.dump "Analysis: %a" Reference.pp r);
   *)
+  (* let prev_temp_class_var_type = OurDomain.OurSummary.get_temp_class_var_type our_model in *)
+
   populate_for_definitions ~scheduler environment filtered_defines;
 
+  OurDomain.OurSummary.set_all_join_temp_class_var_type_to_empty our_model;
   let _ = type_join in
   
   let prev_model = !OurDomain.our_model in
+  let _ = prev_model in
 
-  if (!OurDomain.is_first) && not (String.equal mode "preprocess") then (
+  
+  (* if (!OurDomain.is_first) && not (String.equal mode "preprocess") then (
     (* Log.dump "INIT"; *)
     OurDomain.our_model := OurDomain.OurSummary.set_all_class_var_type_to_empty our_model;
     (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model;
@@ -308,7 +313,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     ()
   )
   else
-    ();
+    (); *)
 
   
 
@@ -317,21 +322,29 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define)
   )
-  else
+  else (
     List.iter filtered_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_to_false_of_func our_model define);
-  
+
+  );
+
   let read_only = read_only environment in
   (
   match type_join with
   | Some type_join ->
-    let our_errors =
-      List.fold filtered_defines ~init:!OurErrorDomain.our_errors ~f:(fun our_errors define ->
+    let updated_vars, our_errors =
+      List.fold filtered_defines ~init:(Reference.Set.empty, !OurErrorDomain.our_errors) ~f:(fun (updated_vars, our_errors) define ->
         let timer = Timer.start () in
         let _ = timer in
         let result = ReadOnly.get read_only define in
         (* let define, _ =  OurDomain.ArgTypesKey.from_key arg_types_key in *)
-        let x = 
+        let updated_vars, our_errors = 
         (match result with
+        | Some t when String.equal mode "check_preprocess" ->
+          let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
+          let our_model = !OurDomain.our_model in
+          OurDomain.OurSummary.update_check_preprocess ~define ~type_join ~prev:cur_summary our_model;
+
+          updated_vars, our_errors
         | Some t when String.equal mode "preprocess" ->
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let expression_map = OurDomain.OurSummary.get_preprocess cur_summary define in
@@ -340,10 +353,12 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             OurDomain.OurSummary.set_preprocess our_model define key data
           );
           OurDomain.OurSummary.set_unique_analysis our_model define unique_analysis;
-          our_errors
+          updated_vars, our_errors
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
           let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
+
+          let class_vars = OurDomain.OurSummary.get_class_vars cur_summary in
 
           (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi.MultiIndex.format"
             then (
@@ -359,6 +374,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
           let our_model = !OurDomain.our_model in
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
+          let updated_vars = Reference.Set.union updated_vars class_vars in
           let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors our_errors in
           (* Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary; *)
            (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
@@ -366,11 +382,11 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
             ); *)
             
-          (* if String.is_substring (Reference.show define) ~substring:"pandas.io.parsers.ParserBase.__init__"
+          if String.is_substring (Reference.show define) ~substring:"utils.aws.query"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
             );
- *)
+
             (* if String.is_substring (Reference.show define) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
               then (
                 Log.dump "%a >>> %a" Reference.pp define OurDomain.OurSummary.pp cur_summary;
@@ -411,19 +427,29 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             Log.dump "OKOK %a %.3f" Reference.pp define total_time;
           );   *)
           
-          our_errors
-        | _ -> our_errors
+          updated_vars, our_errors
+        | _ -> updated_vars, our_errors
         )
         in
         
-        x
+        updated_vars, our_errors
       )
     in
-    if (!OurDomain.is_first) && not (String.equal mode "preprocess") then  (
+
+    let _ = updated_vars in
+    if (String.equal mode "inference") then (
+      OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars !OurDomain.our_model;
+    );
+    if not (String.equal mode "preprocess") then (
+      OurDomain.OurSummary.set_all_temp_class_var_type_from_join !OurDomain.our_model;
+    );
+    
+    let _ = OurDomain.OurSummary.update_default_value in
+    (* if (!OurDomain.is_first) && not (String.equal mode "preprocess") then  (
       
       OurDomain.OurSummary.update_default_value ~prev:prev_model !OurDomain.our_model;
       (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
-    );
+    ); *)
 
     
     (* OurDomain.our_model := our_summary; *)

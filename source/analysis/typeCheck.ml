@@ -13886,6 +13886,7 @@ let exit_state ~resolution (module Context : OurContext) =
     let less_or_equal = GlobalResolution.less_or_equal global_resolution in
       match initial.rt_type with
       | Value resolution ->
+        
         let arg_types = 
           OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution 
           |> OurDomain.ArgTypes.filter_keys ~f:(fun key -> not (String.equal key "$parameter$self" || String.equal key "$parameter$cls"))
@@ -13913,6 +13914,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
   let initial, our_summary = 
       let update_resolution resolution =
+        
         let final_model = !OurDomain.our_model in
 
         (*
@@ -13936,6 +13938,13 @@ let exit_state ~resolution (module Context : OurContext) =
 
             let rec update_parent_of_self class_name resolution =
               let self_attributes_tree = OurTypeSet.OurSummaryResolution.get_self_attributes_tree final_model class_name in
+              let temp_self_attributes_tree = 
+                if OurDomain.is_error_mode (OurDomain.load_mode ())
+                then 
+                  Identifier.Map.Tree.empty
+                else
+                  OurTypeSet.OurSummaryResolution.get_temp_self_attributes_tree final_model class_name 
+              in
 
               (* Log.dump "[[[ LET GO ]]]";
 
@@ -13945,7 +13954,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
               Log.dump "Resolution : %a" Resolution.pp resolution; *)
 
-              let resolution = Resolution.update_self_attributes_tree ~global_resolution resolution self_attributes_tree (Reference.create class_param) in
+              let resolution = Resolution.update_self_attributes_tree ~global_resolution resolution self_attributes_tree temp_self_attributes_tree (Reference.create class_param) in
 
               let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show class_name)) in
                 (match class_summary with
@@ -14185,14 +14194,35 @@ let exit_state ~resolution (module Context : OurContext) =
       )
   else (
     let final_model = !OurDomain.our_model in
+
+    
+
     let arg_types_list = OurDomain.OurSummary.get_analysis_arg_types final_model name in
     let our_summary = !Context.our_summary in
-      List.iter arg_types_list ~f:(fun arg_types -> 
+    (* if not (OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()))
+    then  OurDomain.OurSummary.change_analysis_to_false_of_func our_summary name;
+ *)
+    List.iter arg_types_list ~f:(fun arg_types -> 
+        (* Log.dump "Wow";
+        Log.dump "%a" OurDomain.ArgTypes.pp arg_types; *)
         OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) our_summary name arg_types    
-      );
+    );
     (* Context.our_summary := our_summary; *)
 
-    let check_arg_types_list = OurDomain.OurSummary.get_analysis_arg_types our_summary name in
+    (* Log.dump "??? %a" OurDomain.OurSummary.pp our_summary; *)
+
+    let check_arg_types_list = 
+      if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ())
+      then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
+      else if (!OurDomain.is_first) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
+      then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
+      else if List.length arg_types_list > 0
+      then ( 
+        (* Log.dump "CHECK %a" Reference.pp name; *)
+        OurDomain.OurSummary.get_analysis_arg_types our_summary name 
+      )
+      else []
+    in
 
     
     (* if List.length check_arg_types_list > 1 then (
@@ -14271,21 +14301,23 @@ let exit_state ~resolution (module Context : OurContext) =
           )
         | Some e -> 
           let value_resolved = Resolution.resolve_expression_to_type resolution e in
-          if OurDomain.ArgTypes.mem arg_types class_param || (Resolution.has_nontemporary_annotation resolution ~reference && Type.is_unknown value_resolved) then 
+          if OurDomain.ArgTypes.mem arg_types class_param 
+            || (Resolution.has_nontemporary_annotation resolution ~reference && Type.is_unknown value_resolved) 
+          then 
             resolution
           else (
             match value_resolved with
-            | t when Type.is_none t -> 
+            | t when Type.is_none t && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)-> 
               (* Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved) *)
               let is_valid_none = 
                 is_valid_none ~reference body |> Option.value ~default:false
               in
 
               if is_valid_none
-              then Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
+              then Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
               else resolution
             | _ ->
-              Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
+              Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
           )
           
           (* if Type.can_unknown resolved then (
@@ -14324,7 +14356,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | t -> t
       in
 
-      if not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) then (
+      if not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name) || (Type.is_unknown return_annotation)) then (
         OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name arg_types return_annotation;
         (* Context.our_summary := our_summary *)
       );
@@ -14360,8 +14392,8 @@ let exit_state ~resolution (module Context : OurContext) =
       let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom in
       let usedef_table = 
         match Usedef.UsedefStruct.exit usedef_tables with
-        | Some { total; _ } -> total
-        | _ -> Reference.Set.empty
+        | Some t -> t
+        | _ -> Usedef.UsedefState.create
       in
 
       (* Log.dump "%a >>>" Reference.pp name;
@@ -14458,6 +14490,7 @@ let exit_state ~resolution (module Context : OurContext) =
         in
         *)
 
+      (* Log.dump ">>> %a" Reference.pp name; *)
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.normal_index in
       let our_summary = !Context.our_summary in
@@ -14475,13 +14508,14 @@ let exit_state ~resolution (module Context : OurContext) =
               let properties = OurDomain.OurSummary.get_class_property final_model class_name in
 
               (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v;
-              Reference.Set.iter usedef_table ~f:(fun r -> Log.dump "%a" Reference.pp r);
+              Reference.Set.iter usedef_table.defined ~f:(fun r -> Log.dump "%a" Reference.pp r);
               Log.dump "---"; *)
               let _ = usedef_table, body in
 
               OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
 
+              (* Log.dump "WOW : %a" Reference.pp name; *)
               (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v; *)
               (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 

@@ -95,6 +95,16 @@ module ClassSummaryResolution = struct
     ) reference_map
     |> Unit.attributes
 
+  let get_temp_self_attributes_tree t =
+      (*let name = Reference.create "$parameter$self" in*)
+      let reference_map = 
+        get_temp_class_var_type t
+      in
+      ReferenceMap.fold ~init:Unit.empty ~f:(fun ~key ~data sofar ->
+          Unit.set_annotation ~attribute_path:key ~annotation:(Annotation.create_mutable data) sofar
+      ) reference_map
+      |> Unit.attributes
+
   let add_class_var_type ~type_join class_var_type reference typ =
     ReferenceMap.update class_var_type reference ~f:(fun origin ->
       let _ = origin, type_join in
@@ -112,7 +122,7 @@ module ClassSummaryResolution = struct
     in
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
     
-  let join_with_merge_class_var_type ~type_join ~properties ~usedef_table ({ class_var_type; temp_class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
+  let join_with_merge_class_var_type ~type_join ~properties ~(usedef_table: Usedef.UsedefState.t) ({ class_var_type; temp_class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
     (*
     여기서 postcondition의 변수 하나하나를 저장한다   
     *)
@@ -127,8 +137,13 @@ module ClassSummaryResolution = struct
       )
     in
 
-    let check_usedef_undefined reference =
-      Reference.Set.exists usedef_table.undefined ~f:(fun ref ->
+    let check_usedef_used reference =
+      Reference.Set.exists usedef_table.used_before_defined ~f:(fun ref ->
+        Reference.is_self ref &&
+        Reference.is_contain ~base:(Reference.drop_head ref) ~target:reference
+      )
+      ||
+      Reference.Set.exists usedef_table.used_after_defined ~f:(fun ref ->
         Reference.is_self ref &&
         Reference.is_contain ~base:(Reference.drop_head ref) ~target:reference
       )
@@ -136,26 +151,31 @@ module ClassSummaryResolution = struct
 
     let filter_keys = Reference.create class_param in
 
-    let rec attribute_fold ~base_reference ~attributes class_var_type =
+    let rec attribute_fold ~base_reference ~attributes ?check_usedef class_var_type =
       Identifier.Map.Tree.fold ~init:class_var_type ~f:(fun ~key ~data class_var_type ->
-        unit_fold ~unit:data ~base_reference:(Reference.combine base_reference (Reference.create key)) class_var_type
+        unit_fold ~unit:data ~base_reference:(Reference.combine base_reference (Reference.create key)) ?check_usedef class_var_type
       ) attributes
     
-    and unit_fold ~unit ~base_reference class_var_type =
+    and unit_fold ~unit ~base_reference ?check_usedef class_var_type =
       let typ = unit |> Refinement.Unit.base >>| Annotation.annotation |> Option.value ~default:Type.Unknown in
       let class_var_type = 
         if check_properties base_reference then class_var_type
-        else if check_usedef base_reference
-        then add_class_var_type ~type_join class_var_type base_reference typ 
-        else class_var_type 
+        else (
+          match check_usedef with
+          | Some check_usedef ->   
+            if check_usedef base_reference
+            then add_class_var_type ~type_join class_var_type base_reference typ 
+            else class_var_type 
+          | _ -> add_class_var_type ~type_join class_var_type base_reference typ 
+        )
       in
-      attribute_fold ~base_reference ~attributes:(unit |> Refinement.Unit.attributes) class_var_type
+      attribute_fold ~base_reference ~attributes:(unit |> Refinement.Unit.attributes) ?check_usedef class_var_type
     in 
     
-    let annotation_fold annotation class_var_type =
+    let annotation_fold ?check_usedef annotation class_var_type =
       Reference.Map.fold ~init:class_var_type ~f:(fun ~key ~data class_var_type ->
         if Reference.is_prefix ~prefix:filter_keys key then (
-          let x = unit_fold ~unit:data ~base_reference:Reference.empty class_var_type in
+          let x = unit_fold ~unit:data ~base_reference:Reference.empty ?check_usedef class_var_type in
           x
         )
         else
@@ -166,8 +186,8 @@ module ClassSummaryResolution = struct
     let new_class_var_type = 
       let x =
       ReferenceMap.empty
-      |> annotation_fold method_postcondition.annotations
-      (* |> annotation_fold method_postcondition.temporary_annotations *)
+      |> annotation_fold ~check_usedef:check_usedef_used method_postcondition.annotations
+      |> annotation_fold ~check_usedef:check_usedef_used method_postcondition.temporary_annotations
       in
 
       (* ReferenceMap.iteri x ~f:(fun ~key ~data -> Log.dump "%a ====> %a" Reference.pp key Type.pp data); *)
@@ -179,7 +199,8 @@ module ClassSummaryResolution = struct
     let new_temp_class_var_type =
       let x =
         ReferenceMap.empty
-        |> annotation_fold method_postcondition.temporary_annotations
+        (* |> annotation_fold ~check_usedef:check_usedef_defined method_postcondition.annotations *)
+        |> annotation_fold ~check_usedef:check_usedef_defined method_postcondition.temporary_annotations
         in
   
         (* ReferenceMap.iteri x ~f:(fun ~key ~data -> Log.dump "%a ====> %a" Reference.pp key Type.pp data); *)
@@ -202,6 +223,8 @@ module ClassTableResolution = struct
   let get_type_of_class_attribute t class_name attribute = get t ~class_name ~f:(ClassSummaryResolution.get_type_of_class_attribute ~attribute)
 
   let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_self_attributes_tree
+
+  let get_temp_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_temp_self_attributes_tree
 
   let join_with_merge_class_var_type ~type_join ~properties ~usedef_table t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
@@ -562,6 +585,8 @@ module OurSummaryResolution = struct
   let get_type_of_class_attribute { class_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute class_table class_name attribute
   
   let get_self_attributes_tree { class_table; _ } class_name = ClassTableResolution.get_self_attributes_tree class_table class_name
+
+  let get_temp_self_attributes_tree { class_table; _ } class_name = ClassTableResolution.get_temp_self_attributes_tree class_table class_name
 
   let add_parent_attributes { class_table; _ } storage class_name class_var =
     (* 이거 짜야 댕 *)

@@ -1926,6 +1926,8 @@ let is_list = function
   | Parametric { name = "list" | "typing.List"; _ } -> true
   | _ -> false
 
+
+
 let is_set = function
   | Parametric { name = "set" | "typing.Set"; _ } -> true
   | _ -> false
@@ -1983,6 +1985,8 @@ let is_top = function
 let is_unknown = function
   | Unknown -> true
   | _ -> false
+
+  
 
 let is_bottom = function
   | Bottom -> true
@@ -2043,6 +2047,15 @@ let rec is_truthy = function
   | Annotated annotated -> is_truthy annotated
   | Union types -> List.for_all types ~f:is_truthy
   | _ -> false
+
+let is_all_list = function
+  | Union t_list -> List.for_all t_list ~f:(fun t -> is_unknown t || is_list t)
+  | t -> is_list t
+
+
+let is_all_tuple = function
+  | Union t_list -> List.for_all t_list ~f:(fun t -> is_unknown t || is_tuple t)
+  | t -> is_tuple t
 
 let reverse_substitute name =
   match name with
@@ -4200,13 +4213,23 @@ let rec create_logic ~resolve_aliases ~variable_aliases { Node.value = expressio
               List.concat_map elements ~f:element_to_parameters
           | element -> element_to_parameters element
         in
-        Parametric { name; parameters } |> resolve_aliases
+
+        Parametric { name; parameters } 
+        |> resolve_aliases
+        |> (function
+        | Top -> Parametric { name; parameters } 
+        | t -> t
+        )
       in
-      match create_logic base, Node.value base with
+
+      let x = create_logic base in
+
+      match x, Node.value base with
       | Primitive name, _ -> parametric name
       | _, Name _ -> parametric (Expression.show base)
       | _ -> Top
     in
+
     match expression with
     | Call
         {
@@ -4410,6 +4433,9 @@ let rec create_logic ~resolve_aliases ~variable_aliases { Node.value = expressio
             };
           arguments;
         } ->
+
+          
+
         let arguments =
           match arguments with
           | [{ Call.Argument.name = None; value = { Node.value = Expression.Tuple arguments; _ } }]
@@ -4432,7 +4458,8 @@ let rec create_logic ~resolve_aliases ~variable_aliases { Node.value = expressio
         | ( Expression.Name (Name.Attribute { base; attribute = "__getitem__"; _ }),
             [{ Call.Argument.name = None; value = argument; _ }] ) ->
             (* TODO(T84854853): Add back support for `Length` and `Product`. *)
-            create_parametric ~base ~argument
+            let x = create_parametric ~base ~argument in
+            x
         | _ -> Top)
     | Constant Constant.NoneLiteral -> none
     | Name (Name.Identifier identifier) ->
@@ -4465,6 +4492,7 @@ let rec create_logic ~resolve_aliases ~variable_aliases { Node.value = expressio
         |> Option.value ~default:(Primitive value)
     | _ -> Top
   in
+
   (* Substitutions. *)
   match result with
   | Primitive name -> (
@@ -4497,7 +4525,7 @@ let rec create_logic ~resolve_aliases ~variable_aliases { Node.value = expressio
               annotated (List.hd_exn parameters)
           | "typing.Optional" when List.length parameters = 1 -> optional (List.hd_exn parameters)
           | "typing.Union" -> union parameters
-          | _ -> result)
+          | _ ->  result)
       | _, None -> result)
   | Union elements -> union elements
   | Callable ({ implementation; overloads; _ } as callable) ->
@@ -6253,6 +6281,7 @@ let resolve_aliases ~aliases annotation =
                     instantiate ~given_parameters uninstantiated_alias_annotation
                 | _ -> annotation
               in
+
               mark_recursive_alias_as_visited resolved;
               resolved
           | RecursiveType _ ->
@@ -7152,10 +7181,11 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
           if List.length filter_unknown_t_list = 1
           then List.nth_exn filter_unknown_t_list 0
           else 
-            (match key_parameter with
+            Unknown
+            (* (match key_parameter with
             | Union t_list -> if List.exists t_list ~f:(equal value_type) then value_parameter else Unknown
             | t -> if equal t value_type then value_parameter else Unknown
-            )
+            ) *)
         | t -> t
         )
         
@@ -7176,6 +7206,8 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
       | _ -> get_dict_value_type ~value_type general
   )
   | _ -> Unknown  
+
+
 
 
 let is_possible_recursive t =
@@ -7439,7 +7471,7 @@ let rec narrow_boundmethod ~join t =
     else Union t_list 
   | _ -> t 
   
-let narrow_union ~join ~less_or_equal t =
+let narrow_union_inner ~join ~less_or_equal t =
 
   let get_loose_t_list t_list =
     let t_list = List.map t_list ~f:(fun t -> if is_bottom t then Unknown else t) in
@@ -7474,9 +7506,14 @@ let narrow_union ~join ~less_or_equal t =
 
   let _ = join in
   match t with
+(*   | Parametric ({ parameters=[ Single param ]; _ } as parametric) when is_list t || is_set t || is_tuple t
+    -> 
+      Log.dump "HERE! %a" pp param;
+      Parametric { parametric with parameters=[ Single (narrow_union_inner ~join ~less_or_equal param)]} *)
   | Union t_list ->
     let loose_t_list = get_loose_t_list t_list in
-    if List.length loose_t_list <= 7 then (Union loose_t_list) else
+    let check_loose_t_list = List.filter loose_t_list ~f:(fun t -> not (is_none t || is_unknown t)) in
+    if List.length check_loose_t_list <= 4 then (Union loose_t_list) else
 
     
     let dedup =
@@ -7540,19 +7577,72 @@ let narrow_union ~join ~less_or_equal t =
     *)
     let result = (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join in
 
+    
+
     (match result with
     | Union t_list ->
-    if List.length t_list = 1
-    then List.nth_exn t_list 0 
-    else if List.length t_list > 7
-    then (
-      Top
-    )
-    else
-      result
+      let filter_unknown_loose_t_list = List.filter t_list ~f:(fun t -> not (is_unknown t)) in
+      let check_loose_t_list = List.filter t_list ~f:(fun t -> not (is_none t || is_unknown t)) in
+      (* List.iter t_list ~f:(fun t -> Log.dump ">>> %a" pp t); *)
+      if List.length filter_unknown_loose_t_list = 1
+      then List.nth_exn filter_unknown_loose_t_list 0 
+      else if List.length check_loose_t_list > 4
+      then (
+        Top
+      )
+      else
+        result
     | _ -> result
     )
   | _ -> t
+
+let narrow_union ~join ~less_or_equal annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
+
+    let visit_children_before _ _ = true
+
+    let visit_children_after = false
+
+    let visit _ annotation = 
+      let annotation =
+        match annotation with
+        | Union _ -> narrow_union_inner ~join ~less_or_equal annotation
+        | _ -> annotation
+      in
+      
+      { 
+        Transform.transformed_annotation = annotation; 
+        new_state = (); 
+      }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
+
+let narrow_return_type t =
+  
+
+  match t with
+  | Union t_list ->
+    let filtered_t_list, none_unknown = List.partition_tf t_list ~f:(fun typ -> not (is_none typ || is_unknown typ)) in
+    let recursive, others = List.partition_tf ~f:is_possible_recursive filtered_t_list in
+    (match recursive, others with
+    | _::_, [] ->
+      let dict, non_dict = List.partition_tf recursive ~f:(fun t -> is_dict t || is_defaultdict t) in
+      if (List.length dict > 0) && (List.length non_dict > 0)
+      then Union ((iterable Top)::none_unknown)
+      else t
+    | [], _::_ -> 
+      let cls, non_cls = List.partition_tf recursive ~f:(fun t -> is_primitive t && String.is_substring (show t) ~substring:".") in
+      if (List.length cls > 0) && (List.length non_cls > 0)
+      then Top
+      else t
+    | [], [] -> Unknown
+    | _ -> Top
+    )
+  | _ -> t
+
+
 
 let calc_type left right =
   let is_match left right =

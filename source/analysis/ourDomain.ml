@@ -403,6 +403,7 @@ module ClassSummary = struct
   type t = {
     class_var_type: Type.t ReferenceMap.t;
     temp_class_var_type : Type.t ReferenceMap.t;
+    join_temp_class_var_type : Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set : ReferenceSet.t;
@@ -412,6 +413,8 @@ module ClassSummary = struct
   let empty = {
     class_var_type=ReferenceMap.empty;
     temp_class_var_type=ReferenceMap.empty;
+    join_temp_class_var_type=ReferenceMap.empty;
+    (* updated_var = ReferenceSet.empty; *)
     class_attributes=ClassAttributes.empty;
     usage_attributes=AttributeStorage.empty;
     change_set=ReferenceSet.empty;
@@ -440,8 +443,40 @@ module ClassSummary = struct
   let add_usage_attributes ({ usage_attributes; _ } as t) storage =
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
 
+
+  let update_unseen_temp_class_var_type ~type_join ~updated_vars ({ class_var_type; temp_class_var_type; join_temp_class_var_type; _ } as t) =
+    let class_var_type =
+      ReferenceMap.fold2 temp_class_var_type join_temp_class_var_type ~init:class_var_type ~f:(fun ~key ~data acc ->
+        if Reference.Set.mem updated_vars key then acc
+        else (
+          match data with
+          | `Left data -> 
+            (* ReferenceMap.iteri join_temp_class_var_type ~f:(fun ~key ~data -> Log.dump "JOIN : %a ---> %a" Reference.pp key Type.pp data); *)
+            ReferenceMap.update acc key ~f:(fun d -> 
+            match d with
+            | Some t ->(*  Log.dump "Unseen %a ==> %a" Reference.pp key Type.pp data; *) type_join t data
+            | _ -> data
+          )
+          | _ -> acc
+        )
+      )
+    in
+
+    { t with class_var_type; }
+
   let set_class_var_type_to_empty t =
     { t with class_var_type=ReferenceMap.empty }
+
+  let set_temp_class_var_type_from_join t =
+    { t with temp_class_var_type=t.join_temp_class_var_type; join_temp_class_var_type=ReferenceMap.empty; }
+
+  let set_join_temp_class_var_type_to_empty t =
+    { t with join_temp_class_var_type=ReferenceMap.empty }
+
+  let get_class_vars { class_var_type; _ } =
+    let update_var_list = ReferenceMap.keys class_var_type in
+    let updated_var = List.fold update_var_list ~init:Reference.Set.empty ~f:(fun updated_var var -> ReferenceSet.add updated_var var) in
+    updated_var
 
   let get_class_property { class_attributes; _ } =
     ClassAttributes.get_class_property class_attributes
@@ -458,22 +493,37 @@ module ClassSummary = struct
       next with class_var_type; change_set;
     }
 
+  let join_only_attribute left right =
+    let class_attributes = ClassAttributes.join left.class_attributes right.class_attributes in
+    let usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes in
+    {
+      right with class_attributes; usage_attributes;
+    }
+
   let join ~type_join left right =
     let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
-    let temp_class_var_type = ReferenceMap.join_type left.temp_class_var_type right.temp_class_var_type ~type_join in
-    let change_set = ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) in
+    let join_temp_class_var_type = ReferenceMap.join_type left.temp_class_var_type right.join_temp_class_var_type ~type_join in
+    (* let update_var_list = ReferenceMap.keys left.class_var_type @ ReferenceMap.keys left.temp_class_var_type in
+    let updated_var = List.fold update_var_list ~init:right.updated_var ~f:(fun updated_var var -> ReferenceSet.add updated_var var) in *)
+    let change_set = 
+      ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) 
+      |> ReferenceSet.union (ReferenceMap.diff join_temp_class_var_type right.join_temp_class_var_type)
+    in
 
     (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
-      temp_class_var_type;
+      temp_class_var_type=right.temp_class_var_type;
+      join_temp_class_var_type;
+      (* updated_var; *)
       class_attributes = ClassAttributes.join left.class_attributes right.class_attributes;
       usage_attributes = AttributeStorage.join left.usage_attributes right.usage_attributes;
       change_set;
     }
 
-  let pp_class_var_type format { class_var_type; _ } =
-      Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n" (ReferenceMap.pp ~data_pp:Type.pp) class_var_type 
+  let pp_class_var_type format { class_var_type; temp_class_var_type; _ } =
+      Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n\n[[[ Classs Temp Variable Type ]]]\n%a\n" 
+      (ReferenceMap.pp ~data_pp:Type.pp) class_var_type (ReferenceMap.pp ~data_pp:Type.pp) temp_class_var_type 
 
   let pp_class_info format { class_attributes; _ } =
       Format.fprintf format "[[[ Class Info ]]] \n%a\n" ClassAttributes.pp class_attributes
@@ -511,11 +561,26 @@ module ClassTable = struct
 
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummary.add_usage_attributes
 
+  let update_unseen_temp_class_var_type ~type_join ~updated_vars t =
+    ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.update_unseen_temp_class_var_type  ~type_join ~updated_vars class_info))
+
   let set_all_class_var_type_to_empty t =
-    ClassHash.map t ~f:(fun class_info -> (ClassSummary.set_class_var_type_to_empty class_info))
+    ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.set_class_var_type_to_empty class_info))
+
+  let set_all_temp_class_var_type_from_join t =
+    ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.set_temp_class_var_type_from_join class_info))
+
+  let set_all_join_temp_class_var_type_to_empty t =
+    ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.set_join_temp_class_var_type_to_empty class_info))
     
   let set_class_info t class_name class_info =
     ClassHash.set t ~key:class_name ~data:class_info
+
+  let get_class_vars t =
+    ClassHash.fold t ~init:Reference.Set.empty ~f:(fun ~key:_ ~data acc ->
+      ClassSummary.get_class_vars data  
+      |> Reference.Set.union acc
+    )
 
   let get ~class_name ~f t = 
     let class_info = find_default t class_name in
@@ -533,6 +598,10 @@ module ClassTable = struct
 
   let update_default_value prev next =
     ClassHash.join prev next ~equal:ClassSummary.equal ~data_join:ClassSummary.update_default_value
+
+  let join_only_attribute left right =
+    ClassHash.join left right ~equal:ClassSummary.equal ~data_join:(ClassSummary.join_only_attribute)
+
   let join ~type_join left right =
     ClassHash.join left right ~equal:ClassSummary.equal ~data_join:(ClassSummary.join ~type_join)
 
@@ -600,7 +669,7 @@ module Signatures = struct
 
   let empty_return_info = {
     return_var_type = ReferenceMap.empty;
-    return_type = Unknown;
+    return_type = Bottom;
     should_analysis = true;
     caller_analysis = true;
     caller_set = ReferenceSet.empty;
@@ -738,7 +807,7 @@ module Signatures = struct
   let filter_unknown arg_types =
     
     arg_types
-    |> ArgTypes.map ~f:(Type.narrow_iterable ~max_depth:1)
+    |> ArgTypes.map ~f:(Type.narrow_iterable ~max_depth:2)
     |> ArgTypes.map ~f:Type.filter_unknown
     |> ArgTypes.filter ~f:(fun data -> not (Type.is_unknown data))
 
@@ -797,7 +866,13 @@ module Signatures = struct
     
   let add_return_type ~type_join t arg_types typ =
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
-    ArgTypesMap.set t ~key:arg_types ~data:{ data with return_type=type_join data.return_type typ; }
+    let ret_type = 
+      type_join data.return_type typ 
+      |> Type.narrow_iterable ~max_depth:2
+      |> Type.narrow_return_type
+    in
+    (* Log.dump "%a + %a => %a" Type.pp data.return_type Type.pp typ Type.pp ret_type; *)
+    ArgTypesMap.set t ~key:arg_types ~data:{ data with return_type=ret_type }
     
   let set_return_var_type t arg_types return_var_type =
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
@@ -1587,6 +1662,20 @@ module OurSummary = struct
 
   let update_default_value ~prev next =
     ClassTable.update_default_value prev.class_table next.class_table
+
+
+  let update_check_preprocess ~define ~type_join ~prev next =
+    if (String.is_suffix (Reference.show define) ~suffix:"__init__")
+    then ( 
+      ClassTable.join ~type_join prev.class_table next.class_table;
+      ClassTable.set_all_class_var_type_to_empty next.class_table;
+    ) else (
+      ClassTable.join_only_attribute prev.class_table next.class_table;
+      ClassTable.set_all_class_var_type_to_empty next.class_table;
+    );
+    (*  let class_time = Timer.stop_in_sec timer in *)
+    FunctionTable.update ~type_join prev.function_table next.function_table
+
   let update ~type_join ~prev next = 
     (* let timer = Timer.start () in *)
     ClassTable.join ~type_join prev.class_table next.class_table;
@@ -1664,6 +1753,8 @@ module OurSummary = struct
   let set_unknown_decorator { function_table; _ } func_name =
     FunctionTable.set_unknown_decorator function_table func_name
 
+  let get_class_vars { class_table; _ } =
+    ClassTable.get_class_vars class_table
   let get_class_table { class_table; _ } = class_table
 (*
   let get_usedef_tables {function_table; _} func_name = 
@@ -1714,9 +1805,15 @@ module OurSummary = struct
   let set_class_summary { class_table; _ } class_name class_info =
     ClassTable.set_class_info class_table class_name class_info 
 
-  let set_all_class_var_type_to_empty ({ class_table; _ } as t) =
-    let class_table = ClassTable.set_all_class_var_type_to_empty class_table in
-    { t with class_table; }
+  let update_unseen_temp_class_var_type ~type_join ~updated_vars { class_table; _ } =
+    ClassTable.update_unseen_temp_class_var_type ~type_join ~updated_vars class_table
+  let set_all_class_var_type_to_empty { class_table; _ } =
+    ClassTable.set_all_class_var_type_to_empty class_table
+
+  let set_all_temp_class_var_type_from_join { class_table; _ } =
+    ClassTable.set_all_temp_class_var_type_from_join class_table
+  let set_all_join_temp_class_var_type_to_empty { class_table; _ } =
+    ClassTable.set_all_join_temp_class_var_type_to_empty class_table
 
   let set_class_table t class_table =
     { t with class_table; }

@@ -740,6 +740,8 @@ val is_top : t -> bool
 
 val is_unknown : t -> bool
 
+val is_bottom : t -> bool
+
 val is_tuple : t -> bool
 
 val is_type_alias : t -> bool
@@ -753,6 +755,10 @@ val is_primitive_bool : t -> bool
 val is_falsy : t -> bool
 
 val is_truthy : t -> bool
+
+val is_all_list : t -> bool
+
+val is_all_tuple : t -> bool
 
 val contains_any : t -> bool
 
@@ -1115,6 +1121,8 @@ val union_join : t -> t -> t
 val count_defined_without_default : t Record.Callable.record_parameters -> int
 
 val narrow_union : join:(t -> t -> t) -> less_or_equal:(left:t -> right:t-> bool) -> t -> t
+
+val narrow_return_type : t -> t
 
 module OurTypedDictionary : sig
   open Record.OurTypedDictionary

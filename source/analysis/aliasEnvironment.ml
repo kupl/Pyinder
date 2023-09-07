@@ -390,6 +390,7 @@ module ReadOnly = struct
         get_alias environment ?dependency name
         >>| modify_aliases ?replace_unbound_parameters_with_any
       in
+
       Type.create ~aliases expression
     in
     let annotation =
@@ -408,6 +409,7 @@ module ReadOnly = struct
               None
         | _ -> None
       in
+
       Type.instantiate parsed ~constraints
     in
     let contains_untracked =

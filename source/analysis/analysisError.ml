@@ -5270,7 +5270,7 @@ let filter_type_error errors =
       | InconsistentOverride _
       | IncompleteType _ 
         -> false
-      | _ -> true
+      | _ -> false
       )
   )
 

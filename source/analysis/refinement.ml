@@ -6,6 +6,7 @@
  *)
 
 open Core
+open Pyre
 open Ast
 open Annotation
 
@@ -761,9 +762,16 @@ module Store = struct
       temporary_annotations = Reference.Map.mapi temporary_annotations ~f:(fun ~key ~data -> if Reference.is_self key then data else Unit.add_unknown data);
     }
 
-  let update_self_attributes_tree ~global_resolution { annotations; temporary_annotations; } self_attributes_tree class_param =
+  let update_self_attributes_tree ~global_resolution { annotations; temporary_annotations; } self_attributes_tree temp_self_attributes_tree class_param =
     let merge_one = Unit.add_new_attribute ~global_resolution in
     
+    let self_base = 
+      ReferenceMap.find annotations class_param 
+      >>| (fun u -> 
+        { u with attributes=IdentifierMap.empty; }  
+      )
+    in
+
     let annotations =
       match (ReferenceMap.find annotations class_param) with
       | Some u ->
@@ -773,15 +781,21 @@ module Store = struct
         annotations
     in
 
-    (*
-    let annotations =
-      match (Reference.Map.find temporary_annotations class_param) with
+    
+    
+    let temporary_annotations =
+      match (ReferenceMap.find temporary_annotations class_param) with
       | Some u ->
-        Reference.Map.set temporary_annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:self_attributes_tree)
-      | _ ->
-        Reference.Map.set temporary_annotations ~key:class_param ~data:(unit_base |> Unit.set_attributes ~attributes:self_attributes_tree)
+        (ReferenceMap.set temporary_annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:temp_self_attributes_tree))
+        |> ReferenceMap.merge_with ~merge_one temporary_annotations
+      | _ when Option.is_some self_base ->
+        let u = Option.value_exn self_base in
+        (ReferenceMap.set temporary_annotations ~key:class_param ~data:(u |> Unit.set_attributes ~attributes:temp_self_attributes_tree))
+        |> ReferenceMap.merge_with ~merge_one temporary_annotations
+      | _ -> temporary_annotations
     in
-    *)
+
+   
 
     { annotations; temporary_annotations; }
 

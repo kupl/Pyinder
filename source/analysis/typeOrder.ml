@@ -136,6 +136,8 @@ module OrderImplementation = struct
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) right
       in
+
+      (* Log.dump "LEFT %a RIGHT %a" Type.pp left Type.pp right; *)
       (* let tt0 = Timer.stop_in_sec timer in *)
 
       let union = Type.union_join left right in

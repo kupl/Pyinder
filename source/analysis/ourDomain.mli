@@ -218,6 +218,7 @@ module ClassSummary: sig
   type t = {
     class_var_type: Type.t ReferenceMap.t;
     temp_class_var_type: Type.t ReferenceMap.t;
+    join_temp_class_var_type: Type.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set: ReferenceSet.t;
@@ -396,6 +397,8 @@ module OurSummary : sig
 
   val empty : ?size:int -> unit -> t
 
+  val update_check_preprocess : define:Reference.t -> type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> unit
+
   val update_default_value : prev:t -> t -> unit
 
   val update : type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> unit
@@ -444,6 +447,8 @@ module OurSummary : sig
   (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)
+  val get_class_vars : t -> Reference.Set.t
+
   val get_class_table : t -> ClassTable.t
 
   (*
@@ -479,7 +484,13 @@ module OurSummary : sig
 
   val set_class_summary : t -> Reference.t -> ClassSummary.t -> unit
 
-  val set_all_class_var_type_to_empty : t -> t
+  val update_unseen_temp_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> updated_vars:Reference.Set.t -> t -> unit
+
+  val set_all_class_var_type_to_empty : t -> unit
+
+  val set_all_temp_class_var_type_from_join : t -> unit
+
+  val set_all_join_temp_class_var_type_to_empty : t -> unit
 
   val set_class_table : t -> ClassTable.t -> t
 

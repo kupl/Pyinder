@@ -15,7 +15,7 @@ open Refinement
 module ClassTableResolution : sig
   include ClassTable
 
-  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> properties:AttrsSet.t -> usedef_table:Reference.Set.t -> t -> Reference.t -> string -> Refinement.Store.t -> unit
+  val join_with_merge_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> properties:AttrsSet.t -> usedef_table:Usedef.UsedefState.t -> t -> Reference.t -> string -> Refinement.Store.t -> unit
 end
 
 module ArgTypesResolution : sig
@@ -44,11 +44,13 @@ module OurSummaryResolution : sig
 
   type t = OurSummary.t
 
-  val store_to_return_var_type : ?usedef_table:Reference.Set.t -> ?class_param:string -> ?local:bool -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
+  val store_to_return_var_type : ?usedef_table:Usedef.UsedefState.t -> ?class_param:string -> ?local:bool -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
 
   val get_type_of_class_attribute : t -> Reference.t -> string -> Type.t option
 
   val get_self_attributes_tree : t -> Reference.t -> Unit.t Identifier.Map.Tree.t
+
+  val get_temp_self_attributes_tree : t -> Reference.t -> Unit.t Identifier.Map.Tree.t
 
   val add_parent_attributes : t -> AttributeStorage.t -> Reference.t -> string -> unit
 (*

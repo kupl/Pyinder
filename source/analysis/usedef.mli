@@ -32,11 +32,15 @@ module UsedefState : sig
 
   type usedef
   type t = {
+    used_before_defined: Reference.Set.t;
     defined: Reference.Set.t;
-    undefined: Reference.Set.t;
+    used_after_defined: Reference.Set.t;
     total: Reference.Set.t;
     usedef_table: usedef Reference.Map.t;
   } 
+
+  val create : t
+
   include UsedefState with type t := t
 end 
 
