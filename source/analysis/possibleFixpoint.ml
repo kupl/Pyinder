@@ -24,6 +24,9 @@ module type PossibleState = sig
   val update_possible : t -> t -> Reference.t -> t
   *)
   val is_reachable : t -> bool
+
+  val get_refinement : t -> Refinement.Store.t option
+
   val bottom : t
 
   val less_or_equal : left:t -> right:t -> bool
@@ -58,7 +61,7 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
-  val post_info : t -> bool Int.Map.t
+  val post_info : t -> (Refinement.Store.t * Refinement.Store.t) Int.Map.t
 
   (*
   val exit_possible : t -> state option
@@ -106,9 +109,18 @@ module Make (State : PossibleState) = struct
 
   let exit { postconditions; _ } = Hashtbl.find postconditions Cfg.exit_index
 
-  let post_info { postconditions; _ } =
-    Hashtbl.fold postconditions ~init:Int.Map.empty ~f:(fun ~key ~data acc ->
-     Int.Map.set acc ~key ~data:(State.is_reachable data)
+  let post_info { preconditions; postconditions; } =
+    Hashtbl.fold postconditions ~init:Int.Map.empty ~f:(fun ~key ~data:postcondition acc ->
+      
+      match State.get_refinement postcondition with
+      | Some postcondition ->
+        let precondition = Hashtbl.find_exn preconditions key in
+        (match State.get_refinement precondition with
+        | Some precondition -> 
+          Int.Map.set acc ~key ~data:(precondition, postcondition)
+        | _ -> Int.Map.set acc ~key ~data:(Refinement.Store.empty, Refinement.Store.empty)
+        )
+      | _ -> Int.Map.set acc ~key ~data:(Refinement.Store.empty, Refinement.Store.empty)
     )
     (*
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
@@ -185,12 +197,13 @@ module Make (State : PossibleState) = struct
         |> join_with_predcessors_possibleconditions node
       in
       *)
-      
+     (*  if String.is_substring (Reference.show func_name) ~substring:"State.call"
+        then (
 
-(*         Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+        Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
         
-        Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition); *)
-
+        Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+        ); *)
      
       (*
       if Int.equal 3 (Cfg.Node.id node)
@@ -216,19 +229,25 @@ module Make (State : PossibleState) = struct
           Log.dump "END %i" (Cfg.Node.id node);
           (* Log.dump "%a" Cfg.Node.pp node; *)
         ); *)
-        (* if String.is_substring (Reference.show func_name) ~substring:"_query"
+        (* if String.is_substring (Reference.show func_name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header" && (Int.equal (Cfg.Node.id node) 15)
           then (
         Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
         Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
         Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
           ); *)
+
+          (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+          Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+          Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition); *)
       (*
       if Int.equal 3 (Cfg.Node.id node)
         then
       Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
       *)
-      
-      (* Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition); *)
+      (* if String.is_substring (Reference.show func_name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
+        then (
+      Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+        ); *)
      
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       

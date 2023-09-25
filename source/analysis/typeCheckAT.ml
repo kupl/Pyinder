@@ -331,6 +331,12 @@ module TypeCheckAT (Context : Context) = struct
     match t with
     | Unreachable -> false
     | Value _ -> true
+
+  let get_refinement t =
+    match t with
+    | Unreachable -> None
+    | Value r -> Some (Resolution.get_annotation_store r)
+
   let show state = Format.asprintf "%a" pp state
 
   and equal left right =

@@ -332,7 +332,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   match type_join with
   | Some type_join ->
     let updated_vars, our_errors =
-      List.fold filtered_defines ~init:(Reference.Set.empty, !OurErrorDomain.our_errors) ~f:(fun (updated_vars, our_errors) define ->
+      List.fold filtered_defines ~init:(Reference.Map.empty, !OurErrorDomain.our_errors) ~f:(fun (updated_vars, our_errors) define ->
         let timer = Timer.start () in
         let _ = timer in
         let result = ReadOnly.get read_only define in
@@ -360,12 +360,18 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
           let class_vars = OurDomain.OurSummary.get_class_vars cur_summary in
 
-          (* if String.is_substring (Reference.show define) ~substring:"pandas.core.indexes.multi.MultiIndex.format"
+          (* if String.is_substring (Reference.show define) ~substring:"alexa.capabilities.AlexaCapability"
             then (
               Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
              (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
-            );
-           *)
+            ); *)
+
+            (* if String.is_substring (Reference.show define) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
+              then (
+                Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
+               (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
+              ); *)
+          
           
             (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
 
@@ -374,18 +380,23 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
           let our_model = !OurDomain.our_model in
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
-          let updated_vars = Reference.Set.union updated_vars class_vars in
+          let updated_vars = Reference.Map.merge updated_vars class_vars ~f:(fun ~key:_ data -> 
+            match data with
+            | `Both (a, b) -> Some (Reference.Set.union a b)
+            | `Left a | `Right a -> Some a
+          )
+          in
           let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors our_errors in
           (* Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary; *)
-           (* if String.is_substring (Reference.show define) ~substring:"airflow.gcp.example_dags.example_automl_vision_object_detection.$toplevel"
+           (* if String.is_substring (Reference.show define) ~substring:"salt.states.smartos._parse_vmconfig"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
             ); *)
             
-          if String.is_substring (Reference.show define) ~substring:"utils.aws.query"
+          (* if String.is_substring (Reference.show define) ~substring:"entity_component.EntityComponent"
             then (
               Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary;
-            );
+            ); *)
 
             (* if String.is_substring (Reference.show define) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
               then (
@@ -436,6 +447,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       )
     in
 
+    (* Reference.Set.iter updated_vars ~f:(fun v -> Log.dump "UPDATE %a" Reference.pp v); *)
+    (* Log.dump ">>> %a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
+
     let _ = updated_vars in
     if (String.equal mode "inference") then (
       OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars !OurDomain.our_model;
@@ -443,6 +457,12 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     if not (String.equal mode "preprocess") then (
       OurDomain.OurSummary.set_all_temp_class_var_type_from_join !OurDomain.our_model;
     );
+
+
+    (* For Baseline => update all *)
+    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model; *)
+
+    
     
     let _ = OurDomain.OurSummary.update_default_value in
     (* if (!OurDomain.is_first) && not (String.equal mode "preprocess") then  (

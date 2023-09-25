@@ -4578,16 +4578,29 @@ let filter_interesting_error errors =
     (* | IncompatibleParameterTypeWithReference { name; _} ->
       Log.dump "%s" (Option.value name ~default:"");
       true *)
-    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; _ } when
-      Type.is_none actual || Type.is_optional actual
-      -> true
-    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; _ } when
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; attribute; _ } when
+      (Type.is_none actual || Type.is_optional actual) (* && ((String.equal attribute "get") || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")) *)
+      -> 
+        let _ = attribute in
+        true
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; attribute; _ } when
       let actual = (fst (Type.split (List.nth_exn unions index))) in
-      Type.is_none actual || Type.is_optional actual
-      -> true
+      (Type.is_none actual || Type.is_optional actual) (* && ((String.equal attribute "get") || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")) *)
+      ->
+        let _ = attribute in 
+        true
     | NotCallableWithExpression _ | NotCallable _
-      (* when Type.is_none annotation || Type.is_optional annotation  *)->
+      (* when Type.is_none annotation || Type.is_optional annotation  *) ->
       true
+    | IncompatibleParameterTypeWithReference { callee = Some callee_name; mismatch = { actual; _ }; _ } when (Type.is_none actual || Type.is_optional actual) ->
+      let builtin_functions = [
+        "str"; "int"; "float"; "bytes"; "bool"; "list"; "dict"; "tuple"; "set"; "len";
+      ]
+      in
+
+      if List.exists builtin_functions ~f:(String.equal (Reference.show callee_name))
+      then true
+      else false
     | _ -> 
       false
   )

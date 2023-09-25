@@ -146,6 +146,8 @@ let partition_name resolution ~name =
       base, Reference.create_from_list attributes, annotation
   | _ -> Reference.create_from_list identifiers, Reference.create "", None
 
+let has_temporary_annotation ~reference resolution =
+  Refinement.Store.has_temporary_annotation ~name:reference resolution.annotation_store
 
 let has_nontemporary_annotation ~reference resolution =
   Refinement.Store.has_nontemporary_annotation ~name:reference resolution.annotation_store

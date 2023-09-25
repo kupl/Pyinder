@@ -464,6 +464,19 @@ module ClassSummary = struct
 
     { t with class_var_type; }
 
+  let update_unseen_temp_class_var_type_to_unknown ({ class_var_type; temp_class_var_type; _ } as t) =
+    let class_var_type =
+      ReferenceMap.fold temp_class_var_type ~init:class_var_type ~f:(fun ~key ~data:_ acc ->
+        if ReferenceMap.mem class_var_type key then acc
+        else (
+          (* Log.dump "??? %a" Reference.pp key; *)
+          ReferenceMap.set acc ~key ~data:Type.Unknown
+        )
+      )
+    in
+
+    { t with class_var_type; }
+
   let set_class_var_type_to_empty t =
     { t with class_var_type=ReferenceMap.empty }
 
@@ -510,6 +523,8 @@ module ClassSummary = struct
       |> ReferenceSet.union (ReferenceMap.diff join_temp_class_var_type right.join_temp_class_var_type)
     in
 
+    (* ReferenceSet.iter change_set ~f:(fun c -> Log.dump "CHANGE : %a" Reference.pp c); *)
+
     (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
@@ -521,9 +536,9 @@ module ClassSummary = struct
       change_set;
     }
 
-  let pp_class_var_type format { class_var_type; temp_class_var_type; _ } =
-      Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n\n[[[ Classs Temp Variable Type ]]]\n%a\n" 
-      (ReferenceMap.pp ~data_pp:Type.pp) class_var_type (ReferenceMap.pp ~data_pp:Type.pp) temp_class_var_type 
+  let pp_class_var_type format { class_var_type; join_temp_class_var_type; temp_class_var_type; _ } =
+      Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n\n[[[ Classs JOIN Variable Type ]]]\n%a\n\n[[[ Classs Temp Variable Type ]]]\n%a\n" 
+      (ReferenceMap.pp ~data_pp:Type.pp) class_var_type (ReferenceMap.pp ~data_pp:Type.pp) join_temp_class_var_type  (ReferenceMap.pp ~data_pp:Type.pp) temp_class_var_type 
 
   let pp_class_info format { class_attributes; _ } =
       Format.fprintf format "[[[ Class Info ]]] \n%a\n" ClassAttributes.pp class_attributes
@@ -562,7 +577,15 @@ module ClassTable = struct
   let add_usage_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummary.add_usage_attributes
 
   let update_unseen_temp_class_var_type ~type_join ~updated_vars t =
-    ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.update_unseen_temp_class_var_type  ~type_join ~updated_vars class_info))
+    ClassHash.mapi_inplace t ~f:(fun ~key ~data:class_info -> 
+      let updated_vars = Reference.Map.find updated_vars key |> Option.value ~default:Reference.Set.empty in
+      (ClassSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars class_info)
+    )
+
+  let update_unseen_temp_class_var_type_to_unknown t =
+    ClassHash.mapi_inplace t ~f:(fun ~key:_ ~data:class_info -> 
+      ClassSummary.update_unseen_temp_class_var_type_to_unknown class_info
+    )
 
   let set_all_class_var_type_to_empty t =
     ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.set_class_var_type_to_empty class_info))
@@ -577,9 +600,9 @@ module ClassTable = struct
     ClassHash.set t ~key:class_name ~data:class_info
 
   let get_class_vars t =
-    ClassHash.fold t ~init:Reference.Set.empty ~f:(fun ~key:_ ~data acc ->
-      ClassSummary.get_class_vars data  
-      |> Reference.Set.union acc
+    ClassHash.fold t ~init:Reference.Map.empty ~f:(fun ~key ~data acc ->
+      let data = ClassSummary.get_class_vars data in
+       Reference.Map.set ~key ~data acc
     )
 
   let get ~class_name ~f t = 
@@ -863,9 +886,10 @@ module Signatures = struct
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
     ArgTypesMap.set t ~key:arg_types ~data:{ data with return_var_type=(ReferenceMap.set data.return_var_type ~key:reference ~data:typ); }
 
-    
+
   let add_return_type ~type_join t arg_types typ =
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
+
     let ret_type = 
       type_join data.return_type typ 
       |> Type.narrow_iterable ~max_depth:2
@@ -992,6 +1016,7 @@ module type FunctionSummary = sig
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
+    return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     unknown_decorator : bool;
@@ -1012,6 +1037,7 @@ module FunctionSummary = struct
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
+    return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     unknown_decorator : bool;
@@ -1025,6 +1051,7 @@ module FunctionSummary = struct
     arg_annotation= ArgTypes.empty; (* Argument Annotation *)
     return_var_type= ReferenceMap.empty; (* Return 했을 때의 parameter 정보 *)
     return_type= Type.Unknown; (* Function의 Return Type *) *)
+    return_annotation=Type.Unknown;
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
     unique_analysis=UniqueAnalysis.UniqueStruct.empty;
@@ -1057,6 +1084,9 @@ module FunctionSummary = struct
 
   let add_return_var_type ({ signatures; _ } as t) arg_types reference typ =
     { t with signatures=(Signatures.add_return_var_type signatures arg_types reference typ); }
+
+  let add_return_annotation t typ =
+    { t with return_annotation=typ }
 
   let add_return_type ~type_join ({ signatures; _ } as t) arg_types typ =
     { t with signatures=(Signatures.add_return_type ~type_join signatures arg_types typ); }
@@ -1115,6 +1145,9 @@ module FunctionSummary = struct
   let get_return_var_type { return_var_type; _} = return_var_type *)
   let get_return_var_type { signatures; _ } arg_types = Signatures.get_return_var_type signatures arg_types
 
+
+  let get_return_annotation { return_annotation; _ } = return_annotation
+
   let get_return_type { signatures; _ } arg_types = Signatures.get_return_type signatures arg_types
 
   let get_callers { callers; _ } = callers
@@ -1151,6 +1184,11 @@ module FunctionSummary = struct
       )
     in
 
+    let return_annotation =
+      match left.return_annotation, right.return_annotation with
+      | Type.Unknown, t | t, Type.Unknown -> t
+      | _ -> left.return_annotation
+    in
     let callers=CallerSet.union left.callers right.callers in
     let usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes in
 
@@ -1158,6 +1196,7 @@ module FunctionSummary = struct
     signatures;
     preprocess;
     callers;
+    return_annotation;
     usage_attributes;
     unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
     unknown_decorator=left.unknown_decorator || right.unknown_decorator
@@ -1243,6 +1282,12 @@ module FunctionSummary = struct
       let callers= 
       CallerSet.union prev.callers next.callers 
       in
+
+      let return_annotation =
+        match prev.return_annotation, next.return_annotation with
+        | Type.Unknown, t | t, Type.Unknown -> t
+        | _ -> prev.return_annotation
+      in
       (* let tt1 = Timer.stop_in_sec timer in *)
       let usage_attributes = (* next.usage_attributes *) AttributeStorage.join prev.usage_attributes next.usage_attributes in
       (* let tt2 = Timer.stop_in_sec timer in *)
@@ -1257,6 +1302,7 @@ module FunctionSummary = struct
       signatures;
       preprocess;
       callers;
+      return_annotation;
       usage_attributes;
       unique_analysis=next.unique_analysis; 
       unknown_decorator=prev.unknown_decorator || next.unknown_decorator
@@ -1431,6 +1477,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.add_caller func_summary caller) t
 
+  let add_return_annotation t func return_type =
+    let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
+      FunctionHash.set ~key:func ~data:(FunctionSummary.add_return_annotation func_summary return_type) t
+
   let add_return_type ~type_join t func arg_types return_type =
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
       FunctionHash.set ~key:func ~data:(FunctionSummary.add_return_type ~type_join func_summary arg_types return_type) t
@@ -1502,9 +1552,19 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_return_var_type func_summary arg_types
 
-  let get_return_type t func_name arg_types =
+  let get_return_type ~less_or_equal t func_name arg_types =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
-    FunctionSummary.get_return_type func_summary arg_types
+    let annotation = FunctionSummary.get_return_annotation func_summary in
+    let real_type = FunctionSummary.get_return_type func_summary arg_types in
+
+    match annotation with
+    | Type.Unknown -> real_type
+    | t -> 
+      let filtered_annotation = Type.filter_unknown t in
+      let filtered_real_type = Type.filter_unknown real_type in
+      if less_or_equal ~left:filtered_real_type ~right:filtered_annotation
+      then real_type
+      else filtered_annotation
 
   let get_callers t func_name =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -1725,6 +1785,8 @@ module OurSummary = struct
   let add_caller { function_table; _} ~caller callee =
     FunctionTable.add_caller function_table callee caller
 
+  let add_return_annotation {function_table; _ } func_name return_type =
+    FunctionTable.add_return_annotation function_table func_name return_type
 
   let add_return_type ~type_join {function_table; _ } func_name arg_types return_type =
     FunctionTable.add_return_type ~type_join function_table func_name arg_types return_type
@@ -1769,8 +1831,8 @@ module OurSummary = struct
   let get_return_var_type {function_table; _} func_name arg_types =
     FunctionTable.get_return_var_type function_table func_name arg_types
 
-  let get_return_type {function_table; _} func_name arg_types  =
-    FunctionTable.get_return_type function_table func_name arg_types
+  let get_return_type ~less_or_equal {function_table; _} func_name arg_types  =
+    FunctionTable.get_return_type ~less_or_equal function_table func_name arg_types
 
   let get_callers {function_table; _} func_name =
     FunctionTable.get_callers function_table func_name
@@ -1807,6 +1869,9 @@ module OurSummary = struct
 
   let update_unseen_temp_class_var_type ~type_join ~updated_vars { class_table; _ } =
     ClassTable.update_unseen_temp_class_var_type ~type_join ~updated_vars class_table
+
+  let update_unseen_temp_class_var_type_to_unknown { class_table; _ } =
+    ClassTable.update_unseen_temp_class_var_type_to_unknown class_table
   let set_all_class_var_type_to_empty { class_table; _ } =
     ClassTable.set_all_class_var_type_to_empty class_table
 
@@ -2083,3 +2148,5 @@ let select_our_model func_name =
     !our_model
 
 let is_first = ref true
+
+(* let debug = ref true *)

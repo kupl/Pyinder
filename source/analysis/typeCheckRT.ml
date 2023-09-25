@@ -128,7 +128,7 @@ let errors_from_not_found
                   Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_expression; mismatch }
               in
 
-              (* Log.dump "HERE??"; *)
+              (* Log.dump "HERE?? %a ==> %a %a" Expression.pp target_expression Type.pp mismatch.actual Type.pp mismatch.expected; *)
               
               let typed_dictionary_error
                   ~method_name
@@ -348,6 +348,11 @@ module TypeCheckRT (Context : OurContext) = struct
     match t with
     | Unreachable -> false
     | Value _ -> true
+
+  let get_refinement t =
+    match t with
+    | Unreachable -> None
+    | Value r -> Some (Resolution.get_annotation_store r)
     (*
   let top_to_bottom t =
     match t with
@@ -1194,9 +1199,13 @@ module TypeCheckRT (Context : OurContext) = struct
       =
       
       
+      (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in *)
+
       let name = Name.Attribute { base; special; attribute } in
       let reference = name_to_reference name in
       let name_expression = name in
+
+      
       
       let access_as_attribute () =
         
@@ -1307,6 +1316,8 @@ module TypeCheckRT (Context : OurContext) = struct
             let class_datas, attributes, _ = List.unzip3 attribute_info in
             let head_annotation, tail_annotations, resolution =
 
+            
+
             (* Log.dump "FIND %s.%s" (Expression.show base) name;  *)
 
               let (rev_annotations, resolution) = attributes |> List.foldi ~init:([], resolution) ~f:(fun i (acc, resolution) attribute -> 
@@ -1370,13 +1381,20 @@ module TypeCheckRT (Context : OurContext) = struct
                       (* TODO : final summary 만으로 충분한가? *)
                       let final_model = !OurDomain.our_model in
                       let attribute_name = (Annotated.Attribute.name attribute) in
+                      let less_or_equal = GlobalResolution.less_or_equal global_resolution in
                       
-                      OurTypeSet.OurSummaryResolution.get_type_of_class_attribute final_model (Type.class_name class_data.instantiated) attribute_name
+                      OurTypeSet.OurSummaryResolution.get_type_of_class_attribute ~less_or_equal final_model (Type.class_name class_data.instantiated) attribute_name
                       |> (fun t ->
                       (*  Log.dump "%s, %a => %a" attribute_name Reference.pp (Type.class_name class_data.instantiated) Type.pp t; *)
                         match t with
                         | None -> annotation
-                        | Some t -> Annotation.create_mutable t
+                        | Some t -> 
+                          
+                         (*  if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift.S3CopyToTable.run"
+                            then (
+                              Log.dump "FIND %s.%s ==> %a" (Expression.show base) name Type.pp t;
+                            ); *)
+                          Annotation.create_mutable t
                       ), resolution
                 in
                 new_annotation::acc, resolution
@@ -1470,8 +1488,16 @@ module TypeCheckRT (Context : OurContext) = struct
               | _ -> errors, resolution
             in
 
+            
+
             let resolved_annotation =
               let apply_local_override global_annotation =
+
+                (* if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift.S3CopyToTable.run"
+                  then (
+                    Log.dump "2222 Name %a (%a)" Name.pp name_expression Annotation.pp global_annotation;
+                  ); *)
+
                 let local_override =
                   reference
                   >>= fun reference ->
@@ -1516,6 +1542,11 @@ module TypeCheckRT (Context : OurContext) = struct
                 in
                 { refined with annotation = Type.union [sofar.annotation; element.annotation] } *)
 
+                (* if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift.S3CopyToTable.run"
+                  then (
+                    Log.dump "1111 Name %a (%a) (%a)" Name.pp name_expression Annotation.pp sofar Annotation.pp element;
+                  ); *)
+
                 Annotation.join ~type_join:(GlobalResolution.join global_resolution) sofar element
               in
 
@@ -1525,6 +1556,11 @@ module TypeCheckRT (Context : OurContext) = struct
               |> apply_class_info
               *)
             in
+
+            (* if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift.S3CopyToTable.run"
+            then (
+              Log.dump "Name %a (%a)" Name.pp name_expression Annotation.pp resolved_annotation;
+            ); *)
 
             let resolved_annotation =
               match Annotation.annotation resolved_annotation with
@@ -1615,8 +1651,9 @@ module TypeCheckRT (Context : OurContext) = struct
       
       dump_arguments arguments;
       *)
+      (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in *)
 
-      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.bin.cli.CLIFactory.$class_toplevel"
+      (* if String.is_substring (Reference.show define_name) ~substring:"HTMLFormatter._write_col_header"
         then (
           Log.dump "Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
         ); *)
@@ -1943,11 +1980,14 @@ module TypeCheckRT (Context : OurContext) = struct
                         annotation_type
                     in
 
+                    
+
                     let update_dict_key_value =
                       GlobalResolution.join_dict_key_value update_dict_field ~global_resolution ~key:key_arg.resolved ~value:value_arg_resolved
                     in
-                    
-                    (* Log.dump "Result Type : %a" Type.pp update_dict_key_value; *)
+
+                    (* Log.dump "Update Type : %a" Type.pp update_dict_field;
+                    Log.dump "Result Type : %a" Type.pp update_dict_key_value; *)
                     let join = GlobalResolution.join global_resolution in
                     let less_or_equal = GlobalResolution.less_or_equal global_resolution in
                     let annotation = update_dict_key_value |> Type.narrow_union ~join ~less_or_equal |> Annotation.create_mutable in
@@ -2032,6 +2072,11 @@ module TypeCheckRT (Context : OurContext) = struct
                   let value_arg = List.nth_exn arguments 0 in
                   let value_type = value_arg.resolved in
 
+                  (* (match value_arg.expression with
+                  | Some e ->  Log.dump "VALUE : %a" Expression.pp e;
+                  | _ -> Log.dump "NO..";
+                  ); *)
+                 
 
                   let update_value_type value_type =
                     (match value_type with
@@ -2044,6 +2089,8 @@ module TypeCheckRT (Context : OurContext) = struct
                       origin
                     )
                   in
+
+                  (* Log.dump "??? %a ===> %a" Type.pp value_type Type.pp (update_value_type value_type); *)
 
                   Some (Type.union_update ~f:update_value_type value_type)
 
@@ -2379,12 +2426,13 @@ module TypeCheckRT (Context : OurContext) = struct
               arguments;
               _
             } ->
-
+              
             (match callable.kind with
             | Named reference when not (String.equal (Reference.last reference) "__init__") ->
               let our_model = !OurDomain.our_model in
               let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument ~arguments callable in
-              let observed_return_type = OurDomain.OurSummary.get_return_type our_model reference arg_types in
+              let less_or_equal = GlobalResolution.less_or_equal global_resolution in 
+              let observed_return_type = OurDomain.OurSummary.get_return_type ~less_or_equal our_model reference arg_types in
               (match selected_return_annotation with
               | Any -> `Fst observed_return_type
               | _ -> `Fst (Type.union [selected_return_annotation; observed_return_type])
@@ -2489,19 +2537,18 @@ module TypeCheckRT (Context : OurContext) = struct
                 resolved_annotation = None;
                 base = None;
               }
-        | ( _,
-            KnownCallable
-              {
-                selected_return_annotation =
-                  SignatureSelectionTypes.NotFound
-                    { closest_return_annotation; reason = Some reason };
-                callable = unpacked_callable_and_self_argument;
-                arguments;
-                _;
-              }
-            :: _ ) ->
-            (* For a union of callables, we prioritize mismatched signatures even if some of the
-                callables matched correctly. *)
+        | (_,
+          KnownCallable
+          {
+            selected_return_annotation =
+              SignatureSelectionTypes.NotFound
+                { closest_return_annotation; reason = Some reason };
+            callable = unpacked_callable_and_self_argument;
+            arguments;
+            _;
+          }
+          :: _
+          ) ->
             let errors =
               let error_kinds =
                 let { TypeOperation.callable; self_argument } =
@@ -2523,14 +2570,24 @@ module TypeCheckRT (Context : OurContext) = struct
               in
               List.fold error_kinds ~init:errors ~f:emit
             in
+
+            let _ = closest_return_annotation in
+            (* Log.dump "HMM? %a == %a" Expression.pp expression Type.pp closest_return_annotation; *)
+            let resolved =
+              if String.is_suffix (Expression.show (Callee.expression callee)) ~suffix:"__" 
+              then closest_return_annotation
+              else Type.Unknown 
+            in
+
             Some
               {
                 resolution;
                 errors;
-                resolved = closest_return_annotation;
+                resolved (* closest_return_annotation*);
                 resolved_annotation = None;
                 base = None;
               }
+
         | _ -> 
           None
       in
@@ -2709,6 +2766,11 @@ module TypeCheckRT (Context : OurContext) = struct
                       ~self_argument
 
                   in
+
+                  (* (match selected_return_annotation with
+                  | Found { selected_return_annotation; _ } -> Log.dump "FOUND %a" Type.pp selected_return_annotation;
+                  | _ -> Log.dump "NO";
+                  ); *)
 
                   KnownCallable
                     (return_annotation_with_callable_and_self
@@ -3082,6 +3144,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
       |> (function
                   | Some resolved -> 
+                    (* Log.dump "??? %a" Type.pp resolved.resolved; *)
                     { resolved with resolved=update_resolved_type resolved.resolved}
                   | None -> 
                     resolved_for_bad_callable ~resolution ~errors undefined_attributes)
@@ -3148,7 +3211,10 @@ module TypeCheckRT (Context : OurContext) = struct
             { resolved with resolved = new_t |> update_resolved_type }
           | None -> 
             (match resolved.resolved, callee_reference with
-            | Type.Unknown, Some callee_reference when String.is_suffix ~suffix:"$zip" (Reference.show callee_reference) ->
+            | Type.Unknown, Some callee_reference 
+            when String.is_suffix ~suffix:"$zip" (Reference.show callee_reference) 
+            || String.is_suffix ~suffix:".zip" (Reference.show callee_reference)
+            ->
               let heuristic_callee = 
                 Type.Parametric { name = "type"; parameters=[Single (Primitive "zip")]; }
               in
@@ -3187,9 +3253,10 @@ module TypeCheckRT (Context : OurContext) = struct
           Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
         ); *)
       (* Log.dump "Callee %a Type %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee); *)
-      (* Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
- *)
-      (* if String.is_substring (Reference.show define_name) ~substring:"airflow.models.dag.DAG.__init__"
+      (* Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved; *)
+
+      (* if String.is_substring (Reference.show define_name) ~substring:"HTMLFormatter._write_col_header" 
+        && String.is_substring (Expression.show (Callee.expression callee)) ~substring:"compat.zip" 
         then (
           Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
         ); *)
@@ -3247,6 +3314,7 @@ module TypeCheckRT (Context : OurContext) = struct
           | BooleanOperator.And -> left
           | BooleanOperator.Or -> normalize (negate left)
         in
+        (* Log.dump "LEFT %a : %a" Expression.pp left_assume Type.pp resolved_left; *)
         match refine_resolution_for_assert ~resolution:resolution_left ~at_resolution left_assume with
         | Unreachable ->
             {
@@ -3257,6 +3325,7 @@ module TypeCheckRT (Context : OurContext) = struct
               base = None;
             }
         | Value refined_resolution -> (
+          (* Log.dump "HMM %a (%a) : %a" Expression.pp expression Type.pp resolved_left Resolution.pp refined_resolution; *)
           
             let forward_right resolved_left =
               let {
@@ -3876,7 +3945,7 @@ module TypeCheckRT (Context : OurContext) = struct
     | ComparisonOperator
         { ComparisonOperator.left; right; operator = ComparisonOperator.NotIn as operator } ->
 
-          
+        
         let resolve_in_call
             (resolution, errors, joined_annotation)
             { Type.instantiated; class_name; accessed_through_class }
@@ -3946,7 +4015,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
                 x
             | None -> 
-              
+              (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in *)
               (
                 match
                   resolve_method
@@ -3971,6 +4040,11 @@ module TypeCheckRT (Context : OurContext) = struct
                           resolved;
                         }
                     in
+
+                    (* if String.is_substring (Reference.show define_name) ~substring:"HTMLFormatter._write_col_header"
+                      then (
+                        Log.dump "Expression %a" Expression.pp expression;
+                      ); *)
                     (* Since we can't call forward_expression with the general type (we don't have a
                         good way of saying "synthetic expression with type T", simulate what happens
                         ourselves. *)
@@ -3979,19 +4053,38 @@ module TypeCheckRT (Context : OurContext) = struct
                         ~arguments
                         { Resolved.resolution; resolved = parent; errors; _ }
                       =
-                      Type.split parent
-                      |> fst
-                      |> Type.primitive_name
-                      >>= (fun class_name -> resolve_method class_name parent method_name)
-                      >>| fun callable ->
-                      forward_callable
-                        ~dynamic:true
-                        ~resolution
-                        ~errors
-                        ~target:(Some parent)
-                        ~callee:(create_callee callable)
-                        ~arguments:
-                          (List.map arguments ~f:(fun value -> { Call.Argument.name = None; value }))
+
+                      
+                      
+                      let x = 
+                        Type.split parent
+                        |> fst
+                        |> Type.primitive_name
+                        >>= (fun class_name -> resolve_method class_name parent method_name)
+                        >>| fun callable ->
+                        forward_callable
+                          ~dynamic:true
+                          ~resolution
+                          ~errors
+                          ~target:(Some parent)
+                          ~callee:(create_callee callable)
+                          ~arguments:
+                            (List.map arguments ~f:(fun value -> { Call.Argument.name = None; value }))
+                      in
+
+                      (* if String.is_substring (Reference.show define_name) ~substring:"HTMLFormatter._write_col_header"
+                        && (String.equal method_name "__next__")
+                        then (
+                          Log.dump "Expression %a" Expression.pp expression;
+                          Log.dump "Parent %a" Type.pp parent;
+                          match x with
+                          | Some x ->
+                            Log.dump "Child %a" Type.pp x.resolved;
+                          | None ->
+                            Log.dump "Child is None";
+                        );
+ *)
+                        x
                     in
                     forward_callable
                       ~dynamic:true
@@ -4197,28 +4290,37 @@ module TypeCheckRT (Context : OurContext) = struct
             let resolved = forward_expression ~resolution ~at_resolution expression in
             { resolved with errors = resolved.errors }
         | None ->
+
           (*Format.printf "\n\n%a binary %a\n\n" Expression.pp left Expression.pp right;*)
-            let resolution, errors = forward_expression ~resolution ~at_resolution left
-            |> (fun { Resolved.resolution; errors = left_errors; _ } ->
+            let resolution, errors, resolved = forward_expression ~resolution ~at_resolution left
+            |> (fun { Resolved.resolution; errors = left_errors; resolved = left_resolved; _ } ->
                   let { Resolved.resolution; errors = right_errors; Resolved.resolved; _ } =
                     forward_expression ~resolution ~at_resolution right
                   in
                   
-                  let update_resolution =
+                  let resolved =
+                    if Type.can_unknown left_resolved 
+                    then (
+                      Type.bool
+                    ) else (
+                      Type.Literal (Boolean (GlobalResolution.less_or_equal global_resolution ~left:left_resolved ~right:resolved))
+                    )
+                  in
+                  (* let update_resolution =
                   (match left.value with
                   | Name name ->
-                  Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable resolved)
+                    Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable resolved)
                   | _ -> resolution
                   )
                   in
                   let final_resolution = Resolution.meet_refinements resolution update_resolution in
-                  let _ = final_resolution in
-                  resolution, List.append left_errors right_errors)
+                  let _ = final_resolution in *)
+                  resolution, List.append left_errors right_errors, resolved)
             in  
             {
               resolution;
               errors;
-              resolved = Type.bool;
+              resolved = resolved;
               resolved_annotation = None;
               base = None;
             })
@@ -4906,9 +5008,28 @@ module TypeCheckRT (Context : OurContext) = struct
       let consistent_with_boundary = Type.union consistent_with_boundary in
       { consistent_with_boundary; not_consistent_with_boundary }
     in
-    let is_temporary_refinement name =
-      let rec refinable_annotation name =
-        match
+    let is_temporary_refinement (name: Name.t) =
+      let refinable_annotation name =
+        (match name_to_reference name with
+        | Some reference ->
+          if Resolution.has_temporary_annotation ~reference resolution
+          then true
+          else if Resolution.has_nontemporary_annotation ~reference resolution
+          then false
+          else (
+            match name with
+            | Name.Attribute { base = { Node.value = Name base; _ }; _ } when is_simple_name base ->
+              let reference = name_to_reference_exn name in
+              if Resolution.has_temporary_annotation ~reference resolution
+              then true
+              else if Resolution.has_nontemporary_annotation ~reference resolution
+              then false
+              else true
+            | _ -> true
+          )
+        | _ -> true
+        )
+       (*  match
           Resolution.get_local_with_attributes ~global_fallback:false ~name resolution, name
         with
         | Some local_annotation, _ -> Some local_annotation
@@ -4933,14 +5054,27 @@ module TypeCheckRT (Context : OurContext) = struct
             with
             | Some (ReadOnly (Refinable _)), Some true, Some annotation -> Some annotation
             | _ -> None)
-        | _ -> None
+        | _ -> None *)
       in
-      Option.is_none (refinable_annotation name)
+      (* Option.is_none (refinable_annotation name) *)
+      refinable_annotation name
     in
     let rec existing_annotation name =
-      match Resolution.get_local_with_attributes ~global_fallback:true ~name resolution, name with
+      match Resolution.get_local_with_attributes ~global_fallback:false ~name resolution, name with
       | Some annotation, _ -> Some annotation
-      | _, Name.Attribute { base = { Node.value = Name base; _ }; attribute; _ } -> (
+      | _, Name.Attribute { base = { Node.value = Name base; _ }; attribute; _ } -> 
+        let base_annotation = existing_annotation base in
+        (match base_annotation with
+        | Some annotation ->
+          let base_type = Annotation.annotation annotation in
+          let final_model = !OurDomain.our_model in
+          let less_or_equal = GlobalResolution.less_or_equal global_resolution in
+          OurTypeSet.OurSummaryResolution.get_type_of_class_attribute ~less_or_equal final_model (Type.class_name base_type) attribute
+          >>| Annotation.create_mutable
+          
+        | _ -> None
+        )
+        (* (
           let attribute =
             existing_annotation base
             >>| Annotation.annotation
@@ -4957,7 +5091,7 @@ module TypeCheckRT (Context : OurContext) = struct
           match attribute with
           | Some attribute when AnnotatedAttribute.defined attribute ->
               Some (AnnotatedAttribute.annotation attribute)
-          | _ -> None)
+          | _ -> None) *)
       | _ -> None
     in
     let refine_local ~name annotation =
@@ -4971,10 +5105,24 @@ module TypeCheckRT (Context : OurContext) = struct
     (* let add_expression_to_local ~expression ~annotation resolution  =
       Resolution.new_local ~temporary:true ~reference:(Reference.create (Expression.show expression)) ~annotation resolution
     in *)
+    let check_empty_constant expression =
+      match expression with
+      | Expression.Constant Constant.(False | NoneLiteral)
+      | Expression.Constant (Constant.Integer 0)
+      | Expression.Constant (Constant.Float 0.0)
+      | Expression.Constant (Constant.Complex 0.0)
+      | Expression.Constant (Constant.String { StringLiteral.value = ""; _ })
+      | Expression.List []
+      | Expression.Tuple []
+      | Expression.Dictionary { Dictionary.entries = []; keywords = [] }
+        -> true
+      | _ -> false
+    in
 
     match Node.value test with
     (* Explicit asserting falsy values. *)
-    | Expression.Constant Constant.(False | NoneLiteral)
+    | t when check_empty_constant t -> Unreachable
+    (* | Expression.Constant Constant.(False | NoneLiteral)
     | Expression.Constant (Constant.Integer 0)
     | Expression.Constant (Constant.Float 0.0)
     | Expression.Constant (Constant.Complex 0.0)
@@ -4982,7 +5130,7 @@ module TypeCheckRT (Context : OurContext) = struct
     | Expression.List []
     | Expression.Tuple []
     | Expression.Dictionary { Dictionary.entries = []; keywords = [] } ->
-        Unreachable
+        Unreachable *)
     (* Type is the same as `annotation_expression` *)
     | ComparisonOperator
         {
@@ -5225,6 +5373,45 @@ module TypeCheckRT (Context : OurContext) = struct
               Value resolution
             )
         | None -> Value resolution)
+      | ComparisonOperator
+        {
+          ComparisonOperator.left = { Node.value = Name name; _};
+          operator = ComparisonOperator.IsNot;
+          right = { Node.value = Constant Constant.NoneLiteral; _ };
+        } when is_simple_name name -> (
+        
+          (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+          if String.is_substring (Reference.show define_name) ~substring:"entity_component.EntityComponent"
+            then (
+              Log.dump "QQQ %a\n %a >>>" Resolution.pp resolution Name.pp name;
+            ); *)
+
+          match existing_annotation name with
+          | Some { Annotation.annotation = Type.NoneType; _ } -> 
+            (* Log.dump ">>> %a" Name.pp name; *)
+            (* if String.is_substring (Reference.show define_name) ~substring:"entity_component.EntityComponent"
+              then (
+                Log.dump "OKOK %a >>> %a" Name.pp name Type.pp Type.NoneType;
+              ); *)
+  
+            Unreachable
+          | Some ({ Annotation.annotation = Type.Union parameters; _ } as annotation) ->
+              let refined_annotation =
+                List.filter parameters ~f:(fun parameter -> not ((Type.is_none parameter)))
+              in
+              (* if String.is_substring (Reference.show define_name) ~substring:"entity_component.EntityComponent"
+                then (
+                  Log.dump "OKOK %a >>> %a" Name.pp name Type.pp (Type.union refined_annotation);
+                ); *)
+              (* Log.dump "Name : %a => %a" Name.pp name Type.pp (Type.union refined_annotation); *)
+              let resolution =
+                refine_local
+                  ~name
+                  { annotation with Annotation.annotation = Type.union refined_annotation }
+              in
+              Value resolution
+          | _ -> Value resolution
+        )
     | ComparisonOperator
         {
           ComparisonOperator.left = { Node.value = Name name; _ };
@@ -5232,7 +5419,6 @@ module TypeCheckRT (Context : OurContext) = struct
           right;
         }
       when is_simple_name name -> (
-        
         let { Resolved.resolved = refined_type; _ } = forward_expression ~resolution ~at_resolution right in
         let refined = Annotation.create_mutable refined_type in
         
@@ -5253,6 +5439,7 @@ module TypeCheckRT (Context : OurContext) = struct
               )
             in
 
+            
 
             if Type.is_bottom filter_refined_type then Unreachable
             else (
@@ -5336,15 +5523,11 @@ module TypeCheckRT (Context : OurContext) = struct
         | _ -> Value resolution
         )
     (* Not-none checks (including ones that work over containers) *)
-    | ComparisonOperator
-        {
-          ComparisonOperator.left;
-          operator = ComparisonOperator.IsNot;
-          right = { Node.value = Constant Constant.NoneLiteral; _ };
-        } ->
+
           
-        refine_resolution_for_assert ~resolution ~at_resolution left
+        (* refine_resolution_for_assert ~resolution ~at_resolution left *)
     | Name name when is_simple_name name -> (
+        
         match existing_annotation name with
         | Some { Annotation.annotation = Type.NoneType | Type.Literal (Boolean (false)) ; _ } -> 
           (* Log.dump ">>> %a" Name.pp name; *)
@@ -5361,17 +5544,17 @@ module TypeCheckRT (Context : OurContext) = struct
             in
             Value resolution
         | _ -> Value resolution)
-      | UnaryOperator
-        {
-          UnaryOperator.operator = UnaryOperator.Not;
-          operand =
-            {
-              Node.value =
-                Name name
-              ;
-              _;
-            };
-        }
+    | UnaryOperator
+      {
+        UnaryOperator.operator = UnaryOperator.Not;
+        operand =
+          {
+            Node.value =
+              Name name
+            ;
+            _;
+          };
+      }
       
        when is_simple_name name -> (
           match existing_annotation name with
@@ -5396,6 +5579,19 @@ module TypeCheckRT (Context : OurContext) = struct
                 Unreachable
               )
           | _ -> Value resolution)
+    | UnaryOperator
+      {
+        UnaryOperator.operator = UnaryOperator.Not;
+        operand =
+          {
+            Node.value =
+              (Expression.Constant _ | Expression.List _ | Expression.Dictionary _ | Expression.Tuple _ | Expression.Set _) as test
+            ;
+            _;
+          };
+      } when not (check_empty_constant test) ->
+        (* Log.dump "WHAT?? %a" Expression.pp_expression test; *)
+        Unreachable
     | Name _ ->
       (* Log.dump "Name : %a" Name.pp name; *)
       Value resolution
@@ -5513,24 +5709,52 @@ module TypeCheckRT (Context : OurContext) = struct
             in
             state
         | BooleanOperator.Or ->
-            let left_state = refine_resolution_for_assert ~resolution ~at_resolution left in
+            (* let left_state = refine_resolution_for_assert ~resolution ~at_resolution left in
             let right_state = refine_resolution_for_assert ~resolution ~at_resolution right in
             (match left_state, right_state with
-            | Unreachable, Unreachable -> Unreachable
-            | _ -> 
-              let update resolution expression =
-                refine_resolution_for_assert ~resolution ~at_resolution expression
-                |> function
-                | Value post_resolution -> post_resolution
-                | Unreachable -> resolution
-              in
-              let left_resolution = update resolution left in
+            | Unreachable, Unreachable -> Unreachable *)
+            let update resolution expression =
+              refine_resolution_for_assert ~resolution ~at_resolution expression
+              (*| > function
+              | Value post_resolution -> post_resolution
+              | Unreachable -> resolution *)
+            in
+
+            (* let left_state = refine_resolution_for_assert ~resolution ~at_resolution left *)
+
+            let check_right resolution =
+              match update resolution (normalize (negate left)) with
+              | Unreachable -> Unreachable
+              | Value resolution ->
+                update resolution right
+            in
+
+            (match update resolution left with
+            | Unreachable ->
+              (* Log.dump "HE??"; *)
+              check_right resolution
+            | Value left_resolution -> 
+              (match check_right resolution with
+              | Unreachable ->
+                (* Log.dump "Left %a \n Right %a" Expression.pp left Expression.pp right;
+                Log.dump "Test LEft ==> %a" Resolution.pp left_resolution; *)
+                Value left_resolution
+              | Value right_resolution ->
+                (* Log.dump "Left %a \n Right %a" Expression.pp left Expression.pp right;
+                Log.dump "Test LEft With Right ==> %a" Resolution.pp (Resolution.outer_join_refinements left_resolution right_resolution); *)
+                Value (Resolution.outer_join_refinements left_resolution right_resolution)
+              )
+            )
+              (* let left_resolution = update resolution left in
+
+              Log.dump "Test LEft %a ==> %a" Expression.pp left Resolution.pp left_resolution;
+
               let right_resolution =
                 update resolution (normalize (negate left))
                 |> fun resolution -> update resolution right
               in
-              Value (Resolution.outer_join_refinements left_resolution right_resolution))
-            )
+              Value (Resolution.outer_join_refinements left_resolution right_resolution)) *)
+    )
             
     (* Everything else has no refinement *)
     | _ -> (* Log.dump "Expression : %a" Expression.pp test;  *)Value resolution
@@ -6912,6 +7136,8 @@ module TypeCheckRT (Context : OurContext) = struct
             actual
             |> Type.Variable.convert_all_escaped_free_variables_to_bottom
           in
+
+          (* Log.dump "After %a" Type.pp convert_actual; *)
           
           OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name entry_arg_types convert_actual;
           (* Context.our_summary := our_summary; *)
@@ -7162,16 +7388,34 @@ module TypeCheckRT (Context : OurContext) = struct
               
               let class_attrs = ClassSummary.attributes class_summary in
             
-                Identifier.SerializableMap.iter (fun _ { Node.value={ClassSummary.Attribute.kind; name; }; _ } -> 
+                Identifier.SerializableMap.iter (fun _ { Node.value={ClassSummary.Attribute.kind; name=attr_name; }; _ } -> 
                   match kind with
-                  | Simple _ ->
-                    OurDomain.OurSummary.add_class_attribute our_model class_statement.name name
+                  | Simple { values; _ } ->
+                    let is_column =
+                      List.exists values ~f:(fun { value; _ } ->
+                        (* if String.is_substring ~substring:"State" (Reference.show name) then
+                          Log.dump "%a TEST %s ==> %a" Reference.pp name attr_name Expression.pp value; *)
+
+                        match Node.value value with
+                        | Expression.Call { callee = { Node.value = Name n; _ }; _ } when is_simple_name n ->
+                          let name_reference = name_to_reference n in
+                          (match name_reference with
+                          | Some reference when String.is_substring ~substring:"sqlalchemy.Column" (Reference.show reference) -> 
+                            true
+                          | _ -> false
+                          )
+                        | _ -> false
+                      )
+                    in
+                    if is_column then ()
+                    else
+                      OurDomain.OurSummary.add_class_attribute our_model class_statement.name attr_name
                   | Property _ ->
-                    OurDomain.OurSummary.add_class_property our_model class_statement.name name
+                    OurDomain.OurSummary.add_class_property our_model class_statement.name attr_name
                   | Method { signatures; _ } ->
                     List.iter signatures ~f:(fun signature ->
                       let arguments = AttributeAnalysis.CallInfo.of_parameters signature.parameters in
-                      OurDomain.OurSummary.add_class_method our_model class_statement.name arguments name
+                      OurDomain.OurSummary.add_class_method our_model class_statement.name arguments attr_name
                     )
                     
                 ) class_attrs;
@@ -8461,7 +8705,8 @@ module TypeCheckRT (Context : OurContext) = struct
       forward_statement ~resolution ~at_resolution ~statement
       |> fun ((resolution, errors)) ->
       let interesting_errors = Error.filter_interesting_error errors in
-      (* Log.dump "INTERESTING : %i" (List.length interesting_errors); *)
+
+      
       match resolution with
       | Value _ when List.length interesting_errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ())) -> Resolution.Unreachable
         (* let resolution = update_resolution_of_error ~resolution errors in
@@ -8484,7 +8729,17 @@ module TypeCheckRT (Context : OurContext) = struct
     (* Log.dump "WHY??";
     List.iter errors ~f:(fun e -> Log.dump "%a" Error.pp e); *)
     let interesting_errors = Error.filter_interesting_error errors in
-    (* Log.dump "INTERESTING : %a\n%i!!" Statement.pp statement (List.length interesting_errors); *)
+    
+    (* let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+    if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift"
+      then (
+      Log.dump "INTERESTING : %a\n%i!!" Statement.pp statement (List.length interesting_errors);
+      List.iter interesting_errors ~f:(fun e -> Log.dump "HO : %a" Error.pp e);
+      ); *)
+    (* if List.length errors > 0 then (
+      Log.dump "INTERESTING : %a\n%i!!" Statement.pp statement (List.length interesting_errors);
+      List.iter errors ~f:(fun e -> Log.dump "HO : %a" Error.pp e);
+    ); *)
     match resolution with
     | Value _ when List.length interesting_errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ())) -> Unreachable, errors
       (* let resolution = update_resolution_of_error ~resolution errors in

@@ -57,6 +57,8 @@ module Store : sig
 
   val to_yojson : Format.formatter -> t -> unit
 
+  val has_temporary_annotation : name:Reference.t -> t -> bool
+
   val has_nontemporary_annotation : name:Reference.t -> t -> bool
 
   val get_base : name:Reference.t -> t -> Annotation.t option

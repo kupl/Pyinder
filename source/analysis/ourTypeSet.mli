@@ -46,7 +46,7 @@ module OurSummaryResolution : sig
 
   val store_to_return_var_type : ?usedef_table:Usedef.UsedefState.t -> ?class_param:string -> ?local:bool -> t -> Reference.t -> ArgTypes.t -> Store.t -> unit
 
-  val get_type_of_class_attribute : t -> Reference.t -> string -> Type.t option
+  val get_type_of_class_attribute : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> string -> Type.t option
 
   val get_self_attributes_tree : t -> Reference.t -> Unit.t Identifier.Map.Tree.t
 

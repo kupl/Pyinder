@@ -20,6 +20,8 @@ module type PossibleState = sig
   *)
   val is_reachable : t -> bool
 
+  val get_refinement : t -> Refinement.Store.t option
+
   val bottom : t
 
   val less_or_equal : left:t -> right:t -> bool
@@ -54,7 +56,7 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
-  val post_info : t -> bool Int.Map.t
+  val post_info : t -> (Refinement.Store.t * Refinement.Store.t) Int.Map.t
 
   (*
   val exit_possible : t -> state option

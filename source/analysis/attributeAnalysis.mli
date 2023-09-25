@@ -55,6 +55,7 @@ module AttributeStorage :
     val filter_single_class_param : class_param:string -> t -> t
     val get_reference_list : t -> Reference.t list
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit
+    val pp_data_set : Format.formatter -> data_set -> unit
     val pp :
       Format.formatter -> t -> unit
     val add_attribute :

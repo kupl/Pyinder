@@ -67,7 +67,8 @@ let preprocess ~our_model ~global_resolution define =
       in
 
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp parameter_usage_attributes; *)
-      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
+      (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
+        Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
       
       let x =
       OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
@@ -78,14 +79,20 @@ let preprocess ~our_model ~global_resolution define =
     )
   in  
 
-  
+  (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
+    (
+      LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key ~data -> 
+        Log.dump "Expression %a ==> %a" Expression.pp key Reference.pp data;  
+      )
+    ); *)
 
   LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key:({ Node.value; _ } as expression) ~data ->
     match value with
     | Expression.Name _ ->
       let duck_type = Type.Primitive (Reference.show data) in
       (* Log.dump "Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
-      (* if String.is_substring (Reference.show name) ~substring:"" then *)
+      (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
+        Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
         
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()

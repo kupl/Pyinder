@@ -58,6 +58,8 @@ val resolve_attribute_access : t -> base_type:Type.t -> attribute:string -> Type
 
 val partition_name : t -> name:Expression.Name.t -> Reference.t * Reference.t * Annotation.t option
 
+val has_temporary_annotation : reference:Reference.t -> t -> bool
+
 val has_nontemporary_annotation : reference:Reference.t -> t -> bool
 
 val new_local : ?temporary:bool -> t -> reference:Reference.t -> annotation:Annotation.t -> t

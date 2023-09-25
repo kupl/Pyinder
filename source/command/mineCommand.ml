@@ -182,9 +182,10 @@
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
               if (k >= 10) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
-              Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
-              Log.dump "Check";
+                Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+                Log.dump "Check";
                 Analysis.OurDomain.save_mode "error";
+                Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model;
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
                   |> Analysis.ErrorsEnvironment.set_environment environment

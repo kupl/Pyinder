@@ -205,7 +205,8 @@ module ClassAttributes: sig
     methods: AttributeAnalysis.CallSet.t Identifier.Map.t;
   }
 
-  
+  val get_class_property : t -> AttrsSet.t
+
   val is_used_attr : t -> string -> bool
 
   val str_attributes : unit -> t
@@ -323,6 +324,7 @@ module type FunctionSummary = sig
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
+    return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     unknown_decorator : bool;
@@ -362,6 +364,7 @@ module FunctionSummary : sig
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
     callers: CallerSet.t;
+    return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     unknown_decorator : bool;
@@ -379,6 +382,8 @@ end
 
 module FunctionTable : sig
   type t = FunctionSummary.t FunctionHash.t
+
+  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> ArgTypes.t -> Type.t
 end
 
 module type OurSummary = sig
@@ -425,6 +430,8 @@ module OurSummary : sig
 
   val add_caller : t -> caller:Reference.t -> Reference.t -> unit
 
+  val add_return_annotation : t -> Reference.t -> Type.t -> unit
+
   val add_return_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Reference.t -> ArgTypes.t -> Type.t -> unit
 
 (*   val set_arg_types : t -> Reference.t -> ArgTypes.t -> t
@@ -447,7 +454,7 @@ module OurSummary : sig
   (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
 *)
-  val get_class_vars : t -> Reference.Set.t
+  val get_class_vars : t -> Reference.Set.t Reference.Map.t
 
   val get_class_table : t -> ClassTable.t
 
@@ -460,7 +467,7 @@ module OurSummary : sig
 
   val get_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t ReferenceMap.t
 
-  val get_return_type : t -> Reference.t -> ArgTypes.t -> Type.t
+  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> ArgTypes.t -> Type.t
 
   val get_callers : t -> Reference.t -> CallerSet.t
 
@@ -484,7 +491,9 @@ module OurSummary : sig
 
   val set_class_summary : t -> Reference.t -> ClassSummary.t -> unit
 
-  val update_unseen_temp_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> updated_vars:Reference.Set.t -> t -> unit
+  val update_unseen_temp_class_var_type : type_join:(Type.t -> Type.t -> Type.t) -> updated_vars:Reference.Set.t Reference.Map.t -> t -> unit
+
+  val update_unseen_temp_class_var_type_to_unknown : t -> unit
 
   val set_all_class_var_type_to_empty : t -> unit
 
@@ -562,3 +571,5 @@ val load_specific_file : unit -> unit
 val select_our_model : Reference.t -> OurSummary.t
 
 val is_first : bool ref
+
+(* val deubg : bool ref *)

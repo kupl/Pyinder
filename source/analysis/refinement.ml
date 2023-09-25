@@ -447,6 +447,7 @@ module Store = struct
     |> String.concat ~sep:", "
     |> Format.fprintf format {|"Temporary Annotations" : {%s}|}
 
+  let has_temporary_annotation ~name { temporary_annotations; _ } = ReferenceMap.mem temporary_annotations name
   let has_nontemporary_annotation ~name { annotations; _ } = ReferenceMap.mem annotations name
 
   let get_unit ?(include_temporary = true) ~name { annotations; temporary_annotations } =
@@ -497,11 +498,18 @@ module Store = struct
 
   let get_attributes ~name store = get_unit ~name store |> Unit.attributes
   
+  (* let get_annotation_of_temporary ~name ~attribute_path store = 
+    let anno = get_unit ~include_temporary:false ~name store |> Unit.get_annotation ~attribute_path in
+    match anno with
+    | None -> get_unit ~name store |> Unit.get_annotation ~attribute_path
+    | _ -> anno *)
+
   let get_annotation ~name ~attribute_path store =
     let anno = get_unit ~name store |> Unit.get_annotation ~attribute_path in
     match anno with
     | None -> get_unit ~include_temporary:false ~name store |> Unit.get_annotation ~attribute_path
     | _ -> anno
+
 
 
   let set_base ?(temporary = false) ~name ~base store =

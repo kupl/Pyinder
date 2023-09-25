@@ -6341,6 +6341,9 @@ module PossibleState (Context : OurContext) = struct
   let is_reachable { rt_type; _ } =
     TypeCheckRT.is_reachable rt_type
 
+  let get_refinement { rt_type; _ } =
+    TypeCheckRT.get_refinement rt_type
+
   (*
   let set_possibleconditions pre post =
     match pre, post with
@@ -14094,6 +14097,7 @@ let exit_state ~resolution (module Context : OurContext) =
   
         let _ = filtering_none in 
   
+        (* For Baseline => no filtering_none *)
         let resolution = filtering_none resolution in
         
         let resolution_updated_attributes = 
@@ -14307,16 +14311,19 @@ let exit_state ~resolution (module Context : OurContext) =
             resolution
           else (
             match value_resolved with
-            | t when Type.is_none t && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)-> 
+            | t when Type.is_none t && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) -> 
               (* Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved) *)
               let is_valid_none = 
                 is_valid_none ~reference body |> Option.value ~default:false
               in
 
-              if is_valid_none
+              (* Log.dump "(%a) %a ====> %b" Reference.pp name Reference.pp reference is_valid_none; *)
+
+              if is_valid_none (* || true *) (* For Baseline => must true *)
               then Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
               else resolution
             | _ ->
+              (* Log.dump "??? %a => %a" Reference.pp reference Type.pp value_resolved; *)
               Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
           )
           
@@ -14333,6 +14340,8 @@ let exit_state ~resolution (module Context : OurContext) =
       let resolution = 
         if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
         then
+          update_resolution_from_value resolution 
+        else if (Reference.is_suffix ~suffix:(Reference.create "__init__") name) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name)) then
           update_resolution_from_value resolution 
         else
           resolution
@@ -14357,7 +14366,7 @@ let exit_state ~resolution (module Context : OurContext) =
       in
 
       if not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name) || (Type.is_unknown return_annotation)) then (
-        OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name arg_types return_annotation;
+        OurDomain.OurSummary.add_return_annotation (* ~type_join:(GlobalResolution.join global_resolution) *) our_summary name (* arg_types *) return_annotation;
         (* Context.our_summary := our_summary *)
       );
 
@@ -14367,18 +14376,26 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let initial = { initial with rt_type=Value resolution; } in
       
-      (* if String.equal (Reference.show name) "test.ParserBase._should_parse_dates"
+      (* if String.is_substring (Reference.show name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
         then (
           Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
         ); *)
       
         (* Log.dump "%a >>> %a" Reference.pp name Resolution.pp resolution; *)
       
-      (* if String.is_substring (Reference.show name) ~substring:"rasa.shared.core.trackers.DialogueStateTracker.update"
+      (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.async_update_group"
         then (
-          Log.dump "START %a" Resolution.pp resolution;
-          Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
+          Log.dump "NAME >>> %a" Reference.pp name;
+          Log.dump "START >>> %a" Resolution.pp resolution;
+          Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
         ); *)
+
+        (* if String.is_substring (Reference.show name) ~substring:"airvisual.air_quality.async_setup_entry"
+          then (
+            Log.dump "NAME >>> %a" Reference.pp name;
+            Log.dump "START >>> %a" Resolution.pp resolution;
+            Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
+          ); *)
 
         (* if String.is_substring (Reference.show name) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
         then (
@@ -14392,12 +14409,12 @@ let exit_state ~resolution (module Context : OurContext) =
       let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom in
       let usedef_table = 
         match Usedef.UsedefStruct.exit usedef_tables with
-        | Some t -> t
-        | _ -> Usedef.UsedefState.create
+        | Some t -> (* Log.dump "OKOKOK"; *) t
+        | _ -> Usedef.UsedefState.bottom
       in
 
       (* Log.dump "%a >>>" Reference.pp name;
-      Reference.Set.iter usedef_table ~f:(fun r -> Log.dump "%a" Reference.pp r); *)
+      Log.dump "%a" Usedef.UsedefState.pp usedef_table; *)
       (* (match PossibleFixpoint.exit_possible fixpoint with
       | Some n -> Format.printf "[[ Final Possible ]] \n\n%a\n\n" PossibleState.pp n
       | None -> print_endline "NOPE"
@@ -14500,27 +14517,49 @@ let exit_state ~resolution (module Context : OurContext) =
           
           (match state.rt_type with
           | Value v ->
-            
+            (* if String.is_substring (Reference.show name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
+              then (
+                Log.dump "[[ AFTER ]]] \n%a" Resolution.pp v;
+              ); *)
             let _ =
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
               
               let properties = OurDomain.OurSummary.get_class_property final_model class_name in
 
-              (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v;
-              Reference.Set.iter usedef_table.defined ~f:(fun r -> Log.dump "%a" Reference.pp r);
-              Log.dump "---"; *)
+              (* if String.is_substring (Reference.show name) ~substring:".async_run"
+                then (
+                  Log.dump "NAME >>> %a" Reference.pp name;
+                  Log.dump "END >>> %a\n" Resolution.pp v;
+                  Reference.Set.iter usedef_table.used_before_defined ~f:(fun r -> Log.dump "%a" Reference.pp r);
+                  Reference.Set.iter usedef_table.used_after_defined ~f:(fun r -> Log.dump "%a" Reference.pp r);
+                ); *)
+        
+                (* if String.is_substring (Reference.show name) ~substring:"airvisual.air_quality.async_setup_entry"
+                  then (
+                    Log.dump "NAME >>> %a" Reference.pp name;
+                    Log.dump "END >>> %a\n" Resolution.pp resolution;
+                  ); *)
+              (* if String.is_substring (Reference.show name) ~substring:"Task.has_excessive_failures" then
+                Log.dump "%a ==> %a" Reference.pp name Resolution.pp v; *)
+
+
+
               let _ = usedef_table, body in
 
               OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
 
-              (* Log.dump "WOW : %a" Reference.pp name; *)
-              (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v; *)
+              (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v;
+              Log.dump "%a" Usedef.UsedefState.pp usedef_table; *)
               (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
               ~properties ~usedef_table class_table class_name class_param (Resolution.annotation_store v);
 
+              (* if String.is_substring (Reference.show name) ~substring:".async_run"
+                then (
+                    Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table;
+                ); *)
               (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurDomain.OurSummary.set_class_table our_summary class_table
             | _ ->           

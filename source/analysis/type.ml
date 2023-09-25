@@ -7251,6 +7251,7 @@ let rec get_depth parent_annotation =
         if (not (equal parent_annotation annotation)) && is_possible_recursive annotation
         then (
           let depth = get_depth annotation in
+          (* Log.dump "HMM %a ==> %i" pp annotation depth; *)
           Int.max state depth
         )
         else (
@@ -7265,7 +7266,9 @@ let rec get_depth parent_annotation =
   in
 
   let x = fst (InstantiateTransform.visit 0 parent_annotation) in
-  x+1
+  if is_ourtyped_dictionary parent_annotation
+  then x
+  else x+1
 
   let narrow_iterable ~max_depth annotation =
     let module InstantiateTransform = Transform.Make (struct
@@ -7278,9 +7281,15 @@ let rec get_depth parent_annotation =
       let visit _ annotation = 
         let depth =
           if is_possible_recursive annotation
-          then get_depth annotation
+          then (
+            let x = get_depth annotation in
+            (* Log.dump "RESULT %a ==> %i" pp annotation x; *)
+            x
+          )
           else 0
         in
+
+        
 
         let annotation =
           if depth > max_depth
@@ -7308,7 +7317,7 @@ let narrow_our_typed_dict annotation =
       let annotation =
         match annotation with
         | OurTypedDictionary { general; typed_dict; } ->
-          if List.length typed_dict > 10 then general else annotation
+          if List.length typed_dict > 12 then general else annotation
         | _ -> annotation
       in
       
