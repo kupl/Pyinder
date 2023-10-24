@@ -496,7 +496,16 @@ let callable_to_arg_types ~global_resolution ~self_argument ~(arguments: Attribu
   OurDomain.ArgTypes.make_arg_types save_param_type_list
 
 let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~resolve_with_locals ~arguments ~callable ~self_argument =
-  AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
+  (* let timer = Timer.start () in *)
+  let x =
+    AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
+  in
+  (* let sig_time = Timer.stop_in_sec timer in
+    if Float.(>.) sig_time 0.5 then (
+      Log.dump "Origin Signature Time %.3f" sig_time;
+    ); *)
+
+  x
   |> (function
     | SignatureSelectionTypes.Found { selected_return_annotation } ->
       let timer = Timer.start () in
@@ -508,7 +517,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let less_or_equal = less_or_equal resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal final_model arg_types t in
+      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal ~successors:(successors ~resolution) final_model arg_types t in
       (* Log.dump "After ... %a" Type.pp (Callable callable); *)
       let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 1.0 then (
@@ -522,7 +531,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let less_or_equal = less_or_equal resolution in
       let final_model = !OurDomain.our_model in
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal final_model arg_types t in
+      let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal ~successors:(successors ~resolution) final_model arg_types t in
       (* Log.dump "After... %a" Type.pp (Callable callable); *)
       let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 1.0 then (
@@ -533,7 +542,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
         let type_join = join resolution in
         let final_model = !OurDomain.our_model in
         let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-        let return_type = OurDomain.OurSummary.get_callable_return_type final_model arg_types callable in
+        let return_type = OurDomain.OurSummary.get_callable_return_type ~successors:(successors ~resolution) final_model arg_types callable in
 
         (* Log.dump "Before %a" Type.pp selected_return_annotation; *)
 

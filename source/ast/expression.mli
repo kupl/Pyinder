@@ -566,4 +566,6 @@ val calc_similarity : expression -> expression -> float
 
 val is_used : reference:Reference.t -> t -> bool
 
+val is_used_call : reference:Reference.t -> t -> bool
+
 val is_check_none : reference:Reference.t -> t -> bool

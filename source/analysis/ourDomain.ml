@@ -1,5 +1,6 @@
 open Core
 open Ast
+open Pyre
 
 open AttributeAnalysis
 (*
@@ -139,26 +140,32 @@ end
 
 module StringSet = Set.Make (String)
 
+module TypeSet = Set.Make (Type)
 
-(*
-module VarType = struct
-  type t = Reference.t * Type.t [@@deriving sexp, compare]
-end
+module VarTypeSet = struct
+  type t = TypeSet.t Reference.Map.t [@@deriving sexp, compare, equal]
 
-module VarTypeMap = struct 
-  include Map.Make (VarType)
-  
-  let join left right ~f =
-    let merge_f ~key:_ data = 
-      (match data with
-      | `Left v | `Right v -> Some v
-      | `Both (v1, v2) -> Some (f v1 v2)
-      )
-    in
-    merge left right ~f:merge_f
-  
+  let empty = Reference.Map.empty
+
+  let type_set_pp format t =
+    TypeSet.iter t ~f:(fun typ ->
+      Format.fprintf format "%a" Type.pp typ
+    )
+  let pp format t =
+    Reference.Map.iteri t ~f:(fun ~key ~data ->
+      Format.fprintf format "%a => %a\n" Reference.pp key type_set_pp data
+    )
+
+  let join left right = Reference.Map.merge left right ~f:(fun ~key:_ data ->
+    match data with
+    | `Left t | `Right t -> Some t
+    | `Both (t1, t2) -> Some (TypeSet.union t1 t2)
+  )
+
+  let fold = Reference.Map.fold
+
+  let set = Reference.Map.set
 end
-*)
 
 module CallerSet = Reference.Set
 module FunctionSet = Reference.Set
@@ -830,6 +837,7 @@ module Signatures = struct
   let filter_unknown arg_types =
     
     arg_types
+    |> ArgTypes.map ~f:(Type.our_dict_to_dict)
     |> ArgTypes.map ~f:(Type.narrow_iterable ~max_depth:2)
     |> ArgTypes.map ~f:Type.filter_unknown
     |> ArgTypes.filter ~f:(fun data -> not (Type.is_unknown data))
@@ -908,7 +916,10 @@ module Signatures = struct
   
 
   let get_return_info t arg_types =
-    ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info
+    ArgTypesMap.find t arg_types |> Option.value ~default:(
+      let x = ArgTypesMap.filter t ~f:(fun return_info -> not (FunctionMap.is_empty return_info.return_var_type)) |> ArgTypesMap.data in
+      if List.is_empty x then empty_return_info else List.hd_exn x
+    )
 
   let get_return_var_type t arg_types =
     let return_info = get_return_info t arg_types in
@@ -1019,6 +1030,7 @@ module type FunctionSummary = sig
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    usedef_defined: VarTypeSet.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } 
@@ -1040,6 +1052,7 @@ module FunctionSummary = struct
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    usedef_defined: VarTypeSet.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } [@@deriving sexp, equal]
@@ -1055,6 +1068,7 @@ module FunctionSummary = struct
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
     unique_analysis=UniqueAnalysis.UniqueStruct.empty;
+    usedef_defined=VarTypeSet.empty;
     unknown_decorator=false;
     (*usedef_tables=None;*)
   }
@@ -1109,6 +1123,8 @@ module FunctionSummary = struct
   let set_unique_analysis t unique_analysis =
     { t with unique_analysis }
 
+  let set_usedef_defined t usedef_defined =
+    { t with usedef_defined; }
   let set_unknown_decorator t =
     { t with unknown_decorator=true; }
 
@@ -1159,6 +1175,8 @@ module FunctionSummary = struct
 
   let get_unique_analysis { unique_analysis; _ } = unique_analysis
 
+  let get_usedef_defined { usedef_defined; _ } = usedef_defined
+
   let get_unknown_decorator { unknown_decorator; _ } = unknown_decorator
 
 
@@ -1191,6 +1209,7 @@ module FunctionSummary = struct
     in
     let callers=CallerSet.union left.callers right.callers in
     let usage_attributes=AttributeStorage.join left.usage_attributes right.usage_attributes in
+    let usedef_defined=VarTypeSet.join left.usedef_defined right.usedef_defined in 
 
   {
     signatures;
@@ -1199,6 +1218,7 @@ module FunctionSummary = struct
     return_annotation;
     usage_attributes;
     unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
+    usedef_defined;
     unknown_decorator=left.unknown_decorator || right.unknown_decorator
     (*usedef_tables=usedef_tables;*)
   }
@@ -1290,6 +1310,7 @@ module FunctionSummary = struct
       in
       (* let tt1 = Timer.stop_in_sec timer in *)
       let usage_attributes = (* next.usage_attributes *) AttributeStorage.join prev.usage_attributes next.usage_attributes in
+      let usedef_defined=VarTypeSet.join prev.usedef_defined next.usedef_defined in 
       (* let tt2 = Timer.stop_in_sec timer in *)
       (* let total_time = Timer.stop_in_sec timer in
       if Float.(>.) total_time 0.01 then (
@@ -1305,7 +1326,8 @@ module FunctionSummary = struct
       return_annotation;
       usage_attributes;
       unique_analysis=next.unique_analysis; 
-      unknown_decorator=prev.unknown_decorator || next.unknown_decorator
+      usedef_defined;
+      unknown_decorator=prev.unknown_decorator || next.unknown_decorator;
       (*usedef_tables=usedef_tables;*)
     }
   
@@ -1517,6 +1539,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_unique_analysis func_summary unique_analysis) t
 
+  let set_usedef_defined t func usedef_defined =
+    let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionHash.set ~key:func ~data:(FunctionSummary.set_usedef_defined func_summary usedef_defined) t
+
   let set_unknown_decorator t func =
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_unknown_decorator func_summary) t
@@ -1582,6 +1608,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_unique_analysis func_summary
 
+  let get_usedef_defined t func_name =
+    let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_usedef_defined func_summary
+
   let get_unknown_decorator t func_name =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_unknown_decorator func_summary
@@ -1603,18 +1633,44 @@ module FunctionTable = struct
       Format.fprintf format "[[[ Function Info ]]] \n%a \n%a \n" Reference.pp key FunctionSummary.pp data
     ) table
 
-  let get_callable ~join ~less_or_equal t arg_types (callable: Type.Callable.t) =
+  let get_callable ~join ~less_or_equal ~successors t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
-      let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in
+      let class_name = Reference.drop_last name in 
+      let func_name = Reference.last name in
+      let successors = 
+        successors (Reference.show class_name) 
+        |> List.map ~f:(fun s -> Reference.create ~prefix:(Reference.create s) func_name ) 
+      in
+      let _ = successors in
+
+      let func_summary = 
+        List.find [name] ~f:(fun name -> FunctionHash.find t name |> Option.is_some)
+        >>| FunctionHash.find_exn t
+        |> Option.value ~default:FunctionSummary.empty
+      in
+
       let callable = FunctionSummary.get_implementation ~join ~less_or_equal func_summary arg_types callable in
       callable
     | _ -> callable
 
-  let get_callable_return_type t arg_types (callable: Type.Callable.t) =
+  let get_callable_return_type ~successors t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
-      let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in
+      let class_name = Reference.drop_last name in 
+      let func_name = Reference.last name in
+      let successors = 
+        successors (Reference.show class_name) 
+        |> List.map ~f:(fun s -> Reference.create ~prefix:(Reference.create s) func_name ) 
+      in
+      let _ = successors in
+
+      let func_summary = 
+        List.find [name] ~f:(fun name -> FunctionHash.find t name |> Option.is_some)
+        >>| FunctionHash.find_exn t
+        |> Option.value ~default:FunctionSummary.empty
+      in
+      (* let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in *)
       FunctionSummary.get_return_type func_summary arg_types
     | _ -> Type.Unknown
 
@@ -1812,6 +1868,8 @@ module OurSummary = struct
   let set_unique_analysis { function_table; _ } func_name unique_analysis =
     FunctionTable.set_unique_analysis function_table func_name unique_analysis
 
+  let set_usedef_defined { function_table; _ } func_name usedef_defined =
+    FunctionTable.set_usedef_defined function_table func_name usedef_defined
   let set_unknown_decorator { function_table; _ } func_name =
     FunctionTable.set_unknown_decorator function_table func_name
 
@@ -1843,14 +1901,17 @@ module OurSummary = struct
   let get_preprocess { function_table; _ } func_name =
     FunctionTable.get_preprocess function_table func_name
 
-  let get_callable ~join ~less_or_equal { function_table; _ } arg_types callable =
-    FunctionTable.get_callable ~join ~less_or_equal function_table arg_types callable
+  let get_callable ~join ~less_or_equal ~successors { function_table; _ } arg_types callable =
+    FunctionTable.get_callable ~join ~less_or_equal ~successors function_table arg_types callable
 
-  let get_callable_return_type { function_table; _ } arg_types callable =
-    FunctionTable.get_callable_return_type function_table arg_types callable
+  let get_callable_return_type ~successors { function_table; _ } arg_types callable =
+    FunctionTable.get_callable_return_type ~successors function_table arg_types callable
 
   let get_unique_analysis { function_table; _ } func_name =
     FunctionTable.get_unique_analysis function_table func_name
+
+  let get_usedef_defined { function_table; _ } func_name =
+    FunctionTable.get_usedef_defined function_table func_name
 
   let get_unknown_decorator { function_table; _ } func_name =
     FunctionTable.get_unknown_decorator function_table func_name

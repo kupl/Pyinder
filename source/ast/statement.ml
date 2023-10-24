@@ -1982,11 +1982,17 @@ let is_generator statements =
 
 let rec is_valid_none ~reference statement_list =
   let is_used expression = Expression.is_used ~reference expression in
+  let is_used_call expression = Expression.is_used_call ~reference expression in
   let is_check_none expression = Expression.is_check_none ~reference expression in
 
   let check_statement statement =
     match Node.value statement with
+    | Assign { target; value={Node.value=Name name; _ }; _ } when Expression.is_simple_name name ->
+      Some (is_used target)
     | Assign { target; value; _ } ->
+      if is_used_call value || false (* Only Function Check *)
+      then Some true
+      else
       if is_used value
       then None
       else Some (is_used target)
@@ -1995,30 +2001,36 @@ let rec is_valid_none ~reference statement_list =
       then None
       else Some false 
     | Expression t ->
-      if is_used t
+      if is_used_call t || false (* Only Function Check *)
+      then Some true
+      else if is_used t
       then None
       else Some false 
     | For { iterator; body; orelse; _ } ->
       if is_used iterator
       then None
       else (
-        match is_valid_none ~reference body with
+        match is_valid_none ~reference body, is_valid_none ~reference orelse with
+        | Some valid_body, Some valid_orelse ->
+          Some (valid_body || valid_orelse)
+        | Some valid, _ | _, Some valid -> Some valid
+        | _ -> None
+        (* match is_valid_none ~reference body with
         | Some valid ->
           if valid 
           then Some valid
           else is_valid_none ~reference orelse
-        | None -> None
+        | None -> None *)
       ) 
     | If { test; body; orelse; } ->
       if is_check_none test
       then Some true
       else (
-        match is_valid_none ~reference body with
-        | Some valid ->
-          if valid 
-          then Some valid
-          else is_valid_none ~reference orelse
-        | None -> None
+        match is_valid_none ~reference body, is_valid_none ~reference orelse with
+        | Some valid_body, Some valid_orelse ->
+          Some (valid_body || valid_orelse)
+        | Some valid, _ | _, Some valid -> Some valid
+        | _ -> None
       )
     | Match { cases; _ } ->
       List.fold cases ~init:(Some false) ~f:(fun valid { body; _ } -> 
@@ -2050,12 +2062,17 @@ let rec is_valid_none ~reference statement_list =
       if is_used test
       then None
       else (
-        match is_valid_none ~reference body with
+        match is_valid_none ~reference body, is_valid_none ~reference orelse with
+        | Some valid_body, Some valid_orelse ->
+          Some (valid_body || valid_orelse)
+        | Some valid, _ | _, Some valid -> Some valid
+        | _ -> None
+        (* match is_valid_none ~reference body with
         | Some valid ->
           if valid 
           then Some valid
           else is_valid_none ~reference orelse
-        | None -> None
+        | None -> None *)
       )
     | _ -> Some false
   in

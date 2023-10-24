@@ -6341,8 +6341,8 @@ module PossibleState (Context : OurContext) = struct
   let is_reachable { rt_type; _ } =
     TypeCheckRT.is_reachable rt_type
 
-  let get_refinement { rt_type; _ } =
-    TypeCheckRT.get_refinement rt_type
+  let get_resolution { rt_type; _ } =
+    TypeCheckRT.get_resolution rt_type
 
   (*
   let set_possibleconditions pre post =
@@ -13853,7 +13853,7 @@ let exit_state ~resolution (module Context : OurContext) =
   let module PossibleState = PossibleState (Context) in
   let module PossibleFixpoint = PossibleFixpoint.Make (PossibleState) in
   
-  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; _ }; body; _ } as define; _ } =
+  let { Node.value = { Define.signature = { Define.Signature.name; Define.Signature.parent; parameters; decorators; _ }; body; _ } as define; _ } =
     Context.define
   in
 
@@ -14098,7 +14098,7 @@ let exit_state ~resolution (module Context : OurContext) =
         let _ = filtering_none in 
   
         (* For Baseline => no filtering_none *)
-        let resolution = filtering_none resolution in
+        (* let resolution = filtering_none resolution in *)
         
         let resolution_updated_attributes = 
           resolution 
@@ -14179,11 +14179,17 @@ let exit_state ~resolution (module Context : OurContext) =
   save_arg_types initial;
   
   
+  let check_abc_decorators decorators =
+    List.exists decorators ~f:(fun decorator -> 
+      String.is_suffix ~suffix:"abstractproperty" (Expression.show decorator)
+      || String.is_suffix ~suffix:"abstractmethod" (Expression.show decorator)
+    )
+  in
   (*
   Log.dump "[[[ Possible Initial: %a ]]] \n\n%a\n\n" Reference.pp name PossibleState.pp initial;
   *)
   let global_resolution = Resolution.global_resolution resolution in
-  if Define.is_stub define then
+  if Define.is_stub define || check_abc_decorators decorators then
     let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
     let errors_sofar =
       Option.value_exn
@@ -14218,7 +14224,8 @@ let exit_state ~resolution (module Context : OurContext) =
     let check_arg_types_list = 
       if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ())
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
-      else if (!OurDomain.is_first) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
+      (* else if (!OurDomain.is_first) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) *)
+      else if (not (OurDomain.is_inference_mode (OurDomain.load_mode ()))) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
       else if List.length arg_types_list > 0
       then ( 
@@ -14309,7 +14316,7 @@ let exit_state ~resolution (module Context : OurContext) =
             || (Resolution.has_nontemporary_annotation resolution ~reference && Type.is_unknown value_resolved) 
           then 
             resolution
-          else (
+          else  (
             match value_resolved with
             | t when Type.is_none t && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) -> 
               (* Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved) *)
@@ -14325,7 +14332,9 @@ let exit_state ~resolution (module Context : OurContext) =
             | _ ->
               (* Log.dump "??? %a => %a" Reference.pp reference Type.pp value_resolved; *)
               Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
-          )
+          ) (* else (
+            Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
+          ) *)
           
           (* if Type.can_unknown resolved then (
             let value_resolved = Resolution.resolve_expression_to_type resolution e in
@@ -14397,16 +14406,35 @@ let exit_state ~resolution (module Context : OurContext) =
             Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
           ); *)
 
-        (* if String.is_substring (Reference.show name) ~substring:"ZabbixMultipleHostTriggerCountSensor.__init__"
+        (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.__init__"
         then (
           Log.dump "START %a" Resolution.pp resolution;
           Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
         ); *)
 
+        (* Log.dump "START %a" Resolution.pp resolution; *)
+      (* let timer = Timer.start () in *)
+
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
+      (* let fixpoint_time = Timer.stop_in_sec timer in
+
+      if Float.(>) fixpoint_time 1.0 then
+        Log.dump "Fixpoint for %a took %f seconds" Reference.pp name fixpoint_time; *)
+
+      
+
       let exit = PossibleFixpoint.exit fixpoint in
       let post_info = PossibleFixpoint.post_info fixpoint in 
-      let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom in
+
+
+      let get_usedef_state_of_func func_name =
+        (* Log.dump "GET %a" Reference.pp func_name; *)
+        let x = OurDomain.OurSummary.get_usedef_defined final_model func_name in
+        (* Log.dump "==> %a" OurDomain.VarTypeSet.pp x; *)
+        x
+      in
+
+      let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom ~get_usedef_state_of_func in
       let usedef_table = 
         match Usedef.UsedefStruct.exit usedef_tables with
         | Some t -> (* Log.dump "OKOKOK"; *) t
@@ -14512,11 +14540,14 @@ let exit_state ~resolution (module Context : OurContext) =
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.normal_index in
       let our_summary = !Context.our_summary in
       if OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
-        (match last_state with
+        (
+        OurDomain.OurSummary.set_usedef_defined our_summary name (usedef_table |> Usedef.UsedefState.to_vartypeset);
+        match last_state with
         | Some state ->
           
           (match state.rt_type with
           | Value v ->
+            (* Log.dump "Func : %a \n %a" Reference.pp name Resolution.pp v; *)
             (* if String.is_substring (Reference.show name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
               then (
                 Log.dump "[[ AFTER ]]] \n%a" Resolution.pp v;
@@ -14628,7 +14659,12 @@ let exit_state ~resolution (module Context : OurContext) =
 
     let total_time = Timer.stop_in_sec timer in
     let _ = init_time, save_time, total_time in
-    (* if Float.(>.) total_time 5.0 then (
+    if Float.(>.) total_time 3.0 then (
+      Log.dump ">>> %a (%.3f => %.3f => %.3f) (%i)" Reference.pp name init_time save_time total_time (List.length check_arg_types_list);
+      (* Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary; *)
+    );
+
+    (* if Float.(>.) total_time 1.0 then (
       Log.dump ">>> %a (%.3f => %.3f => %.3f) (%i)" Reference.pp name init_time save_time total_time (List.length check_arg_types_list);
       (* Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary; *)
     ); *)

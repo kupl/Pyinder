@@ -25,11 +25,13 @@ module type UsedefState = sig
 
   val get_used_after_defined : t -> TypeSet.t Reference.Map.t
 
+  val to_vartypeset : t -> OurDomain.VarTypeSet.t
+
   val is_defined : t -> Reference.t -> bool
 
   val is_undefined : t -> Reference.t -> bool
 
-  val forward : statement_key:int -> post_info:(Refinement.Store.t * Refinement.Store.t) -> t -> statement:Statement.t -> t
+  val forward : statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
@@ -38,11 +40,11 @@ module VarType = struct
   type t = Reference.t * Type.t [@@deriving sexp, compare]
 end
 
+module VarTypeSet = Set.Make (VarType)
 
 
 module UsedefState = struct
   module VarSet = struct 
-    
     type t = Reference.Set.t
     let empty = Reference.Set.empty
     let singleton name = Reference.Set.singleton name
@@ -52,23 +54,32 @@ module UsedefState = struct
     let inter left right = Reference.Set.inter left right
     let fold ~init ~f t = Reference.Set.fold t ~init ~f
 
+    (* let iter = Reference.Set.iter *)
+
+    let filter = Reference.Set.filter
+
+    let exists = Reference.Set.exists
   end
 
 
   type usedef =
     | Use
     | Def 
+    | CheckUse
+    | CalleeDef of TypeSet.t
     | Both
   [@@deriving sexp]
 
   let usedef_equal left right =
     match left, right with
-    | Use, Use | Def, Def | Both, Both -> true
+    | Use, Use | Def, Def | Both, Both | CheckUse, CheckUse -> true
+    | CalleeDef left, CalleeDef right ->TypeSet.equal left right
     | _ -> false
 
   type t = { 
     used_before_defined : TypeSet.t Reference.Map.t;
     defined : TypeSet.t Reference.Map.t;
+    check_used : TypeSet.t Reference.Map.t;
     used_after_defined : TypeSet.t Reference.Map.t;
     total : TypeSet.t Reference.Map.t;
     usedef_table : usedef Reference.Map.t;
@@ -82,6 +93,8 @@ module UsedefState = struct
     (match usedef with
     | Use -> "Use"
     | Def -> "Def"
+    | CheckUse -> "CheckUse"
+    | CalleeDef _ -> "CalleeDef"
     | Both -> "Both"
     ) 
 
@@ -113,6 +126,7 @@ module UsedefState = struct
   let create = {
     used_before_defined=Reference.Map.empty;
     defined=Reference.Map.empty; 
+    check_used=Reference.Map.empty;
     used_after_defined=Reference.Map.empty; 
     total=Reference.Map.empty; 
     usedef_table=usedef_create;
@@ -136,9 +150,10 @@ module UsedefState = struct
 
     let used_before_defined = Reference.Map.merge ~f:type_set_merge left.used_before_defined right.used_before_defined in
     let defined = (* Reference.Set.diff *) (Reference.Map.merge ~f:type_set_merge left.defined right.defined) (* undefined *) in
+    let check_used = Reference.Map.merge ~f:type_set_merge left.check_used right.check_used in
     let used_after_defined =Reference.Map.merge ~f:type_set_merge left.used_after_defined right.used_after_defined in
     let total = Reference.Map.merge ~f:type_set_merge left.total right.total in
-    { used_before_defined; defined; used_after_defined; total; usedef_table=usedef_create; }
+    { used_before_defined; defined; check_used; used_after_defined; total; usedef_table=usedef_create; }
 
   let widen ~previous:_ ~next ~iteration:_ = next
 
@@ -166,15 +181,45 @@ module UsedefState = struct
     Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
       match data with
       | Use | Both -> add_reference key varset
-      | Def -> varset
+      | _ -> varset
     )
 
   let get_def_variables usedef_table = 
     Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
       match data with
       | Def | Both -> add_reference key varset
-      | Use -> varset
+      | _ -> varset
     )
+
+let get_both_variables usedef_table = 
+    Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
+      match data with
+      | Both -> add_reference key varset
+      | _ -> varset
+    )
+
+  let get_callee_def_variables_map usedef_table =
+    Reference.Map.fold usedef_table ~init:Reference.Map.empty ~f:(fun ~key ~data varset ->
+      match data with
+      | CalleeDef type_set -> Reference.Map.set varset ~key ~data:type_set
+      | _ -> varset
+    )
+
+  let get_check_use_variables usedef_table =
+    Reference.Map.fold usedef_table ~init:Reference.Set.empty ~f:(fun ~key ~data varset ->
+      match data with
+      | CheckUse -> add_reference key varset
+      | _ -> varset
+    )
+
+  let to_vartypeset { defined; _ } = 
+    Reference.Map.fold defined ~init:OurDomain.VarTypeSet.empty ~f:(fun ~key ~data vartypeset ->
+      let data = TypeSet.fold data ~init:OurDomain.TypeSet.empty ~f:(fun accum typ ->
+        OurDomain.TypeSet.add accum typ
+      ) in
+      OurDomain.VarTypeSet.set ~key ~data vartypeset
+    )
+    
 
   let is_defined { defined; _ } reference =
     Reference.Map.mem defined reference
@@ -203,20 +248,49 @@ module UsedefState = struct
     )
 
   let update_defined ~post_info:(_, post) t usedef_table =
+    let type_set_merge ~key:_ data =
+      match data with
+      | `Both (a, b) -> Some (TypeSet.union a b)
+      | `Left a | `Right a -> Some a
+    in
+
+    let defined_merge = Reference.Map.merge ~f:type_set_merge in
+
     (* let use_variables = get_use_variables usedef_table in *)
     let def_variables = get_def_variables usedef_table in 
+    let callee_def_variables_map = get_callee_def_variables_map usedef_table in
     (* if all use variabels are defined, then put def variables in defined set *)
     (* let _ = if Reference.Set.is_subset use_variables ~of_:t.defined 
     then Reference.Set.union t.defined def_variables
     else t.defined
     in *)
-    set_variables ~refinement:post ~init:t.defined def_variables
+    set_variables ~refinement:(Resolution.get_annotation_store post) ~init:t.defined def_variables
+    |> defined_merge callee_def_variables_map
 
-  let update_used_before_defined ~post_info:(pre, _) t usedef_table =
+  let update_check_used ~post_info:(_, post) ~defined t usedef_table =
+    let filtered_check_used = Reference.Map.mapi t.check_used ~f:(fun ~key ~data ->
+      match Reference.Map.find defined key with
+      | Some type_set -> TypeSet.diff data type_set
+      | _ -> data
+    ) |> Reference.Map.filter ~f:(fun data -> not (TypeSet.is_empty data))
+    in
+    
+    let check_use_variables = get_check_use_variables usedef_table in
+    set_variables ~refinement:(Resolution.get_annotation_store post) ~init:filtered_check_used check_use_variables
+
+  let update_used_before_defined ~post_info:(pre, post) t usedef_table =
     let use_variables = get_use_variables usedef_table in
+    let both_variables = get_both_variables usedef_table in
+    let only_use_variables = Reference.Set.diff use_variables both_variables in
     let used_before_defined = 
-      Reference.Set.filter use_variables ~f:(fun v -> not (Reference.Map.mem t.defined v))
-      |> set_variables ~refinement:pre ~init:t.used_before_defined
+      let before_defined_updated_only_use = 
+        Reference.Set.filter only_use_variables ~f:(fun v -> not (Reference.Map.mem t.defined v))
+        |> set_variables ~refinement:(Resolution.get_annotation_store post) ~init:t.used_before_defined
+      in
+
+      Reference.Set.filter both_variables ~f:(fun v -> not (Reference.Map.mem t.defined v))
+        |> set_variables ~refinement:(Resolution.get_annotation_store pre) ~init:before_defined_updated_only_use
+        
       (* Reference.Set.fold use_variables ~init:t.used_before_defined ~f:(fun used_before_defined use_variable -> 
       if Reference.Map.mem t.defined use_variable 
       then used_before_defined 
@@ -232,12 +306,19 @@ module UsedefState = struct
     in
     Reference.Set.diff undefined def_variables
  *)
- let update_used_after_defined ~post_info:(_, post) t usedef_table =
+ let update_used_after_defined ~post_info:(pre, post) t usedef_table =
   let use_variables = get_use_variables usedef_table in
   let def_variables = get_def_variables usedef_table in
+  let both_variables = get_both_variables usedef_table in
+  let only_use_variables = Reference.Set.diff use_variables both_variables in
 
-  Reference.Set.filter use_variables ~f:(fun v -> Reference.Map.mem t.defined v && not (Reference.Set.exists def_variables ~f:(Reference.equal v)))
-  |> set_variables ~refinement:post ~init:t.used_after_defined
+  let after_defined_updated_only_use =
+    Reference.Set.filter only_use_variables ~f:(fun v -> Reference.Map.mem t.defined v && not (Reference.Set.exists def_variables ~f:(Reference.equal v)))
+    |> set_variables ~refinement:(Resolution.get_annotation_store pre) ~init:t.used_after_defined
+  in
+
+  Reference.Set.filter both_variables ~f:(fun v -> Reference.Map.mem t.defined v && not (Reference.Set.exists def_variables ~f:(Reference.equal v)))
+  |> set_variables ~refinement:(Resolution.get_annotation_store post) ~init:after_defined_updated_only_use
 
   (* let used_after_defined = Reference.Set.fold use_variables ~init:t.used_after_defined ~f:(fun varset use_variable -> 
     if Reference.Set.mem t.defined use_variable then add_reference use_variable varset else varset
@@ -255,17 +336,19 @@ module UsedefState = struct
 
   let update_state ~post_info t usedef_table =
     let defined = update_defined ~post_info t usedef_table in
+    let check_used = update_check_used ~post_info ~defined t usedef_table in
     let used_after_defined = update_used_after_defined ~post_info t usedef_table in
     let used_before_defined = update_used_before_defined ~post_info t usedef_table in
     {
       used_before_defined;
       defined;
+      check_used;
       used_after_defined;
       total=update_total t usedef_table;
       usedef_table;
     }
   
-    let rec forward_expression_type_check (exp: Expression.t) =
+    let rec forward_expression_type_check ~post_info (exp: Expression.t) =
 
       (* Log.dump "WOW : %a" Expression.pp exp; *)
   
@@ -275,22 +358,42 @@ module UsedefState = struct
         ) expression_list
       in
       let forward_generator (generator: Comprehension.Generator.t) =
-        VarSet.union (forward_expression_type_check generator.target) (forward_expression_type_check generator.iterator)
-        |> VarSet.union (forward_list generator.conditions forward_expression_type_check)
+        VarSet.union (forward_expression_type_check ~post_info generator.target) (forward_expression_type_check ~post_info generator.iterator)
+        |> VarSet.union (forward_list generator.conditions (forward_expression_type_check ~post_info))
       in
       let forward_parameter (param: Parameter.t) =
         let param = Node.value param in
         VarSet.union 
-          (Option.value_map param.value ~default:VarSet.empty ~f:forward_expression_type_check)
-          (Option.value_map param.annotation ~default:VarSet.empty ~f:forward_expression_type_check)
+          (Option.value_map param.value ~default:VarSet.empty ~f:(forward_expression_type_check ~post_info))
+          (Option.value_map param.annotation ~default:VarSet.empty ~f:(forward_expression_type_check ~post_info))
       in
       let forward_expression_comprehension (comprehension: Expression.t Comprehension.t) =
-        VarSet.union (forward_expression_type_check comprehension.element) (forward_list comprehension.generators forward_generator)
+        VarSet.union (forward_expression_type_check ~post_info comprehension.element) (forward_list comprehension.generators forward_generator)
       in
       match Node.value exp with
       | Name _ -> VarSet.empty
-      | Await e -> forward_expression_type_check e
-      | BooleanOperator e -> VarSet.union (forward_expression_type_check e.left) (forward_expression_type_check e.right)
+      | Await e -> forward_expression_type_check ~post_info e
+      | BooleanOperator { left; operator=And; right; } ->
+        let pre, _ = post_info in 
+        let left_variables = forward_expression_type_check ~post_info left in
+        let left_type = Resolution.resolve_expression_to_type pre left in
+        if Type.is_falsy left_type
+        then left_variables
+        else (
+          let right_variables = forward_expression_type_check ~post_info right in
+          VarSet.union left_variables right_variables
+        )
+      | BooleanOperator { left; operator=Or; right; } ->
+          let pre, _ = post_info in 
+          let left_variables = forward_expression_type_check ~post_info left in
+          let left_type = Resolution.resolve_expression_to_type pre left in
+          if Type.is_truthy left_type
+          then left_variables
+          else (
+            let right_variables = forward_expression_type_check ~post_info right in
+            VarSet.union left_variables right_variables
+          ) 
+      (* | BooleanOperator e -> VarSet.union (forward_expression_type_check ~post_info e.left) (forward_expression_type_check ~post_info e.right) *)
       | Call
           {
             callee = { Node.value = Name (Name.Identifier "isinstance"); _ };
@@ -305,53 +408,183 @@ module UsedefState = struct
           VarSet.singleton (name_to_reference_exn name)
       | Call e -> 
         let f accum (a: Call.Argument.t) =
-          VarSet.union accum (forward_expression_type_check a.value)
+          VarSet.union accum (forward_expression_type_check ~post_info a.value)
         in
-        VarSet.union (forward_expression_type_check e.callee) (List.fold ~init:VarSet.empty ~f e.arguments)
+        VarSet.union (forward_expression_type_check ~post_info e.callee) (List.fold ~init:VarSet.empty ~f e.arguments)
       | ComparisonOperator { left = { Node.value = Name name; _ }; operator= Is | IsNot; right = { Node.value = Constant _; _ }; } when is_simple_name name ->
         VarSet.singleton (name_to_reference_exn name)
       | ComparisonOperator { left = { Node.value = Name name; _ }; operator= Is | IsNot | In | NotIn; right; } when is_simple_name name
         ->
-        forward_expression_type_check right
+        forward_expression_type_check ~post_info right
       | ComparisonOperator { left = { Node.value = Constant (Constant.NoneLiteral); _ }; _ } 
         -> VarSet.empty
   
-      | ComparisonOperator e -> VarSet.union (forward_expression_type_check e.left) (forward_expression_type_check e.right)
+      | ComparisonOperator e -> VarSet.union (forward_expression_type_check ~post_info e.left) (forward_expression_type_check ~post_info e.right)
       | Dictionary e -> 
         let f accum (a: Dictionary.Entry.t) =
-          VarSet.union accum (VarSet.union (forward_expression_type_check a.key) (forward_expression_type_check a.value))
+          VarSet.union accum (VarSet.union (forward_expression_type_check ~post_info a.key) (forward_expression_type_check ~post_info a.value))
         in
-        VarSet.union (List.fold ~init:VarSet.empty ~f e.entries) (forward_list e.keywords forward_expression_type_check)
+        VarSet.union (List.fold ~init:VarSet.empty ~f e.entries) (forward_list e.keywords (forward_expression_type_check ~post_info))
       | Generator e -> forward_expression_comprehension e
       | FormatString e -> forward_list e (fun e ->
           match e with
-          | Format e -> forward_expression_type_check e
+          | Format e -> forward_expression_type_check ~post_info e
           | _ -> VarSet.empty
         )
-      | Lambda e -> VarSet.union (forward_list e.parameters forward_parameter) (forward_expression_type_check e.body)
-      | List e -> forward_list e forward_expression_type_check
+      | Lambda e -> VarSet.union (forward_list e.parameters forward_parameter) (forward_expression_type_check ~post_info e.body)
+      | List e -> forward_list e (forward_expression_type_check ~post_info)
       | ListComprehension e -> forward_expression_comprehension e
-      | Set e -> forward_list e forward_expression_type_check
+      | Set e -> forward_list e (forward_expression_type_check ~post_info)
       | SetComprehension e -> forward_expression_comprehension e
       | Starred e ->
           (match e with
-          | Once e | Twice e -> forward_expression_type_check e
+          | Once e | Twice e -> forward_expression_type_check ~post_info e
           )
-      | Ternary e -> VarSet.union (forward_expression_type_check e.target) (forward_expression_type_check e.test) |> VarSet.union (forward_expression_type_check e.alternative)
-      | Tuple e -> forward_list e forward_expression_type_check
+      | Ternary e -> 
+        VarSet.union (forward_expression_type_check ~post_info e.target) (forward_expression_type_check ~post_info e.alternative)
+        |> (fun varset ->
+          match e.target, e.test, e.alternative with
+          | 
+            { Node.value = Constant v1; _ },
+            { Node.value = ComparisonOperator { left = { Node.value = Name _; _ }; operator= Is; right = { Node.value = Constant v2; _ }; }; _ },
+            _ 
+          | 
+            _,
+            { Node.value = ComparisonOperator { left = { Node.value = Name _; _ }; operator= IsNot; right = { Node.value = Constant v1; _ }; }; _ },
+            { Node.value = Constant v2; _ }
+            when Constant.location_insensitive_compare v1 v2 = 0
+          -> varset
+          | _ -> VarSet.union varset (forward_expression_type_check ~post_info e.test)  
+        )
+      | Tuple e -> forward_list e (forward_expression_type_check ~post_info)
       | UnaryOperator
           {
             UnaryOperator.operator = UnaryOperator.Not;
             operand = { Node.value = Name name; _ };
           } when is_simple_name name 
           -> VarSet.empty
-      | UnaryOperator e -> forward_expression_type_check e.operand
-      | WalrusOperator e -> VarSet.union (forward_expression_type_check e.target) (forward_expression_type_check e.value)
-      | Yield (Some e) -> forward_expression_type_check e
-      | YieldFrom e -> forward_expression_type_check e
+      | UnaryOperator e -> forward_expression_type_check ~post_info e.operand
+      | WalrusOperator e -> VarSet.union (forward_expression_type_check ~post_info e.target) (forward_expression_type_check ~post_info e.value)
+      | Yield (Some e) -> forward_expression_type_check ~post_info e
+      | YieldFrom e -> forward_expression_type_check ~post_info e
       | _ -> VarSet.empty
 
-  let rec forward_expression (exp: Expression.t) =
+  let rec forward_expression_call ~post_info ~get_usedef_state_of_func (exp: Expression.t) =
+
+    (* let type_set_merge ~key:_ data =
+      match data with
+      | `Both (a, b) -> Some (TypeSet.union a b)
+      | `Left a | `Right a -> Some a
+    in *)
+
+    let defined_merge = OurDomain.VarTypeSet.join in
+
+    let forward_list expression_list f =
+      List.fold ~init:OurDomain.VarTypeSet.empty ~f:(fun accum e ->
+        defined_merge accum (f e)
+      ) expression_list
+    in
+    let forward_generator (generator: Comprehension.Generator.t) =
+      defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func generator.target) (forward_expression_call ~post_info ~get_usedef_state_of_func generator.iterator)
+      |> defined_merge (forward_list generator.conditions (forward_expression_call ~post_info ~get_usedef_state_of_func))
+    in
+    let forward_parameter (param: Parameter.t) =
+      let param = Node.value param in
+      defined_merge 
+        (Option.value_map param.value ~default:OurDomain.VarTypeSet.empty ~f:(forward_expression_call ~post_info ~get_usedef_state_of_func))
+        (Option.value_map param.annotation ~default:OurDomain.VarTypeSet.empty ~f:(forward_expression_call ~post_info ~get_usedef_state_of_func))
+    in
+    let forward_expression_comprehension (comprehension: Expression.t Comprehension.t) =
+      defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func comprehension.element) (forward_list comprehension.generators forward_generator)
+    in
+    match Node.value exp with
+    | Await e -> forward_expression_call ~post_info ~get_usedef_state_of_func e
+    | BooleanOperator { left; operator=And; right; } ->
+      let pre, _ = post_info in 
+      let left_variables = forward_expression_call ~post_info ~get_usedef_state_of_func left in
+      let left_type = Resolution.resolve_expression_to_type pre left in
+      if Type.is_falsy left_type
+      then left_variables
+      else (
+        let right_variables = forward_expression_call ~post_info ~get_usedef_state_of_func right in
+        defined_merge left_variables right_variables
+      )
+    | BooleanOperator { left; operator=Or; right; } ->
+      let pre, _ = post_info in 
+      let left_variables = forward_expression_call ~post_info ~get_usedef_state_of_func left in
+      let left_type = Resolution.resolve_expression_to_type pre left in
+      if Type.is_truthy left_type
+      then left_variables
+      else (
+        let right_variables = forward_expression_call ~post_info ~get_usedef_state_of_func right in
+        defined_merge left_variables right_variables
+      ) 
+    (* | BooleanOperator e -> 
+      defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.left) (forward_expression_call ~post_info ~get_usedef_state_of_func e.right) *)
+    | Call e -> 
+      let f accum (a: Call.Argument.t) =
+        (* For Use Condition *)
+        (* match (Node.value a.value) with
+        | Name name when is_simple_name name -> accum
+        | _ -> *)
+          defined_merge accum (forward_expression_call ~post_info ~get_usedef_state_of_func a.value)
+      in
+
+      let defined =
+        match Node.value e.callee with
+        | Name name when is_simple_name name && not (String.is_suffix ~suffix:"__" (Name.show name)) ->
+          let pre, _ = post_info in
+          (match Resolution.resolve_expression_to_type pre e.callee with
+          | Type.Parametric { name = "BoundMethod"; parameters = [Single (Callable { kind = Named name; _ }); _]; _ } ->
+            get_usedef_state_of_func name
+          | _ -> OurDomain.VarTypeSet.empty
+          )
+        | _ -> OurDomain.VarTypeSet.empty
+      in
+      defined_merge defined (forward_expression_call ~post_info ~get_usedef_state_of_func e.callee)
+      |> defined_merge (List.fold ~init:OurDomain.VarTypeSet.empty ~f e.arguments)
+    | ComparisonOperator { left = { Node.value = Name name; _ }; operator= Is | IsNot | In | NotIn; right; } when is_simple_name name
+      ->
+      forward_expression_call ~post_info ~get_usedef_state_of_func right
+    | ComparisonOperator { left = { Node.value = Constant (Constant.NoneLiteral); _ }; _ } 
+      -> OurDomain.VarTypeSet.empty
+
+    | ComparisonOperator e -> defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.left) (forward_expression_call ~post_info ~get_usedef_state_of_func e.right)
+    | Dictionary e -> 
+      let f accum (a: Dictionary.Entry.t) =
+        defined_merge accum (defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func a.key) (forward_expression_call ~post_info ~get_usedef_state_of_func a.value))
+      in
+      defined_merge (List.fold ~init:OurDomain.VarTypeSet.empty ~f e.entries) (forward_list e.keywords (forward_expression_call ~post_info ~get_usedef_state_of_func))
+    | Generator e -> forward_expression_comprehension e
+    | FormatString e -> forward_list e (fun e ->
+        match e with
+        | Format e -> forward_expression_call ~post_info ~get_usedef_state_of_func e
+        | _ -> OurDomain.VarTypeSet.empty
+      )
+    | Lambda e -> defined_merge (forward_list e.parameters forward_parameter) (forward_expression_call ~post_info ~get_usedef_state_of_func e.body)
+    | List e -> forward_list e (forward_expression_call ~post_info ~get_usedef_state_of_func)
+    | ListComprehension e -> forward_expression_comprehension e
+    | Set e -> forward_list e (forward_expression_call ~post_info ~get_usedef_state_of_func)
+    | SetComprehension e -> forward_expression_comprehension e
+    | Starred e ->
+        (match e with
+        | Once e | Twice e -> forward_expression_call ~post_info ~get_usedef_state_of_func e
+        )
+    | Ternary e -> defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.target) (forward_expression_call ~post_info ~get_usedef_state_of_func e.test) |> defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.alternative)
+    | Tuple e -> forward_list e (forward_expression_call ~post_info ~get_usedef_state_of_func)
+    | UnaryOperator
+        {
+          UnaryOperator.operator = UnaryOperator.Not;
+          operand = { Node.value = Name name; _ };
+        } when is_simple_name name 
+        -> OurDomain.VarTypeSet.empty
+    | UnaryOperator e -> forward_expression_call ~post_info ~get_usedef_state_of_func e.operand
+    | WalrusOperator e -> defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.target) (forward_expression_call ~post_info ~get_usedef_state_of_func e.value)
+    | Yield (Some e) -> forward_expression_call ~post_info ~get_usedef_state_of_func e
+    | YieldFrom e -> forward_expression_call ~post_info ~get_usedef_state_of_func e
+    | _ -> OurDomain.VarTypeSet.empty
+
+  let rec forward_expression ~post_info (exp: Expression.t) =
 
     (* Log.dump "WOW : %a" Expression.pp exp; *)
 
@@ -361,17 +594,17 @@ module UsedefState = struct
       ) expression_list
     in
     let forward_generator (generator: Comprehension.Generator.t) =
-      VarSet.union (forward_expression generator.target) (forward_expression generator.iterator)
-      |> VarSet.union (forward_list generator.conditions forward_expression)
+      VarSet.union (forward_expression ~post_info generator.target) (forward_expression ~post_info generator.iterator)
+      |> VarSet.union (forward_list generator.conditions (forward_expression ~post_info))
     in
     let forward_parameter (param: Parameter.t) =
       let param = Node.value param in
       VarSet.union 
-        (Option.value_map param.value ~default:VarSet.empty ~f:forward_expression)
-        (Option.value_map param.annotation ~default:VarSet.empty ~f:forward_expression)
+        (Option.value_map param.value ~default:VarSet.empty ~f:(forward_expression ~post_info))
+        (Option.value_map param.annotation ~default:VarSet.empty ~f:(forward_expression ~post_info))
     in
     let forward_expression_comprehension (comprehension: Expression.t Comprehension.t) =
-      VarSet.union (forward_expression comprehension.element) (forward_list comprehension.generators forward_generator)
+      VarSet.union (forward_expression ~post_info comprehension.element) (forward_list comprehension.generators forward_generator)
     in
     match Node.value exp with
     | Name n -> 
@@ -379,8 +612,29 @@ module UsedefState = struct
       | Some name -> (* Log.dump "HMM : %a" Reference.pp name; *) VarSet.singleton name
       | None -> (* Log.dump "WHAT?? : %a" Name.pp n; *) VarSet.empty
       )
-    | Await e -> forward_expression e
-    | BooleanOperator e -> VarSet.union (forward_expression e.left) (forward_expression e.right)
+    | Await e -> forward_expression ~post_info e
+    | BooleanOperator { left; operator=And; right; } ->
+      let pre, _ = post_info in 
+      let left_variables = forward_expression ~post_info left in
+      let left_type = Resolution.resolve_expression_to_type pre left in
+      if Type.is_falsy left_type
+      then left_variables
+      else (
+        let right_variables = forward_expression ~post_info right in
+        VarSet.union left_variables right_variables
+      )
+    | BooleanOperator { left; operator=Or; right; } ->
+      let pre, _ = post_info in 
+      let left_variables = forward_expression ~post_info left in
+      let left_type = Resolution.resolve_expression_to_type pre left in
+      if Type.is_truthy left_type
+      then left_variables
+      else (
+        let right_variables = forward_expression ~post_info right in
+        VarSet.union left_variables right_variables
+      ) 
+    (* | BooleanOperator e -> 
+      VarSet.union (forward_expression ~post_info e.left) (forward_expression ~post_info e.right) *)
     | Call
         {
           callee = { Node.value = Name (Name.Identifier "isinstance"); _ };
@@ -395,54 +649,71 @@ module UsedefState = struct
         VarSet.empty
     | Call e -> 
       let f accum (a: Call.Argument.t) =
-        VarSet.union accum (forward_expression a.value)
+        (* For Use Condition *)
+        (* match (Node.value a.value) with
+        | Name name when is_simple_name name -> accum
+        | _ -> *)
+          VarSet.union accum (forward_expression ~post_info a.value)
       in
-      VarSet.union (forward_expression e.callee) (List.fold ~init:VarSet.empty ~f e.arguments)
+      VarSet.union (forward_expression ~post_info e.callee) (List.fold ~init:VarSet.empty ~f e.arguments)
     | ComparisonOperator { left = { Node.value = Name name; _ }; operator= Is | IsNot | In | NotIn; right; } when is_simple_name name
       ->
-      forward_expression right
+      forward_expression ~post_info right
     | ComparisonOperator { left = { Node.value = Constant (Constant.NoneLiteral); _ }; _ } 
       -> VarSet.empty
 
-    | ComparisonOperator e -> VarSet.union (forward_expression e.left) (forward_expression e.right)
+    | ComparisonOperator e -> VarSet.union (forward_expression ~post_info e.left) (forward_expression ~post_info e.right)
     | Dictionary e -> 
       let f accum (a: Dictionary.Entry.t) =
-        VarSet.union accum (VarSet.union (forward_expression a.key) (forward_expression a.value))
+        VarSet.union accum (VarSet.union (forward_expression ~post_info a.key) (forward_expression ~post_info a.value))
       in
-      VarSet.union (List.fold ~init:VarSet.empty ~f e.entries) (forward_list e.keywords forward_expression)
+      VarSet.union (List.fold ~init:VarSet.empty ~f e.entries) (forward_list e.keywords (forward_expression ~post_info))
     | Generator e -> forward_expression_comprehension e
     | FormatString e -> forward_list e (fun e ->
         match e with
-        | Format e -> forward_expression e
+        | Format e -> forward_expression ~post_info e
         | _ -> VarSet.empty
       )
-    | Lambda e -> VarSet.union (forward_list e.parameters forward_parameter) (forward_expression e.body)
-    | List e -> forward_list e forward_expression
+    | Lambda e -> VarSet.union (forward_list e.parameters forward_parameter) (forward_expression ~post_info e.body)
+    | List e -> forward_list e (forward_expression ~post_info)
     | ListComprehension e -> forward_expression_comprehension e
-    | Set e -> forward_list e forward_expression
+    | Set e -> forward_list e (forward_expression ~post_info)
     | SetComprehension e -> forward_expression_comprehension e
     | Starred e ->
         (match e with
-        | Once e | Twice e -> forward_expression e
+        | Once e | Twice e -> forward_expression ~post_info e
         )
-    | Ternary e -> VarSet.union (forward_expression e.target) (forward_expression e.test) |> VarSet.union (forward_expression e.alternative)
-    | Tuple e -> forward_list e forward_expression
+    | Ternary e -> 
+      let type_check_variable = forward_expression_type_check ~post_info e.test in
+      let varset = 
+        VarSet.union (forward_expression ~post_info e.target) (forward_expression ~post_info e.test) 
+        |> VarSet.union (forward_expression ~post_info e.alternative)
+      in
+
+      VarSet.filter varset ~f:(fun r -> 
+        not (VarSet.exists type_check_variable ~f:(fun tr -> Reference.is_contain ~base:r ~target:tr))
+      )  
+      
+    | Tuple e -> forward_list e (forward_expression ~post_info)
     | UnaryOperator
         {
           UnaryOperator.operator = UnaryOperator.Not;
           operand = { Node.value = Name name; _ };
         } when is_simple_name name 
         -> VarSet.empty
-    | UnaryOperator e -> forward_expression e.operand
-    | WalrusOperator e -> VarSet.union (forward_expression e.target) (forward_expression e.value)
-    | Yield (Some e) -> forward_expression e
-    | YieldFrom e -> forward_expression e
+    | UnaryOperator e -> forward_expression ~post_info e.operand
+    | WalrusOperator e -> VarSet.union (forward_expression ~post_info e.target) (forward_expression ~post_info e.value)
+    | Yield (Some e) -> forward_expression ~post_info e
+    | YieldFrom e -> forward_expression ~post_info e
     | _ -> VarSet.empty
 
 
-  let forward_assignment ~target ~value usedef_map =
-    let target_variables = forward_expression target in
-    let value_variables = forward_expression value in
+  let forward_assignment ~target ~value ~post_info ~get_usedef_state_of_func usedef_map =
+
+    let target_variables = forward_expression ~post_info target in
+    let value_variables = forward_expression ~post_info value in
+    let type_check_variables = forward_expression_type_check ~post_info value in
+    let callee_vartypes = forward_expression_call ~post_info ~get_usedef_state_of_func value in
 
     let filter_simple_assign value_variables value =
       match Node.value value with
@@ -454,35 +725,76 @@ module UsedefState = struct
       | _ -> value_variables
     in
 
+    (* Log.dump "ASSIGN : %a" Expression.pp value;
+    VarSet.iter value_variables ~f:(fun v -> Log.dump "VARIABLE : %a" Reference.pp v);
+    VarSet.iter type_check_variables ~f:(fun v -> Log.dump "TYPE CHECK : %a" Reference.pp v); *)
+
     let value_variables = filter_simple_assign value_variables value in
 
     let both_variables = VarSet.inter target_variables value_variables in
     let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Def) target_variables in
-    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) value_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) (VarSet.diff value_variables type_check_variables) in
     let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Both) both_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:CheckUse) type_check_variables in
+    let usedef_map = OurDomain.VarTypeSet.fold ~init:usedef_map ~f:(fun ~key ~data usedef_map -> 
+      (* Log.dump "HMM %a" Reference.pp key; *)
+      let data = OurDomain.TypeSet.fold ~init:TypeSet.empty ~f:(fun acc data -> TypeSet.add acc data) data in
+      Reference.Map.set usedef_map ~key ~data:(CalleeDef data)) callee_vartypes in
     usedef_map
 
-  let forward_assert test usedef_map =
-    let test_variables = forward_expression test in
-    let type_check_variables = forward_expression_type_check test in
+  let forward_assert ~post_info test usedef_map =
+    let test_variables = forward_expression ~post_info test in
+    let type_check_variables = forward_expression_type_check ~post_info test in
+
+    (* let pre, _ = post_info in
+    Log.dump "%a ==>" Expression.pp test;
+    Reference.Set.iter test_variables ~f:(fun r -> Log.dump "%a, " Reference.pp r);
+    Log.dump "%a" Resolution.pp pre; *)
 
     let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) (VarSet.diff test_variables type_check_variables) in
-    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Both) type_check_variables in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:CheckUse) type_check_variables in
     usedef_map
 
-  let forward_setitem ~callee ~(value: Call.Argument.t) usedef_map =
-    let target_variables = forward_expression callee in
-    let value_variables = forward_expression value.value in
+  let forward_only_expression ~post_info ~get_usedef_state_of_func exp usedef_map =
+    let test_variables = forward_expression ~post_info exp in
+    let type_check_variables = forward_expression_type_check ~post_info exp in
+    let callee_vartypes = forward_expression_call ~post_info ~get_usedef_state_of_func exp in
+
+    (* let pre, _ = post_info in
+    Log.dump "%a ==>" Expression.pp test;
+    Reference.Set.iter test_variables ~f:(fun r -> Log.dump "%a, " Reference.pp r);
+    Log.dump "%a" Resolution.pp pre; *)
+
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) (VarSet.diff test_variables type_check_variables) in
+    let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:CheckUse) type_check_variables in
+    let usedef_map = OurDomain.VarTypeSet.fold ~init:usedef_map ~f:(fun ~key ~data usedef_map -> 
+      let data = OurDomain.TypeSet.fold ~init:TypeSet.empty ~f:(fun acc data -> TypeSet.add acc data) data in
+      Reference.Map.set usedef_map ~key ~data:(CalleeDef data)) callee_vartypes in
+    usedef_map
+
+  let forward_setitem ~callee ~(value: Call.Argument.t) ~post_info usedef_map =
+    let target_variables = forward_expression ~post_info callee in
+    let value_variables = forward_expression ~post_info value.value in
     let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Def) target_variables in
     let usedef_map = VarSet.fold ~init:usedef_map ~f:(fun usedef_map key -> Reference.Map.set usedef_map ~key ~data:Use) value_variables in
     usedef_map
+    
 
-  let forward_statement ~(statement: Statement.t) state =
+  let forward_statement ~(statement: Statement.t) ~post_info ~get_usedef_state_of_func state =
+
+    (* Log.dump "WHY %a" Statement.pp statement; *)
+
     match Node.value statement with
     | Assign { Assign.target; value; _} ->
-      forward_assignment ~target ~value state
+      forward_assignment ~target ~value ~post_info ~get_usedef_state_of_func state
+    | Assert { 
+      Assert.test = { Node.value=ComparisonOperator { left = { Node.value = Name _; _ }; operator= Is | IsNot; right = { Node.value = Constant _; _ }; }; _}; 
+      origin=(Assert.Origin.If { true_branch }) | (Assert.Origin.While { true_branch });  
+      _ } when not true_branch -> 
+      state
     | Assert { Assert.test; _ } -> 
-      forward_assert test state
+      (* Log.dump "HMM? %a" Expression.pp test ; *)
+      forward_assert ~post_info test state
     | Expression { Node.value = Call { 
         callee = {
             Node.value = Name (Attribute {
@@ -495,25 +807,25 @@ module UsedefState = struct
         };
         _
       } ->
-        forward_setitem ~callee ~value state
+        forward_setitem ~callee ~value ~post_info state
     | Expression exp ->
-      forward_assert exp state
+      forward_only_expression ~post_info ~get_usedef_state_of_func exp state
     | Return { expression=exp; _ } ->
       (match exp with
       | Some { Node.value = Name name; _ } when is_simple_name name -> state
-      | Some exp -> forward_assert exp state
+      | Some exp -> forward_assert ~post_info exp state
       | _ -> state
       )
     | _ -> 
       (* Log.dump "HMM? %a" Statement.pp statement; *)
       state
 
-  let forward ~statement_key:_ ~post_info state ~statement =
-    let usedef_table = forward_statement ~statement usedef_create in
+  let forward ~statement_key:_ ~post_info ~get_usedef_state_of_func state ~statement =
+    let usedef_table = forward_statement ~statement ~post_info ~get_usedef_state_of_func usedef_create in
     
 
     let x = update_state ~post_info state usedef_table in
-    Log.dump "STATEMENT %a\n\nBEFOOORE %a\n\nAFFFTER %a\n" Statement.pp statement pp state pp x;
+    (* Log.dump "STATEMENT %a\n\nBEFOOORE %a\n\nAFFFTER %a\n" Statement.pp statement pp state pp x; *)
     x
 
   let backward ~statement_key:_ state ~statement:_ =
@@ -543,7 +855,8 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> post_info:(Refinement.Store.t * Refinement.Store.t) Int.Map.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> post_info:(Resolution.t * Resolution.t) option Int.Map.t -> initial:state -> 
+    get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 
@@ -690,7 +1003,7 @@ module Make (State : UsedefState) = struct
       let node_id = Cfg.Node.id node in
       let usedef_table = 
         match Int.Map.find post_info (Cfg.Node.id node) with
-        | Some post_info ->
+        | Some (Some post_info) ->
           (* Log.dump "??? %a" Cfg.Node.pp node; *)
           let usedef_table = 
             Hashtbl.find usedef_tables node_id
@@ -775,11 +1088,11 @@ module Make (State : UsedefState) = struct
 
     { usedef_tables; }
 
-  let forward ~cfg ~post_info ~initial =
+  let forward ~cfg ~post_info ~initial ~get_usedef_state_of_func =
     let transition ~post_info node_id init statements =
       let forward statement_index before statement =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
-        let after = State.forward ~statement_key ~post_info before ~statement in
+        let after = State.forward ~statement_key ~post_info ~get_usedef_state_of_func before ~statement in
         (*
         Format.printf "\n\n  {  %a  } \n\n"
         Statement.pp

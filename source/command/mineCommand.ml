@@ -180,7 +180,7 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 10) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
+              if (k >= 4) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
                 Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
                 Log.dump "Check";

@@ -1,5 +1,6 @@
 open Ast
 open Core
+open OurDomain
 
 module TypeSet : Set.S with type Elt.t = Type.t
 
@@ -22,11 +23,13 @@ module type UsedefState = sig
 
   val get_used_after_defined : t -> TypeSet.t Reference.Map.t
 
+  val to_vartypeset : t -> VarTypeSet.t
+
   val is_defined : t -> Reference.t -> bool
 
   val is_undefined : t -> Reference.t -> bool
 
-  val forward : statement_key:int -> post_info:(Refinement.Store.t * Refinement.Store.t) -> t -> statement:Statement.t -> t
+  val forward : statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
@@ -42,6 +45,7 @@ module UsedefState : sig
   type t = {
     used_before_defined: TypeSet.t Reference.Map.t;
     defined: TypeSet.t Reference.Map.t;
+    check_used: TypeSet.t Reference.Map.t;
     used_after_defined: TypeSet.t Reference.Map.t;
     total: TypeSet.t Reference.Map.t;
     usedef_table: usedef Reference.Map.t;
@@ -76,7 +80,8 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> post_info:(Refinement.Store.t * Refinement.Store.t) Int.Map.t -> initial:state -> t
+  val forward : cfg:Cfg.t -> post_info:(Resolution.t * Resolution.t) option Int.Map.t -> initial:state -> 
+    get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
 

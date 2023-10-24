@@ -5265,13 +5265,15 @@ let create_mismatch ~resolution ~actual ~expected ~covariant =
   }
 
 let filter_type_error errors =
-  List.filter errors ~f:(fun {kind;_} ->
+  List.filter errors ~f:(fun ({kind;_} as e) ->
+      let _ = e in
       (match kind with
       | UnsupportedOperand _ | UnsupportedOperandWithReference _
       | IncompatibleParameterType _ | IncompatibleParameterTypeWithReference _ 
       | UndefinedAttribute _ | UndefinedAttributeWithReference _ 
       | IncompatibleAttributeType _
       | NotCallable _ | NotCallableWithExpression _
+      | TooManyArguments _
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _

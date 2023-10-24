@@ -25,7 +25,7 @@ module type PossibleState = sig
   *)
   val is_reachable : t -> bool
 
-  val get_refinement : t -> Refinement.Store.t option
+  val get_resolution : t -> Resolution.t option
 
   val bottom : t
 
@@ -61,7 +61,7 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
-  val post_info : t -> (Refinement.Store.t * Refinement.Store.t) Int.Map.t
+  val post_info : t -> (Resolution.t * Resolution.t) option Int.Map.t
 
   (*
   val exit_possible : t -> state option
@@ -112,15 +112,15 @@ module Make (State : PossibleState) = struct
   let post_info { preconditions; postconditions; } =
     Hashtbl.fold postconditions ~init:Int.Map.empty ~f:(fun ~key ~data:postcondition acc ->
       
-      match State.get_refinement postcondition with
+      match State.get_resolution postcondition with
       | Some postcondition ->
         let precondition = Hashtbl.find_exn preconditions key in
-        (match State.get_refinement precondition with
+        (match State.get_resolution precondition with
         | Some precondition -> 
-          Int.Map.set acc ~key ~data:(precondition, postcondition)
-        | _ -> Int.Map.set acc ~key ~data:(Refinement.Store.empty, Refinement.Store.empty)
+          Int.Map.set acc ~key ~data:(Some (precondition, postcondition))
+        | _ -> Int.Map.set acc ~key ~data:None (* (Refinement.Store.empty, Refinement.Store.empty) *)
         )
-      | _ -> Int.Map.set acc ~key ~data:(Refinement.Store.empty, Refinement.Store.empty)
+      | _ -> Int.Map.set acc ~key ~data:None (* (Refinement.Store.empty, Refinement.Store.empty) *)
     )
     (*
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
@@ -184,10 +184,10 @@ module Make (State : PossibleState) = struct
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
       in
-      let join_time = Timer.stop_in_sec timer in
+      (* let join_time = Timer.stop_in_sec timer in
 
       if Float.(>) join_time 0.5 then
-        Log.dump "%.3f" join_time;
+        Log.dump "%.3f %a" join_time State.pp precondition; *)
 
       
       (*
@@ -223,6 +223,14 @@ module Make (State : PossibleState) = struct
 
       let trans_time = Timer.stop_in_sec timer in
       let _ = trans_time in
+
+      (* if Float.(>) trans_time 1.0
+        then (
+          Log.dump "END %i" (Cfg.Node.id node);
+          Log.dump "%a" Cfg.Node.pp node;
+          Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+          Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
+        ); *)
 
       (* if (* Float.(>) trans_time 2.0 && *) String.is_substring (Reference.show func_name) ~substring:"salt.client.LocalClient.pub"
         then (

@@ -1239,4 +1239,6 @@ val union_update : f:(t -> t) -> t -> t
 
 val union_fold_with_filter : f:(t -> t option) -> t -> t option
 
+val our_dict_to_dict : t -> t
+
 val calc_type : t -> t -> float

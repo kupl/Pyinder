@@ -7651,7 +7651,22 @@ let narrow_return_type t =
     )
   | _ -> t
 
+let our_dict_to_dict annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
 
+    let visit_children_before _ _ = true
+
+    let visit_children_after = false
+
+    let visit _ annotation = { 
+      Transform.transformed_annotation = 
+      (match annotation with
+      | OurTypedDictionary { general; _ } -> general
+      | _ -> annotation); new_state = () }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
 
 let calc_type left right =
   let is_match left right =

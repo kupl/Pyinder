@@ -186,6 +186,22 @@ module ReferenceMap : sig
   val diff : Type.t t -> Type.t t -> ReferenceSet.t
 end
 
+module TypeSet : Set.S with type Elt.t = Type.t
+
+module VarTypeSet : sig
+  type t = TypeSet.t Reference.Map.t [@@deriving sexp, compare, equal]
+
+  val empty : t
+
+  val pp : Format.formatter -> t -> unit
+
+  val join : t -> t -> t
+
+  val fold : t -> init:'a -> f:(key:Reference.t -> data:TypeSet.t -> 'a -> 'a) -> 'a
+
+  val set : t -> key:Reference.t -> data:TypeSet.t -> t
+end
+
 
 module IdentifierMap : Map.S with type Key.t = Identifier.t
 
@@ -327,6 +343,7 @@ module type FunctionSummary = sig
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    usedef_defined: VarTypeSet.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
@@ -367,6 +384,7 @@ module FunctionSummary : sig
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
+    usedef_defined: VarTypeSet.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
@@ -450,6 +468,8 @@ module OurSummary : sig
 
   val set_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t -> unit
 
+  val set_usedef_defined : t -> Reference.t -> VarTypeSet.t -> unit
+
   val set_unknown_decorator : t -> Reference.t -> unit
   (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
@@ -477,11 +497,13 @@ module OurSummary : sig
 
   val get_unique_analysis : t -> Reference.t -> UniqueAnalysis.UniqueStruct.t
 
+  val get_usedef_defined : t -> Reference.t -> VarTypeSet.t
+
   val get_unknown_decorator : t -> Reference.t -> bool
 
-  val get_callable : join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
+  val get_callable : join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> successors:(string -> string list) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
 
-  val get_callable_return_type :  t -> ArgTypes.t -> Type.Callable.t -> Type.t
+  val get_callable_return_type :  successors:(string -> string list) -> t -> ArgTypes.t -> Type.Callable.t -> Type.t
   
   val add_class_attribute : t -> Reference.t -> string -> unit
 

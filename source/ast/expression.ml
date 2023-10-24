@@ -2638,10 +2638,26 @@ let is_used ~reference expression =
   let fold_name ~folder:_ ~state name =
     match name_to_reference name with
     | Some name_reference ->
-      Reference.equal name_reference reference
+      state || Reference.equal name_reference reference
     | _ -> state
   in
   let folder = Folder.create_with_uniform_location_fold ~fold_name () in
+  Folder.fold ~folder ~state:false expression
+
+let is_used_call ~reference expression =
+  let fold_call ~folder:_ ~state { Call.arguments; _ } =
+    state || (List.exists arguments ~f:(fun arg -> 
+      match Node.value arg.value with
+      | Name name ->
+        (match name_to_reference name with
+        | Some name_reference ->
+          Reference.equal name_reference reference
+        | _ -> false
+        )
+      | _ -> false
+    ))
+  in
+  let folder = Folder.create_with_uniform_location_fold ~fold_call () in
   Folder.fold ~folder ~state:false expression
 
 let rec is_check_none ~reference expression =

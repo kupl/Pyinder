@@ -69,6 +69,9 @@ module ReadOnly = struct
   let get_raw_code { get_raw_code; _ } = get_raw_code
 
   let project_qualifiers tracker =
+    (* List.iter (module_paths tracker
+      |> List.filter ~f:ModulePath.is_in_project
+    ) ~f:(fun m -> Log.dump "TEST : %a" ModulePath.pp m); *)
     module_paths tracker
     |> List.filter ~f:ModulePath.is_in_project
     |> List.map ~f:ModulePath.qualifier

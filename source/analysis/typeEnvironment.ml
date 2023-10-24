@@ -25,6 +25,7 @@ end
 
 let produce_check_results global_environment define_info ~dependency =
   let define_name = define_info in 
+  (* Log.dump "Start %a" Reference.pp define_name; *)
   (* let define_name, entry_arg_types = OurDomain.ArgTypesKey.from_key define_info in
   let _ = entry_arg_types in *)
   let type_check_controls, call_graph_builder, dependency =
@@ -48,7 +49,7 @@ let produce_check_results global_environment define_info ~dependency =
     type_check_controls, call_graph_builder, dependency
   in
 
-  (* Log.dump "Start %a" Reference.pp define_name; *)
+  
   let mode = OurDomain.load_mode () in
 
 
@@ -316,7 +317,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     (); *)
 
   
-
+  (* Log.dump "FINISH!!"; *)
   
   if String.equal mode "preprocess" then (
     (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
@@ -366,10 +367,16 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
              (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
             ); *)
 
-            (* if String.is_substring (Reference.show define) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
+            (* if String.equal (Reference.show define) "salt.state.State._run_check"
               then (
                 Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
                (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
+              );
+
+            if String.equal (Reference.show define) "salt.state.State.call"
+              then (
+                Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
+                (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
               ); *)
           
           
@@ -471,7 +478,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     ); *)
 
-    
+    (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     (* OurDomain.our_model := our_summary; *)
     if String.equal mode "error" then
       OurErrorDomain.our_errors := our_errors;

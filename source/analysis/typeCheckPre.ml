@@ -69,10 +69,12 @@ let preprocess ~our_model ~global_resolution define =
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp parameter_usage_attributes; *)
       (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
         Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
+
       
       let x =
       OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
       in
+
 
       x
     | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name parameter_usage_attributes
@@ -91,9 +93,15 @@ let preprocess ~our_model ~global_resolution define =
     | Expression.Name _ ->
       let duck_type = Type.Primitive (Reference.show data) in
       (* Log.dump "Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
-      (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
+      (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability" then
+        Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name;
+
+      if String.is_substring (Reference.show name) ~substring:"EntityComponent" then
+        Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name;
+         *)
+
+        (* if String.is_substring (Reference.show name) ~substring:"modules.state.show_states" then
         Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
-        
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()
   );

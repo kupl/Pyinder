@@ -125,6 +125,7 @@ let should_type_check
 
 let create ~configuration:({ Configuration.Analysis.excludes; _ } as configuration) path =
   let absolute_path = ArtifactPath.raw path |> PyrePath.absolute in
+
   let create ?extension path =
     let search_paths = Configuration.Analysis.search_paths configuration in
     let is_external = not (should_type_check ~configuration path) in
