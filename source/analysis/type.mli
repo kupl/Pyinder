@@ -820,6 +820,12 @@ val top_to_unknown : t -> t
 
 val any_to_unknown : t -> t
 
+val unknown_to_any : t -> t
+
+val is_possible_iter : t -> bool
+
+val is_really_possible_iter : t -> bool
+
 val narrow_iterable : max_depth:int -> t -> t
 
 val weaken_literals : t -> t
@@ -1114,6 +1120,8 @@ val variable
 
 val is_concrete : t -> bool
 
+val filter_type : f:(t -> bool) -> t -> t
+
 val filter_unknown : t -> t
 
 val union_join : t -> t -> t
@@ -1145,6 +1153,8 @@ module OurTypedDictionary : sig
     type_t Record.OurTypedDictionary.record
 
   val update_dict_field : join_f:(type_t -> type_t -> type_t) -> type_t -> string -> type_t -> type_t
+
+  val refine_dict_field : type_t -> string -> type_t -> type_t
 
   val set_dict_field : type_t -> string -> type_t -> type_t
 
@@ -1230,6 +1240,8 @@ val can_union : f:(t -> bool) -> t -> bool
 val can_unknown : t -> bool
 
 val can_none : t -> bool
+
+val can_type : t -> bool
 
 val can_top : t -> bool
 

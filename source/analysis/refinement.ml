@@ -496,13 +496,15 @@ module Store = struct
 
   let get_base ~name store = get_unit ~name store |> Unit.base
 
+  let get_base_of_anno ~name store = get_unit ~include_temporary:false ~name store |> Unit.base
+
   let get_attributes ~name store = get_unit ~name store |> Unit.attributes
   
-  (* let get_annotation_of_temporary ~name ~attribute_path store = 
-    let anno = get_unit ~include_temporary:false ~name store |> Unit.get_annotation ~attribute_path in
-    match anno with
-    | None -> get_unit ~name store |> Unit.get_annotation ~attribute_path
-    | _ -> anno *)
+  let get_annotation_of_anno ~name ~attribute_path store = 
+    get_unit ~include_temporary:false ~name store |> Unit.get_annotation ~attribute_path
+
+  let get_annotation_of_temp ~name ~attribute_path store = 
+    get_unit ~include_temporary:true ~name store |> Unit.get_annotation ~attribute_path
 
   let get_annotation ~name ~attribute_path store =
     let anno = get_unit ~name store |> Unit.get_annotation ~attribute_path in

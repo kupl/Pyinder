@@ -1,12 +1,20 @@
 open Core
 open Ast
 open Pyre
-
 open AttributeAnalysis
 (*
 open Usedef
 exception NotEqualException;;
 *)
+
+let on_any = ref true
+let on_dataflow = ref false
+let on_class_var = ref true
+let on_attribute = ref true
+
+
+let debug = ref false
+
 module ReferenceSet = Reference.Set
 
 module ReferenceHash = struct
@@ -34,8 +42,14 @@ module ReferenceHash = struct
     let t_list = ref [] in *)
     merge_into ~src:left ~dst:right ~f:(fun ~key:_ src dst ->
       match dst with 
-      | Some v -> if equal src v then Set_to v else Set_to (data_join src v)
-      | _ -> Set_to src
+      | Some v -> 
+        
+        if equal src v then (
+          Set_to v
+          ) else Set_to (data_join src v)
+      | _ -> 
+
+        Set_to src
     )
 
   (* let pp ~data_pp format t =
@@ -44,6 +58,69 @@ module ReferenceHash = struct
     ) t *)
 end
 
+module TypeFromFuncs = struct
+  type t = Reference.Set.t Type.Map.t [@@deriving sexp, equal]
+
+  let empty = Type.Map.empty
+
+  let is_empty = Type.Map.is_empty
+
+  let set = Type.Map.set
+
+  let fold = Type.Map.fold
+
+  let existsi = Type.Map.existsi
+
+  let reference_set_pp format t =
+    Reference.Set.iter t ~f:(fun r ->
+      Format.fprintf format "%a, " Reference.pp r
+    )
+
+  let get_type ~type_join t =
+    let result = 
+      Type.Map.fold t ~init:Type.Bottom ~f:(fun ~key ~data:_ typ ->
+        try
+          type_join key typ
+        with
+        | (* ClassHierarchy.Untracked *) _ -> Type.union_join key typ
+      )
+    in
+
+    if Type.is_bottom result then None else Some result
+    
+  let get_all_callees t =
+    Type.Map.fold t ~init:Reference.Set.empty ~f:(fun ~key:_ ~data acc ->
+      Reference.Set.union acc data
+    )
+
+  let get_callees ~typ ~less_or_equal t =
+    if Type.is_unknown typ then 
+      Type.Map.find t typ |> Option.value ~default:Reference.Set.empty
+    else (
+      let typ = Type.filter_unknown typ in
+      Type.Map.fold t ~init:Reference.Set.empty ~f:(fun ~key ~data acc ->
+        if less_or_equal ~left:key ~right:typ then Reference.Set.union acc data
+        else acc
+      )
+    )
+
+  (* let callees t =
+    Type.Map.fold t ~init:Reference.Set.empty ~f:(fun ~key:_ ~data acc ->
+      Reference.Set.union acc data
+    ) *)
+
+  let pp format t =
+    Type.Map.iteri t ~f:(fun ~key ~data ->
+      Format.fprintf format "%a => %a\n" Type.pp key reference_set_pp data
+    )
+
+  let join left right =
+    Type.Map.merge left right ~f:(fun ~key:_ data ->
+      match data with
+      | `Left t | `Right t -> Some t
+      | `Both (t1, t2) -> Some (ReferenceSet.union t1 t2)
+    )
+end
 
 module ReferenceMap = struct
   include Map.Make (Reference)
@@ -68,6 +145,13 @@ module ReferenceMap = struct
         with
         | (* ClassHierarchy.Untracked *) _ -> Log.dump "%a\n%a\n" Type.pp left Type.pp right; Some (Type.union_join left right)
       )
+      | `Left data | `Right data -> Some data
+    )
+
+  let join_var_from_funcs left right =
+    merge left right ~f:(fun ~key:_ data ->
+      match data with
+      | `Both (left, right) -> Some (TypeFromFuncs.join left right)
       | `Left data | `Right data -> Some data
     )
 
@@ -127,6 +211,14 @@ module ReferenceMap = struct
       | `Left v | `Right v when not (Type.is_unknown v) -> ReferenceSet.add refset key
       | _ -> refset
     )
+
+  let diff_var_from_funcs left right =
+    fold2 left right ~init:ReferenceSet.empty ~f:(fun ~key ~data refset->
+      match data with
+      | `Both (left, right) -> if TypeFromFuncs.equal left right then refset else ReferenceSet.add refset key
+      | `Left v | `Right v when not (TypeFromFuncs.is_empty v) -> ReferenceSet.add refset key
+      | _ -> refset
+    )  
 
   let to_set t =
     keys t
@@ -404,13 +496,92 @@ module ClassAttributes = struct
     { empty with methods }
 end
 
+module StubInfo = struct
+  type info = {
+    attribute_set: AttrsSet.t;
+    call_set: AttributeAnalysis.CallSet.t Identifier.Map.t;
+  } [@@deriving equal, sexp]
+
+  type t = info Identifier.Map.t [@@deriving equal, sexp]
+
+  let empty = Identifier.Map.empty
+
+  let make_call_info posarg defaults vararg kwarg =
+    let call_info = { 
+      CallInfo.empty with
+      position=List.length posarg; 
+      default=List.fold defaults ~init:Identifier.Set.empty ~f:(fun acc default -> Identifier.Set.add acc default);
+      star=vararg;
+      double_star=kwarg;
+    } 
+    in
+    AttributeAnalysis.CallSet.singleton call_info
+   
+  let pp_attribute_set format t =
+    AttrsSet.iter t ~f:(fun attr ->
+      Format.fprintf format "%s, " attr
+    )
+
+  let pp format t =
+    Identifier.Map.iteri t ~f:(fun ~key ~data:{ attribute_set; _ } ->
+      Format.fprintf format "%s => %a\n" key pp_attribute_set attribute_set
+    )
+
+  let is_empty = Identifier.Map.is_empty
+
+  let create () =
+    let stub_json = Yojson.Basic.from_file "/home/wonseok/Pyinder/stubs/typeshed/typeshed-master/stub_info.json" in
+    let open Yojson.Basic.Util in
+    let json_list = stub_json |> to_list in
+
+    let x = 
+      List.fold json_list ~init:empty ~f:(fun acc json -> 
+        let cls_name = json |> member "name" |> to_string in
+        let attributes = json |> member "info" |> member "attributes" |> to_list |> filter_string in
+        let properties = json |> member "info" |> member "properties" |> to_list |> filter_string in
+        let attribute_set = AttrsSet.union_list [AttrsSet.of_list attributes; AttrsSet.of_list properties;] in
+        let methods = json |> member "info" |>  member "method" |> to_list in
+
+        (* Log.dump "Name : %s" name;
+        Log.dump "Attributes : %s" (String.concat ~sep:", " attributes);
+        Log.dump "Properties : %s" (String.concat ~sep:", " properties); *)
+
+        let call_set =
+          List.fold methods ~init:Identifier.Map.empty ~f:(fun acc method_json -> 
+            let name = method_json |> member "name" |> to_string in
+            let posargs = method_json |> member "info" |> member "posargs" |> to_list |> filter_string in
+            let defaults = method_json |> member "info" |> member "defaults" |> to_list |> filter_string in
+            let vararg = method_json |> member "info" |> member "vararg" |> to_bool in
+            let kwarg = method_json |> member "info" |> member "kwarg" |> to_bool in  
+
+            let call_set = make_call_info posargs defaults vararg kwarg in
+            Identifier.Map.set ~key:name ~data:call_set acc
+            (* Log.dump "Method Name : %s" name;
+            Log.dump "Posargs : %s" (String.concat ~sep:", " posargs);
+            Log.dump "Defaults : %s" (String.concat ~sep:", " defaults);
+            Log.dump "Vararg : %b" vararg;
+            Log.dump "Kwarg : %b" kwarg; *)
+          )
+        in
+
+        let info = { attribute_set; call_set; } in
+        Identifier.Map.set ~key:cls_name ~data:info acc
+      )
+    in
+
+    x
+end
+
+
+
+
 
 
 module ClassSummary = struct
   type t = {
-    class_var_type: Type.t ReferenceMap.t;
-    temp_class_var_type : Type.t ReferenceMap.t;
-    join_temp_class_var_type : Type.t ReferenceMap.t;
+    class_var_type: TypeFromFuncs.t ReferenceMap.t;
+    temp_class_var_type : TypeFromFuncs.t ReferenceMap.t;
+    join_temp_class_var_type : TypeFromFuncs.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set : ReferenceSet.t;
@@ -435,6 +606,8 @@ module ClassSummary = struct
 
   let get_usage_attributes { usage_attributes; _ } = usage_attributes
 
+  let get_properties { class_attributes; _ } = ClassAttributes.get_class_property class_attributes
+
   let add_attribute ({ class_attributes; _} as t) attr =
     let class_attributes = ClassAttributes.add_attribute class_attributes attr in
     { t with class_attributes }
@@ -452,6 +625,7 @@ module ClassSummary = struct
 
 
   let update_unseen_temp_class_var_type ~type_join ~updated_vars ({ class_var_type; temp_class_var_type; join_temp_class_var_type; _ } as t) =
+    let _ = type_join in
     let class_var_type =
       ReferenceMap.fold2 temp_class_var_type join_temp_class_var_type ~init:class_var_type ~f:(fun ~key ~data acc ->
         if Reference.Set.mem updated_vars key then acc
@@ -461,7 +635,9 @@ module ClassSummary = struct
             (* ReferenceMap.iteri join_temp_class_var_type ~f:(fun ~key ~data -> Log.dump "JOIN : %a ---> %a" Reference.pp key Type.pp data); *)
             ReferenceMap.update acc key ~f:(fun d -> 
             match d with
-            | Some t ->(*  Log.dump "Unseen %a ==> %a" Reference.pp key Type.pp data; *) type_join t data
+            | Some t -> 
+              (* Log.dump "Unseen %a ==> %a" Reference.pp key TypeFromFuncs.pp data; *) 
+              TypeFromFuncs.join t data
             | _ -> data
           )
           | _ -> acc
@@ -477,7 +653,22 @@ module ClassSummary = struct
         if ReferenceMap.mem class_var_type key then acc
         else (
           (* Log.dump "??? %a" Reference.pp key; *)
-          ReferenceMap.set acc ~key ~data:Type.Unknown
+          let data = TypeFromFuncs.empty |> TypeFromFuncs.set ~key:Type.Unknown ~data:Reference.Set.empty in
+          ReferenceMap.set acc ~key ~data
+        )
+      )
+    in
+
+    { t with class_var_type; }
+
+  let update_unseen_temp_class_var_type_to_var ({ class_var_type; temp_class_var_type; _ } as t) =
+    let class_var_type =
+      ReferenceMap.fold temp_class_var_type ~init:class_var_type ~f:(fun ~key ~data acc ->
+        (* Log.dump "??? %a" Reference.pp key; *)
+        if ReferenceMap.mem class_var_type key then acc
+        else (
+          (* Log.dump "OH"; *)
+          ReferenceMap.set acc ~key ~data
         )
       )
     in
@@ -500,6 +691,9 @@ module ClassSummary = struct
 
   let get_class_property { class_attributes; _ } =
     ClassAttributes.get_class_property class_attributes
+
+  let check_attr ~attr { class_attributes; _ } =
+    ClassAttributes.is_used_attr class_attributes attr
   
 
   let update_default_value prev next =
@@ -507,7 +701,7 @@ module ClassSummary = struct
     (* ReferenceMap.iteri next.class_var_type ~f:(fun ~key ~data -> Log.dump "%a ==> %a" Reference.pp key Type.pp data);
     Log.dump "---";
     ReferenceMap.iteri class_var_type ~f:(fun ~key ~data -> Log.dump "%a ==> %a" Reference.pp key Type.pp data); *)
-    let change_set = (ReferenceMap.diff class_var_type next.class_var_type) in
+    let change_set = (ReferenceMap.diff_var_from_funcs class_var_type next.class_var_type) in
     (* Reference.Set.iter change_set ~f:(fun r -> Log.dump ">>> %a" Reference.pp r); *)
     {
       next with class_var_type; change_set;
@@ -521,13 +715,14 @@ module ClassSummary = struct
     }
 
   let join ~type_join left right =
-    let class_var_type = ReferenceMap.join_type left.class_var_type right.class_var_type ~type_join in
-    let join_temp_class_var_type = ReferenceMap.join_type left.temp_class_var_type right.join_temp_class_var_type ~type_join in
+    let _ = type_join in
+    let class_var_type = ReferenceMap.join_var_from_funcs left.class_var_type right.class_var_type in
+    let join_temp_class_var_type = ReferenceMap.join_var_from_funcs left.temp_class_var_type right.join_temp_class_var_type in
     (* let update_var_list = ReferenceMap.keys left.class_var_type @ ReferenceMap.keys left.temp_class_var_type in
     let updated_var = List.fold update_var_list ~init:right.updated_var ~f:(fun updated_var var -> ReferenceSet.add updated_var var) in *)
     let change_set = 
-      ReferenceSet.union right.change_set (ReferenceMap.diff right.class_var_type class_var_type) 
-      |> ReferenceSet.union (ReferenceMap.diff join_temp_class_var_type right.join_temp_class_var_type)
+      ReferenceSet.union right.change_set (ReferenceMap.diff_var_from_funcs right.class_var_type class_var_type) 
+      |> ReferenceSet.union (ReferenceMap.diff_var_from_funcs join_temp_class_var_type right.join_temp_class_var_type)
     in
 
     (* ReferenceSet.iter change_set ~f:(fun c -> Log.dump "CHANGE : %a" Reference.pp c); *)
@@ -545,7 +740,7 @@ module ClassSummary = struct
 
   let pp_class_var_type format { class_var_type; join_temp_class_var_type; temp_class_var_type; _ } =
       Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n\n[[[ Classs JOIN Variable Type ]]]\n%a\n\n[[[ Classs Temp Variable Type ]]]\n%a\n" 
-      (ReferenceMap.pp ~data_pp:Type.pp) class_var_type (ReferenceMap.pp ~data_pp:Type.pp) join_temp_class_var_type  (ReferenceMap.pp ~data_pp:Type.pp) temp_class_var_type 
+      (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) class_var_type (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) join_temp_class_var_type  (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) temp_class_var_type 
 
   let pp_class_info format { class_attributes; _ } =
       Format.fprintf format "[[[ Class Info ]]] \n%a\n" ClassAttributes.pp class_attributes
@@ -594,6 +789,11 @@ module ClassTable = struct
       ClassSummary.update_unseen_temp_class_var_type_to_unknown class_info
     )
 
+  let update_unseen_temp_class_var_type_to_var t =
+    ClassHash.mapi_inplace t ~f:(fun ~key:_ ~data:class_info -> 
+      ClassSummary.update_unseen_temp_class_var_type_to_var class_info
+    )
+
   let set_all_class_var_type_to_empty t =
     ClassHash.map_inplace t ~f:(fun class_info -> (ClassSummary.set_class_var_type_to_empty class_info))
 
@@ -625,6 +825,8 @@ module ClassTable = struct
   let get_usage_attributes t class_name = get t ~class_name ~f:ClassSummary.get_usage_attributes
 
   let get_class_property t class_name = get t ~class_name ~f:ClassSummary.get_class_property
+
+  let check_attr ~attr t class_name = get t ~class_name ~f:(ClassSummary.check_attr ~attr)
 
   let update_default_value prev next =
     ClassHash.join prev next ~equal:ClassSummary.equal ~data_join:ClassSummary.update_default_value
@@ -898,12 +1100,13 @@ module Signatures = struct
   let add_return_type ~type_join t arg_types typ =
     let data = ArgTypesMap.find t arg_types |> Option.value ~default:empty_return_info in
 
+    (* let x = type_join data.return_type typ in *)
     let ret_type = 
       type_join data.return_type typ 
       |> Type.narrow_iterable ~max_depth:2
       |> Type.narrow_return_type
     in
-    (* Log.dump "%a + %a => %a" Type.pp data.return_type Type.pp typ Type.pp ret_type; *)
+    (* Log.dump "%a + %a => %a => %a" Type.pp data.return_type Type.pp typ Type.pp x Type.pp ret_type; *)
     ArgTypesMap.set t ~key:arg_types ~data:{ data with return_type=ret_type }
     
   let set_return_var_type t arg_types return_var_type =
@@ -915,19 +1118,30 @@ module Signatures = struct
     ArgTypesMap.set t ~key:arg_types ~data:{ data with return_type; }
   
 
-  let get_return_info t arg_types =
-    ArgTypesMap.find t arg_types |> Option.value ~default:(
-      let x = ArgTypesMap.filter t ~f:(fun return_info -> not (FunctionMap.is_empty return_info.return_var_type)) |> ArgTypesMap.data in
+  let get_signatures t = 
+    ArgTypesMap.map t ~f:(fun data -> data.return_type)
+
+  let get_return_info ?property t arg_types =
+    match property with
+    | Some true ->
+      let x = ArgTypesMap.data t in
       if List.is_empty x then empty_return_info else List.hd_exn x
-    )
+    | _ when not !on_dataflow ->
+      let x = ArgTypesMap.data t in
+      if List.is_empty x then empty_return_info else List.hd_exn x
+    | _ ->
+      ArgTypesMap.find t arg_types |> Option.value ~default:(
+        let x = ArgTypesMap.filter t ~f:(fun return_info -> not (FunctionMap.is_empty return_info.return_var_type)) |> ArgTypesMap.data in
+        if List.is_empty x then empty_return_info else List.hd_exn x
+      )
 
   let get_return_var_type t arg_types =
     let return_info = get_return_info t arg_types in
     return_info.return_var_type
 
-  let get_return_type t arg_types =
+  let get_return_type ?property t arg_types =
     let new_arg_types = filter_unknown arg_types in
-    let return_info = get_return_info t new_arg_types in
+    let return_info = get_return_info ?property t new_arg_types in
     return_info.return_type
 
   
@@ -1031,6 +1245,7 @@ module type FunctionSummary = sig
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     usedef_defined: VarTypeSet.t;
+    call_chain : CallChain.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } 
@@ -1053,6 +1268,7 @@ module FunctionSummary = struct
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     usedef_defined: VarTypeSet.t;
+    call_chain : CallChain.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   } [@@deriving sexp, equal]
@@ -1069,6 +1285,7 @@ module FunctionSummary = struct
     usage_attributes=AttributeStorage.empty;
     unique_analysis=UniqueAnalysis.UniqueStruct.empty;
     usedef_defined=VarTypeSet.empty;
+    call_chain = CallChain.empty;
     unknown_decorator=false;
     (*usedef_tables=None;*)
   }
@@ -1125,6 +1342,9 @@ module FunctionSummary = struct
 
   let set_usedef_defined t usedef_defined =
     { t with usedef_defined; }
+
+  let set_call_chain t call_chain =
+    { t with call_chain; }
   let set_unknown_decorator t =
     { t with unknown_decorator=true; }
 
@@ -1159,12 +1379,15 @@ module FunctionSummary = struct
   let get_arg_annotation { arg_annotation; _ } = arg_annotation 
   
   let get_return_var_type { return_var_type; _} = return_var_type *)
+
+  let get_signatures { signatures; _ } = Signatures.get_signatures signatures
+
   let get_return_var_type { signatures; _ } arg_types = Signatures.get_return_var_type signatures arg_types
 
 
   let get_return_annotation { return_annotation; _ } = return_annotation
 
-  let get_return_type { signatures; _ } arg_types = Signatures.get_return_type signatures arg_types
+  let get_return_type ?property { signatures; _ } arg_types = Signatures.get_return_type ?property signatures arg_types
 
   let get_callers { callers; _ } = callers
 
@@ -1178,6 +1401,8 @@ module FunctionSummary = struct
   let get_usedef_defined { usedef_defined; _ } = usedef_defined
 
   let get_unknown_decorator { unknown_decorator; _ } = unknown_decorator
+
+  let get_call_chain { call_chain; _ } = call_chain
 
 
   let join ~type_join left right = 
@@ -1219,6 +1444,7 @@ module FunctionSummary = struct
     usage_attributes;
     unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
     usedef_defined;
+    call_chain = CallChain.join left.call_chain right.call_chain;
     unknown_decorator=left.unknown_decorator || right.unknown_decorator
     (*usedef_tables=usedef_tables;*)
   }
@@ -1278,6 +1504,7 @@ module FunctionSummary = struct
      (pp_reference_set ~data_pp:Reference.pp) callers *)
 
     let update ~type_join prev next = 
+      
       (*
       let usedef_tables = 
         (match left.usedef_tables, right.usedef_tables with
@@ -1298,6 +1525,9 @@ module FunctionSummary = struct
           | `Both (v1, v2) -> Some (type_join v1 v2)    
         ) *)
       in
+
+      (* if !debug then
+        Log.dump "OK!!!! %a" Signatures.pp signatures; *)
 
       let callers= 
       CallerSet.union prev.callers next.callers 
@@ -1327,6 +1557,7 @@ module FunctionSummary = struct
       usage_attributes;
       unique_analysis=next.unique_analysis; 
       usedef_defined;
+      call_chain = CallChain.join prev.call_chain next.call_chain;
       unknown_decorator=prev.unknown_decorator || next.unknown_decorator;
       (*usedef_tables=usedef_tables;*)
     }
@@ -1543,6 +1774,10 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_usedef_defined func_summary usedef_defined) t
 
+  let set_call_chain t func call_chain =
+    let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
+    FunctionHash.set ~key:func ~data:(FunctionSummary.set_call_chain func_summary call_chain) t
+  
   let set_unknown_decorator t func =
     let func_summary = FunctionHash.find t func |> Option.value ~default:FunctionSummary.empty in
     FunctionHash.set ~key:func ~data:(FunctionSummary.set_unknown_decorator func_summary) t
@@ -1578,19 +1813,34 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_return_var_type func_summary arg_types
 
-  let get_return_type ~less_or_equal t func_name arg_types =
+  let get_return_type ~less_or_equal ?property t func_name arg_types =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     let annotation = FunctionSummary.get_return_annotation func_summary in
-    let real_type = FunctionSummary.get_return_type func_summary arg_types in
+    let real_type = FunctionSummary.get_return_type ?property func_summary arg_types in
 
-    match annotation with
-    | Type.Unknown -> real_type
-    | t -> 
-      let filtered_annotation = Type.filter_unknown t in
-      let filtered_real_type = Type.filter_unknown real_type in
-      if less_or_equal ~left:filtered_real_type ~right:filtered_annotation
-      then real_type
-      else filtered_annotation
+    
+
+    let return_type =
+      match annotation with
+      | Type.Unknown -> real_type
+      | t when !on_dataflow && not (Type.is_unknown real_type) -> 
+        let filtered_annotation = Type.filter_unknown t in
+        let filtered_real_type = Type.filter_unknown real_type in
+        if less_or_equal ~left:filtered_real_type ~right:filtered_annotation
+        then real_type
+        else filtered_annotation
+      | t -> t
+    in
+
+    (* Log.dump "??? %a => %a (%a) => %a" Reference.pp func_name Type.pp real_type Type.pp annotation Type.pp return_type; *)
+
+    let return_type =
+      if !on_any 
+      then return_type
+      else (if Type.can_unknown return_type then Type.Any else return_type)
+    in
+
+    return_type
 
   let get_callers t func_name =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
@@ -1761,6 +2011,7 @@ module type OurSummary = sig
   type t = {
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
+    stub_info : StubInfo.t;
   }
 end
 
@@ -1768,12 +2019,14 @@ module OurSummary = struct
   type t = {
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
+    stub_info : StubInfo.t;
   }
   [@@deriving equal, sexp]
 
   let empty ?(size=5) () = {
     class_table=ClassTable.empty ~size ();
     function_table=FunctionTable.empty ~size ();
+    stub_info=StubInfo.empty;
   }
 
   let update_default_value ~prev next =
@@ -1823,7 +2076,7 @@ module OurSummary = struct
  *)
 
 
-  let add_usage_attributes ?class_name ?class_var {class_table; function_table; } func_name storage =
+  let add_usage_attributes ?class_name ?class_var {class_table; function_table; _ } func_name storage =
     let storage =
       match class_name, class_var with
       | Some class_name, Some class_var ->
@@ -1870,12 +2123,18 @@ module OurSummary = struct
 
   let set_usedef_defined { function_table; _ } func_name usedef_defined =
     FunctionTable.set_usedef_defined function_table func_name usedef_defined
+
+  let set_call_chain { function_table; _ } func_name call_chain =
+    FunctionTable.set_call_chain function_table func_name call_chain
+
   let set_unknown_decorator { function_table; _ } func_name =
     FunctionTable.set_unknown_decorator function_table func_name
 
   let get_class_vars { class_table; _ } =
     ClassTable.get_class_vars class_table
   let get_class_table { class_table; _ } = class_table
+
+  let get_function_table { function_table; _ } = function_table
 (*
   let get_usedef_tables {function_table; _} func_name = 
     FunctionTable.get_usedef_tables function_table func_name
@@ -1928,9 +2187,14 @@ module OurSummary = struct
   let set_class_summary { class_table; _ } class_name class_info =
     ClassTable.set_class_info class_table class_name class_info 
 
+  let set_stub_info t stub_info =
+    { t with stub_info }
+
   let update_unseen_temp_class_var_type ~type_join ~updated_vars { class_table; _ } =
     ClassTable.update_unseen_temp_class_var_type ~type_join ~updated_vars class_table
 
+  let update_unseen_temp_class_var_type_to_var { class_table; _ } =
+    ClassTable.update_unseen_temp_class_var_type_to_var class_table
   let update_unseen_temp_class_var_type_to_unknown { class_table; _ } =
     ClassTable.update_unseen_temp_class_var_type_to_unknown class_table
   let set_all_class_var_type_to_empty { class_table; _ } =
@@ -1953,6 +2217,9 @@ module OurSummary = struct
   let get_class_property {class_table; _} parent =
     ClassTable.get_class_property class_table parent 
 
+  let check_attr ~attr { class_table; _ } class_name =
+    ClassTable.check_attr ~attr class_table class_name
+
   let pp_class format {class_table; _} =
     Format.fprintf format "%a" ClassTable.pp class_table
   let pp_func format {function_table; _} = 
@@ -1972,7 +2239,7 @@ module OurSummary = struct
     FunctionTable.get_module_var_type function_table func_name attribute
 
 
-  let get_analysis_set { class_table; function_table; } =
+  let get_analysis_set { class_table; function_table; _ } =
     let get_functions =
       FunctionTable.get_functions function_table
     in
@@ -1990,7 +2257,7 @@ module OurSummary = struct
 
     total_analysis_set
 
-  let get_functions_of_class { class_table; function_table; } = 
+  let get_functions_of_class { class_table; function_table; _ } = 
     let get_functions =
       FunctionTable.get_functions function_table
     in
@@ -2016,7 +2283,7 @@ module OurSummary = struct
     ReferenceSet.diff get_all_functions (ReferenceMap.to_set analysis_set)
 
 
-  let has_analysis { class_table; function_table; } =
+  let has_analysis { class_table; function_table; _ } =
     ClassTable.has_analysis class_table && FunctionTable.has_analysis function_table
 
 end
@@ -2060,16 +2327,22 @@ let our_model = ref (OurSummary.empty ());;
 
 let our_summary = ref (OurSummary.empty ());;
 
+let stub_info = ref StubInfo.empty;;
+
 let cache = ref false;;
 
 let is_search_mode = String.equal "search"
 
 let is_inference_mode = String.equal "inference"
 
+let is_last_inference_mode = String.equal "last_inference"
+
 let is_error_mode = String.equal "error"
 
 
 let is_check_preprocess_mode = String.equal "check_preprocess"
+
+let is_preprocess = ref false;;
 
 let save_mode (mode: string) =
   check_and_make_dir !data_path;
@@ -2210,4 +2483,50 @@ let select_our_model func_name =
 
 let is_first = ref true
 
-(* let debug = ref true *)
+
+
+(* module OurDomainReadOnly = struct
+  module FuncSummary = struct
+    module ArgTypesMap = Map.Make (ArgTypes)
+
+    type t = {
+      signatures: Type.t ArgTypesMap.t;
+      preprocess: Type.t ExpressionMap.t;
+      usedef_defined: VarTypeSet.t;
+      unknown_decorator : bool;
+    }
+  end
+
+  module ClsSummary = struct
+    type t = {
+      class_var_type: Type.t ReferenceMap.t;
+      temp_class_var_type : Type.t ReferenceMap.t;
+      properties : AttrsSet.t;
+    }
+  end
+
+  type t = {
+    func_summary : FuncSummary.t Reference.Map.t;
+    class_summary : ClsSummary.t Reference.Map.t;
+  }
+
+  let create (model: OurSummary.t) =
+    let func_summary = 
+      FunctionHash.fold model.function_table ~init:Reference.Map.empty ~f:(fun ~key:reference ~data:func_summary acc ->
+        let signatures = FunctionSummary.get_signatures func_summary in
+        let preprocess = FunctionSummary.get_preprocess func_summary in
+        let usedef_defined = FunctionSummary.get_usedef_defined func_summary in
+        let unknown_decorator = FunctionSummary.get_unknown_decorator func_summary in
+        Reference.Map.set acc ~key:reference ~data:{ FuncSummary.signatures; preprocess; usedef_defined; unknown_decorator }
+      )
+    in
+    let class_summary = 
+      ClassHash.fold model.class_table ~init:Reference.Map.empty ~f:(fun ~key:reference ~data:class_summary acc ->
+        let class_var_type = ClassSummary.get_class_var_type class_summary in
+        let temp_class_var_type = ClassSummary.get_temp_class_var_type class_summary in
+        let properties = ClassSummary.get_properties class_summary in
+        Reference.Map.set acc ~key:reference ~data:{ ClsSummary.class_var_type; temp_class_var_type; properties }
+      )
+    in
+    { func_summary; class_summary } 
+end *)

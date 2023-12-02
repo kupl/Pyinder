@@ -13857,6 +13857,10 @@ let exit_state ~resolution (module Context : OurContext) =
     Context.define
   in
 
+  (*Log.dump "?? %a" Reference.pp name;*)
+
+  (* if String.equal "sklearn.model_selection._split.check_cv" (Reference.show name) then
+    Log.dump "WHAT??"; *)
 
   (* our_summary 업데이트 시 여기 바꾸기 *)
   let our_summary = !Context.our_summary in
@@ -13883,34 +13887,38 @@ let exit_state ~resolution (module Context : OurContext) =
 
 
   let save_arg_types (initial: PossibleState.t) =
-    let our_model = !Context.our_summary in
-    let final_model = !OurDomain.our_model in 
-    let join = GlobalResolution.join global_resolution in
-    let less_or_equal = GlobalResolution.less_or_equal global_resolution in
-      match initial.rt_type with
-      | Value resolution ->
-        
-        let arg_types = 
-          OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution 
-          |> OurDomain.ArgTypes.filter_keys ~f:(fun key -> not (String.equal key "$parameter$self" || String.equal key "$parameter$cls"))
-          |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
-        in
+(*     if Reference.is_test name then ()
+    else ( *)
+      let our_model = !Context.our_summary in
+      let final_model = !OurDomain.our_model in 
+      let join = GlobalResolution.join global_resolution in
+      let less_or_equal = GlobalResolution.less_or_equal global_resolution in
+        match initial.rt_type with
+        | Value resolution ->
+          
+          let arg_types = 
+            OurTypeSet.ArgTypesResolution.import_from_resolution ~join resolution 
+            |> OurDomain.ArgTypes.filter_keys ~f:(fun key -> not (String.equal key "$parameter$self" || String.equal key "$parameter$cls"))
+            |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
+          in
 
-        (* if OurDomain.ArgTypes.is_empty arg_types then our_model
-        else *)
-        (match OurDomain.OurSummary.find_signature final_model name arg_types with
-        (* | signature when OurDomain.Signatures.ArgTypesMap.is_empty signature -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
-        | _ -> our_model *)
-        | Some _ -> ()
-        | _ -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
-        )
+          (* if OurDomain.ArgTypes.is_empty arg_types then our_model
+          else *)
+          (match OurDomain.OurSummary.find_signature final_model name arg_types with
+          (* | signature when OurDomain.Signatures.ArgTypesMap.is_empty signature -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
+          | _ -> our_model *)
+          | Some _ -> ()
+          | _ -> OurDomain.OurSummary.add_new_signature ~join our_model name arg_types
+          )
 
-      | Unreachable -> () 
+        | Unreachable -> () 
+    
     (* Context.our_summary := our_model *)
   in
 
   let initial = PossibleState.initial ~resolution in
 
+  
 
   save_arg_types initial;
   let timer = Timer.start () in
@@ -13940,22 +13948,17 @@ let exit_state ~resolution (module Context : OurContext) =
           | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
 
             let rec update_parent_of_self class_name resolution =
-              let self_attributes_tree = OurTypeSet.OurSummaryResolution.get_self_attributes_tree final_model class_name in
+              let type_join = GlobalResolution.join global_resolution in
+              let self_attributes_tree = OurTypeSet.OurSummaryResolution.get_self_attributes_tree ~type_join final_model class_name in
               let temp_self_attributes_tree = 
                 if OurDomain.is_error_mode (OurDomain.load_mode ())
                 then 
                   Identifier.Map.Tree.empty
                 else
-                  OurTypeSet.OurSummaryResolution.get_temp_self_attributes_tree final_model class_name 
+                  OurTypeSet.OurSummaryResolution.get_temp_self_attributes_tree ~type_join final_model class_name 
               in
 
-              (* Log.dump "[[[ LET GO ]]]";
-
-              Identifier.Map.Tree.iteri self_attributes_tree ~f:(fun ~key ~data ->
-                Log.dump "TEST : %s\n%a" key Refinement.Unit.pp data 
-              );
-
-              Log.dump "Resolution : %a" Resolution.pp resolution; *)
+              (* Log.dump "Resolution : %a" Resolution.pp resolution; *)
 
               let resolution = Resolution.update_self_attributes_tree ~global_resolution resolution self_attributes_tree temp_self_attributes_tree (Reference.create class_param) in
 
@@ -13976,6 +13979,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
            
             let x = update_parent_of_self class_name resolution in
+            
             (* Log.dump "FINAL %a" Resolution.pp x; *)
             x
             
@@ -14052,7 +14056,13 @@ let exit_state ~resolution (module Context : OurContext) =
                 )
               in
               
-              let last_resolution = Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation in
+              let t = Annotation.annotation annotation in
+              let last_resolution =
+                if Type.is_unknown t || Type.is_top t || Type.is_any t || Type.is_bottom t then
+                  resolution
+                else
+                  Resolution.refine_local_with_attributes ~temporary:false resolution ~name ~annotation
+              in
               
               (* Log.dump "[ Before Resolution ] \n%a" Resolution.pp resolution;
               Log.dump "Name : %a ===> %a" Expression.pp_expression value Annotation.pp annotation;
@@ -14098,14 +14108,13 @@ let exit_state ~resolution (module Context : OurContext) =
         let _ = filtering_none in 
   
         (* For Baseline => no filtering_none *)
-        (* let resolution = filtering_none resolution in *)
+        let resolution = filtering_none resolution in
         
         let resolution_updated_attributes = 
           resolution 
           |> update_resolution_of_self ~final_model 
           |> update_resolution_from_attributes ~final_model
         in
-
         
         
 
@@ -14145,7 +14154,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | Unreachable -> Log.dump "UNREACHABLE???"; initial.rt_type, our_summary
         | Value resolution ->
           let resolution, our_summary = 
-          if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+          if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
           then
             let resolution, our_summary = update_resolution resolution in
             resolution
@@ -14225,7 +14234,7 @@ let exit_state ~resolution (module Context : OurContext) =
       if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ())
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
       (* else if (!OurDomain.is_first) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) *)
-      else if (not (OurDomain.is_inference_mode (OurDomain.load_mode ()))) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
+      else if (not (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()))) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
       else if List.length arg_types_list > 0
       then ( 
@@ -14254,8 +14263,6 @@ let exit_state ~resolution (module Context : OurContext) =
       Log.dump "\n\n [[[ TEST ]]] \n%a" PossibleState.pp initial;
       *)
       let resolution = Option.value_exn (PossibleState.resolution_of_rt initial) in
-
-      
 
       let filter_annotation_arg_types = 
         OurDomain.ArgTypes.filter_keys arg_types ~f:(fun arg -> 
@@ -14346,8 +14353,12 @@ let exit_state ~resolution (module Context : OurContext) =
         )
       in
 
+      
+
       let resolution = 
-        if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
+        if not !OurDomain.on_any then
+          resolution
+        else if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
         then
           update_resolution_from_value resolution 
         else if (Reference.is_suffix ~suffix:(Reference.create "__init__") name) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name)) then
@@ -14368,6 +14379,9 @@ let exit_state ~resolution (module Context : OurContext) =
       (*
       let our_model = OurDomain.OurSummary.set_cfg our_model name (Some cfg) in
       *)
+
+      (* Log.dump "%a ==> %a" Reference.pp name Type.pp (PossibleState.return_annotation ~global_resolution); *)
+
       let return_annotation =
         match PossibleState.return_annotation ~global_resolution with
         | Type.Any -> Type.Unknown
@@ -14392,36 +14406,41 @@ let exit_state ~resolution (module Context : OurContext) =
       
         (* Log.dump "%a >>> %a" Reference.pp name Resolution.pp resolution; *)
       
-      (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.async_update_group"
+      (* if String.is_substring (Reference.show name) ~substring:"foo"
         then (
           Log.dump "NAME >>> %a" Reference.pp name;
           Log.dump "START >>> %a" Resolution.pp resolution;
-          Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
+          (* Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types; *)
         ); *)
 
-        (* if String.is_substring (Reference.show name) ~substring:"airvisual.air_quality.async_setup_entry"
+        (* if String.is_substring (Reference.show name) ~substring:"Worker.prune"
           then (
             Log.dump "NAME >>> %a" Reference.pp name;
             Log.dump "START >>> %a" Resolution.pp resolution;
             Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
           ); *)
 
-        (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.__init__"
+        (* if String.is_substring (Reference.show name) ~substring:"__setitem__"
         then (
           Log.dump "START %a" Resolution.pp resolution;
           Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
-        ); *)
-
-        (* Log.dump "START %a" Resolution.pp resolution; *)
+        );
+ *)
+        (* Log.dump "NAME %a" Reference.pp name;
+        Log.dump "START %a" Resolution.pp resolution; *)
       (* let timer = Timer.start () in *)
+
+      (* if String.equal "sklearn.model_selection._split.check_cv" (Reference.show name) then
+        Log.dump "WHAT?????"; *)
 
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       (* let fixpoint_time = Timer.stop_in_sec timer in
 
+      
       if Float.(>) fixpoint_time 1.0 then
         Log.dump "Fixpoint for %a took %f seconds" Reference.pp name fixpoint_time; *)
 
-      
+        
 
       let exit = PossibleFixpoint.exit fixpoint in
       let post_info = PossibleFixpoint.post_info fixpoint in 
@@ -14434,12 +14453,16 @@ let exit_state ~resolution (module Context : OurContext) =
         x
       in
 
-      let usedef_tables = Usedef.UsedefStruct.forward ~cfg ~post_info ~initial:Usedef.UsedefState.bottom ~get_usedef_state_of_func in
+      let usedef_tables = Usedef.UsedefStruct.forward ~func_name:name ~cfg ~post_info ~initial:Usedef.UsedefState.bottom ~get_usedef_state_of_func in
       let usedef_table = 
         match Usedef.UsedefStruct.exit usedef_tables with
-        | Some t -> (* Log.dump "OKOKOK"; *) t
+        | Some t ->  
+          (* Log.dump "?? %a" Usedef.UsedefState.pp t; *)
+          t
         | _ -> Usedef.UsedefState.bottom
       in
+
+      
 
       (* Log.dump "%a >>>" Reference.pp name;
       Log.dump "%a" Usedef.UsedefState.pp usedef_table; *)
@@ -14539,14 +14562,20 @@ let exit_state ~resolution (module Context : OurContext) =
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.normal_index in
       let our_summary = !Context.our_summary in
-      if OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
+      if OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()) then
         (
         OurDomain.OurSummary.set_usedef_defined our_summary name (usedef_table |> Usedef.UsedefState.to_vartypeset);
         match last_state with
         | Some state ->
           
           (match state.rt_type with
-          | Value v ->
+          | Value v when (!OurDomain.on_class_var) || (Reference.is_suffix ~suffix:(Reference.create "__init__") name) ->
+            (* Log.dump "WHY?? %a" Resolution.pp v; *)
+            (* if String.is_substring (Reference.show name) ~substring:"blueprints.Blueprint.group"
+              then (
+                Log.dump "AFTER >>> %a" Resolution.pp v;
+                (* Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types; *)
+              ); *)
             (* Log.dump "Func : %a \n %a" Reference.pp name Resolution.pp v; *)
             (* if String.is_substring (Reference.show name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
               then (
@@ -14555,7 +14584,6 @@ let exit_state ~resolution (module Context : OurContext) =
             let _ =
             (match parent, List.nth parameters 0 with
             | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
-              
               let properties = OurDomain.OurSummary.get_class_property final_model class_name in
 
               (* if String.is_substring (Reference.show name) ~substring:".async_run"
@@ -14580,12 +14608,14 @@ let exit_state ~resolution (module Context : OurContext) =
 
               OurTypeSet.OurSummaryResolution.store_to_return_var_type ~class_param ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               let class_table = OurDomain.OurSummary.get_class_table our_summary in
+              let final_class_table = OurDomain.OurSummary.get_class_table !OurDomain.our_model in
+              let less_or_equal = GlobalResolution.less_or_equal global_resolution in
 
               (* Log.dump "%a ==> %a" Reference.pp name Resolution.pp v;
               Log.dump "%a" Usedef.UsedefState.pp usedef_table; *)
               (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
-              OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) 
-              ~properties ~usedef_table class_table class_name class_param (Resolution.annotation_store v);
+              OurTypeSet.ClassTableResolution.join_with_merge_class_var_type ~type_join:(GlobalResolution.join global_resolution) ~less_or_equal ~define:name
+              ~properties ~usedef_table ~final_class_table class_table class_name class_param (Resolution.annotation_store v);
 
               (* if String.is_substring (Reference.show name) ~substring:".async_run"
                 then (
@@ -14602,9 +14632,53 @@ let exit_state ~resolution (module Context : OurContext) =
 
             ()
 
+          | Unreachable ->
+            if true (* && false  *)then ( (* For Baseline => false *)
+              (match parent, List.nth parameters 0 with
+              | Some class_name, Some { Node.value={ Parameter.name=class_param; _ }; _ } ->
+                let _ = class_param in
 
+                if OurDomain.is_last_inference_mode (OurDomain.load_mode ()) then (
+                  let exception_tables = Usedef.UsedefStruct.forward_for_exception ~cfg ~post_info ~initial:Usedef.UsedefState.bottom ~get_usedef_state_of_func in
+                  let exception_table = 
+                    match Usedef.UsedefStruct.exit exception_tables with
+                    | Some t -> t
+                    | _ -> Usedef.UsedefState.bottom
+                  in
 
-          | Unreachable ->  ()
+                  let final_class_table = OurDomain.OurSummary.get_class_table !OurDomain.our_model in
+
+                  let used_variable = Usedef.UsedefState.get_used_before_defined exception_table in
+                  let drop_head_used_variable = Reference.Map.fold used_variable ~init:Reference.Map.empty ~f:(fun ~key ~data acc ->
+                      let key = Reference.drop_head key in
+                      Reference.Map.set acc ~key ~data
+                  ) 
+                  in
+                  
+                  let filtered_used_variable = OurTypeSet.ClassTableResolution.filter_used_variable final_class_table ~class_name ~used_variable:drop_head_used_variable in
+
+                    (* Reference.Map.iteri filtered_used_variable ~f:(fun ~key ~data ->
+                      Log.dump "Key : %a" Reference.pp key;
+                      Type.Map.iteri data ~f:(fun ~key ~data ->
+                        Log.dump "of Type : %a" Type.pp key;
+                        let define, origin = data in
+                        Reference.Set.iter define ~f:(fun r -> Log.dump "defined: %a" Reference.pp r);  
+                        Reference.Set.iter origin ~f:(fun r -> Log.dump "origin: %a" Reference.pp r);  
+                        ()
+                      );
+                      ()
+                    ); *)
+
+                  let test_passed_used_variable = OurTypeSet.OurSummaryResolution.can_call_in_test ~filtered_used_variable ~end_define:name !OurDomain.our_model in
+                  
+                  OurTypeSet.OurSummaryResolution.update_test_passed_used_variable ~class_name ~test_passed_used_variable our_summary
+                );
+              | _ -> ()
+              );
+            )
+            else
+              ()
+          | _ -> ()
           )
         | None -> ()
         );
@@ -14616,6 +14690,31 @@ let exit_state ~resolution (module Context : OurContext) =
       (* Context.our_summary := our_summary; *)
 
       let callees = Context.Builder.get_all_callees () in
+
+
+      let repo_name = Reference.head Context.qualifier |> Option.value ~default:(Reference.create "__NONE_PYINDER__") in
+      let _ = repo_name in
+
+      let callees = List.filter callees ~f:(fun callee ->
+        let name = (Callgraph.get_callee_name ~callee:callee.callee) in
+        not (Reference.is_local name)
+      )
+      in
+
+      let call_chain =
+        List.fold callees ~init:CallChain.empty ~f:(fun acc callee ->
+          let name = (Callgraph.get_callee_name ~callee:callee.callee) in
+          let locations = callee.locations in
+
+          List.fold locations ~init:acc ~f:(fun acc location ->
+            let location = { Location.any with stop=location.stop; } in
+            CallChain.set_callee acc ~callee:name ~location
+          )
+        )
+      in
+
+      OurDomain.OurSummary.set_call_chain our_summary name call_chain;
+
       let local_annotations =
         Option.value_exn
           ~message:"analysis context has no resolution fixpoint"

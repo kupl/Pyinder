@@ -23,6 +23,8 @@ module CallInfo : sig
 
   val empty : t
 
+  val calculate : signature:t -> t -> float
+
   val of_arguments : Call.Argument.t list -> t
 
   val of_parameters : Parameter.t list -> t

@@ -192,12 +192,27 @@ let new_local_with_attributes = set_local_with_attributes ~wipe_subtree:true
 let refine_local_with_attributes = set_local_with_attributes ~wipe_subtree:false
 
 let get_local ?(global_fallback = true) ~reference { annotation_store; global_resolution; _ } =
-  match Refinement.Store.get_base ~name:reference annotation_store with
-  | Some _ as result -> result
-  | None when global_fallback ->
-      let global = GlobalResolution.global global_resolution in
-      Reference.delocalize reference |> global >>| fun { annotation; _ } -> annotation
-  | None -> None
+  if Reference.is_target reference then (
+    match Refinement.Store.get_base_of_anno ~name:reference annotation_store with
+    | Some _ as result -> result
+    | None ->
+      (
+        match Refinement.Store.get_base ~name:reference annotation_store with
+        | Some _ as result -> result
+        | None when global_fallback ->
+            let global = GlobalResolution.global global_resolution in
+            Reference.delocalize reference |> global >>| fun { annotation; _ } -> annotation
+        | None -> None
+      )
+  )
+  else (
+    match Refinement.Store.get_base ~name:reference annotation_store with
+    | Some _ as result -> result
+    | None when global_fallback ->
+        let global = GlobalResolution.global global_resolution in
+        Reference.delocalize reference |> global >>| fun { annotation; _ } -> annotation
+    | None -> None
+  )
 
 
 let get_local_with_attributes
@@ -205,9 +220,44 @@ let get_local_with_attributes
     ~name
     ({ annotation_store; global_resolution; _ } as resolution)
   =
+
   let _ = resolution in
   let name, attribute_path = partition_name_without_annotation name in
+
+
   match Refinement.Store.get_annotation ~name ~attribute_path annotation_store with
+  | Some _ as result -> result
+  | None when global_fallback ->
+      let global = GlobalResolution.global global_resolution in
+      Reference.(combine name attribute_path |> delocalize)
+      |> global
+      >>| fun { annotation; _ } -> annotation
+  | None -> None
+
+let get_local_with_attributes_of_anno
+    ?(global_fallback = true)
+    ~name
+    ({ annotation_store; global_resolution; _ } as resolution)
+  =
+  let _ = resolution in
+  let name, attribute_path = partition_name_without_annotation name in
+  match Refinement.Store.get_annotation_of_anno ~name ~attribute_path annotation_store with
+  | Some _ as result -> result
+  | None when global_fallback ->
+      let global = GlobalResolution.global global_resolution in
+      Reference.(combine name attribute_path |> delocalize)
+      |> global
+      >>| fun { annotation; _ } -> annotation
+  | None -> None
+
+let get_local_with_attributes_of_temp
+    ?(global_fallback = true)
+    ~name
+    ({ annotation_store; global_resolution; _ } as resolution)
+  =
+  let _ = resolution in
+  let name, attribute_path = partition_name_without_annotation name in
+  match Refinement.Store.get_annotation_of_temp ~name ~attribute_path annotation_store with
   | Some _ as result -> result
   | None when global_fallback ->
       let global = GlobalResolution.global global_resolution in

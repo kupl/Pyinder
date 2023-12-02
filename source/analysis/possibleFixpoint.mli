@@ -56,7 +56,7 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
-  val post_info : t -> (* (Refinement.Store.t * Refinement.Store.t) *) (Resolution.t * Resolution.t) option Int.Map.t
+  val post_info : t -> (* (Refinement.Store.t * Refinement.Store.t) *) (Resolution.t option * Resolution.t option) Int.Map.t
 
   (*
   val exit_possible : t -> state option

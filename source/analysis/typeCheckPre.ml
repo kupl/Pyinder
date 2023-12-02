@@ -29,6 +29,8 @@ let preprocess ~our_model ~global_resolution define =
       OurDomain.OurSummary.get_usage_attributes_from_func final_model name
     in
 
+    
+
     let successors = GlobalResolution.successors ~resolution:global_resolution in
 
     let parent_usage_attributes = AttributeAnalysis.AttributeStorage.empty in
@@ -66,11 +68,12 @@ let preprocess ~our_model ~global_resolution define =
         |>  AttributeAnalysis.AttributeStorage.filter_single_class_param ~class_param
       in
 
-      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp parameter_usage_attributes; *)
-      (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
-        Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
+      (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
 
       
+      (* if String.is_substring (Reference.show name) ~substring:"foo" then
+        Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
+ *)
       let x =
       OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
       in
@@ -91,7 +94,10 @@ let preprocess ~our_model ~global_resolution define =
   LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key:({ Node.value; _ } as expression) ~data ->
     match value with
     | Expression.Name _ ->
-      let duck_type = Type.Primitive (Reference.show data) in
+      let duck_type = 
+        List.map data ~f:(fun d -> Type.Primitive (Reference.show d))
+        |> Type.union
+      in
       (* Log.dump "Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
       (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability" then
         Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name;
@@ -102,6 +108,8 @@ let preprocess ~our_model ~global_resolution define =
 
         (* if String.is_substring (Reference.show name) ~substring:"modules.state.show_states" then
         Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
+        (* Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
+
       OurDomain.OurSummary.set_preprocess our_model name expression duck_type
     | _ -> ()
   );

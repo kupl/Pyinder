@@ -63,7 +63,14 @@ module Store : sig
 
   val get_base : name:Reference.t -> t -> Annotation.t option
 
+  val get_base_of_anno : name:Reference.t -> t -> Annotation.t option
+
+
   val get_attributes : name:Reference.t -> t -> Unit.t Identifier.Map.Tree.t
+
+  val get_annotation_of_anno : name:Reference.t -> attribute_path:Reference.t -> t -> Annotation.t option
+
+  val get_annotation_of_temp : name:Reference.t -> attribute_path:Reference.t -> t -> Annotation.t option
 
   val get_annotation : name:Reference.t -> attribute_path:Reference.t -> t -> Annotation.t option
 

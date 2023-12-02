@@ -1892,7 +1892,7 @@ let is_dictionary ?(with_key = None) = function
 
 
 let is_dictionary_or_mapping = function
-  | Parametric { name = "typing.Mapping" | "dict"; _ } -> true
+  | Parametric { name = "typing.Mapping" | "dict" | "Dict" | "typing.Dict"; _ } -> true
   | _ -> false
 
 let is_ourtyped_dictionary = function
@@ -1916,6 +1916,10 @@ let is_iterable = function
   | Parametric { name = "typing.Iterable"; _ } -> true
   | _ -> false
 
+let is_generator = function
+  | Parametric { name = "typing.Generator" | "Generator"; _ } -> true
+  | _ -> false
+
 
 let is_iterator = function
   | Parametric { name = "typing.Iterator"; _ } -> true
@@ -1923,13 +1927,13 @@ let is_iterator = function
 
 
 let is_list = function
-  | Parametric { name = "list" | "typing.List"; _ } -> true
+  | Parametric { name = "list" | "typing.List" | "List"; _ } -> true
   | _ -> false
 
 
 
 let is_set = function
-  | Parametric { name = "set" | "typing.Set"; _ } -> true
+  | Parametric { name = "set" | "typing.Set" | "Set"; _ } -> true
   | _ -> false
 
 let is_defaultdict = function
@@ -1937,7 +1941,7 @@ let is_defaultdict = function
   | _ -> false
 
 let is_frozenset = function
-  | Parametric { name = "frozenset" | "typing.FrozenSet"; _ } -> true
+  | Parametric { name = "frozenset" | "typing.FrozenSet" | "FrozenSet"; _ } -> true
   | _ -> false
 
 
@@ -2742,6 +2746,14 @@ let rec expression annotation =
   in
   Node.create_with_default_location value
 
+let rec filter_type ~f t =
+  match t with
+  | Union t_list ->
+    let new_t_list = (List.filter t_list ~f:(fun t -> not (f t)) |> List.map ~f:(filter_type ~f)) in
+    if List.length new_t_list = 1
+    then List.nth_exn new_t_list 0
+    else Union new_t_list 
+  | _ -> t
 
 let rec filter_unknown t =
   match t with
@@ -3064,6 +3076,24 @@ let any_to_unknown annotation =
   end)
   in
   snd (InstantiateTransform.visit () annotation)
+
+let unknown_to_any annotation =
+  let module InstantiateTransform = Transform.Make (struct
+    type state = unit
+
+    let visit_children_before _ _ = true
+
+    let visit_children_after = false
+
+    let visit _ annotation = { 
+      Transform.transformed_annotation = 
+      (match annotation with
+      | Unknown -> Any
+      | _ -> annotation); new_state = () }
+  end)
+  in
+  snd (InstantiateTransform.visit () annotation)
+  
 
 
 
@@ -6458,6 +6488,30 @@ module OurTypedDictionary = struct
     
     | _ -> target_type
 
+  let rec refine_dict_field target_type name annotation =
+    match target_type with
+    | Union t_list -> Union (List.map t_list ~f:(fun t -> refine_dict_field t name annotation))
+    | Parametric { name = "typing.Dict" | "dict"; _ } ->
+      OurTypedDictionary
+      { 
+        general=target_type;
+        typed_dict = [create_field ~annotation name];
+      }
+    | OurTypedDictionary ({ typed_dict; _ } as our_typed_dict) ->
+      let typed_dict_find _ { name=dict_name; _ } = String.equal name dict_name in
+      let typed_dict = 
+        (match List.findi typed_dict ~f:typed_dict_find with
+        | Some (idx, _) -> (* join 하면 됨 *)
+          let typed_dict = List.filteri typed_dict ~f:(fun i _ -> not (i = idx)) in
+          (create_field ~annotation name)::typed_dict
+        | _ -> (* 추가하면 됨 *) (create_field ~annotation name)::typed_dict
+        )
+      in
+
+      OurTypedDictionary { our_typed_dict with typed_dict; }
+    
+    | _ -> target_type
+
   let set_dict_field t name field_type =
     match t with
     | OurTypedDictionary ({ typed_dict; _ } as t) ->
@@ -7026,6 +7080,14 @@ let can_none t =
   | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_unknown t))
   | _ -> false *)
 
+let can_type t =
+    can_union ~f:(fun t -> 
+      match t with
+      | Parametric (* Column 처리 *)
+      { name = "type" | "typing.Type"; _ } -> true
+      | _ -> false   
+    ) t
+
 let rec can_top t =
   match t with
   | Top -> true
@@ -7218,6 +7280,26 @@ let is_possible_recursive t =
   is_tuple t ||
   is_defaultdict t ||
   is_frozenset t
+
+let is_possible_iter t =
+  is_possible_recursive t ||
+  is_generator t ||
+  (match t with
+  | Parametric { name; _ } when 
+    String.equal name "dict_keys" || 
+    String.is_substring name ~substring:"View"
+    -> true
+  | _ -> false
+  )
+
+let is_really_possible_iter t =
+  (* Log.dump "?? %a" pp t; *)
+  is_possible_iter t && (
+    match t with
+    | Parametric { parameters = [Single t] | [Single t; _ ]; _ } ->
+      not (can_none t)
+    | _ -> true
+  )
 
 let deep_to_any annotation =
   match annotation with
@@ -7513,6 +7595,28 @@ let narrow_union_inner ~join ~less_or_equal t =
 
   in
 
+  let check_length t =
+    let (length, flag) =  
+      List.fold t ~f:(fun (n, flag) t -> 
+        if is_primitive t && not (
+          is_primitive_bool t ||
+          is_optional_primitive t ||
+          equal t (Primitive "str") ||
+          equal t (Primitive "int") ||
+          equal t (Primitive "float") ||
+          equal t (Primitive "list") ||
+          equal t (Primitive "dict") ||
+          equal t (Primitive "set") ||
+          equal t (Primitive "tuple")
+        )
+        then (n, true)
+        else (n+1, flag) 
+      ) ~init:(0, false)
+    in
+
+    if flag then length+1 else length
+  in
+
   let _ = join in
   match t with
 (*   | Parametric ({ parameters=[ Single param ]; _ } as parametric) when is_list t || is_set t || is_tuple t
@@ -7522,7 +7626,7 @@ let narrow_union_inner ~join ~less_or_equal t =
   | Union t_list ->
     let loose_t_list = get_loose_t_list t_list in
     let check_loose_t_list = List.filter loose_t_list ~f:(fun t -> not (is_none t || is_unknown t)) in
-    if List.length check_loose_t_list <= 4 then (Union loose_t_list) else
+    if check_length check_loose_t_list <= 4 then (Union loose_t_list) else
 
     
     let dedup =
@@ -7595,7 +7699,7 @@ let narrow_union_inner ~join ~less_or_equal t =
       (* List.iter t_list ~f:(fun t -> Log.dump ">>> %a" pp t); *)
       if List.length filter_unknown_loose_t_list = 1
       then List.nth_exn filter_unknown_loose_t_list 0 
-      else if List.length check_loose_t_list > 4
+      else if check_length check_loose_t_list > 4
       then (
         Top
       )
@@ -7639,15 +7743,15 @@ let narrow_return_type t =
     | _::_, [] ->
       let dict, non_dict = List.partition_tf recursive ~f:(fun t -> is_dict t || is_defaultdict t) in
       if (List.length dict > 0) && (List.length non_dict > 0)
-      then Union ((iterable Top)::none_unknown)
+      then Union ((iterable Any)::none_unknown)
       else t
     | [], _::_ -> 
       let cls, non_cls = List.partition_tf recursive ~f:(fun t -> is_primitive t && String.is_substring (show t) ~substring:".") in
       if (List.length cls > 0) && (List.length non_cls > 0)
-      then Top
+      then Any
       else t
     | [], [] -> Unknown
-    | _ -> Top
+    | _ -> Any
     )
   | _ -> t
 

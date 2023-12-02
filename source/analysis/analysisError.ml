@@ -2728,6 +2728,10 @@ let due_to_analysis_limitations { kind; _ } =
     Type.can_top annotation || Type.is_unbound annotation || Type.is_type_alias annotation || Type.is_unknown annotation || Type.can_sqlalchemy annotation
   in
   match kind with
+  | NotCallable actual
+  | NotCallableWithExpression { annotation = actual; _ } ->
+    is_due_to_analysis_limitations actual
+    || Type.can_type actual
   | IncompatibleAwaitableType actual
   | IncompatibleParameterType { mismatch = { actual; _ }; _ }
   | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; _ }
@@ -2746,8 +2750,6 @@ let due_to_analysis_limitations { kind; _ } =
   | InvalidException { annotation = actual; _ }
   | InvalidType (InvalidType { annotation = actual; _ })
   | InvalidType (FinalNested actual)
-  | NotCallable actual
-  | NotCallableWithExpression { annotation = actual; _ }
   | ProhibitedAny { missing_annotation = { given_annotation = Some actual; _ }; _ }
   | RedundantCast actual
   | UninitializedAttribute { mismatch = { actual; _ }; _ }
@@ -2761,8 +2763,17 @@ let due_to_analysis_limitations { kind; _ } =
   | Top -> true
   | UndefinedAttribute { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
       Type.contains_top annotation
-  | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType annotation; _ }; _ } ->
-      Type.contains_top annotation
+
+  | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType annotation; _ }; attribute; _ } ->
+    (Type.is_iterable annotation && String.equal attribute "__getitem__")
+    || (Type.is_iterable annotation && String.equal attribute "__setitem__")
+    || Type.contains_top annotation
+
+  | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; attribute; _ } ->
+    let annotation = (List.nth_exn unions index) in
+    (Type.is_iterable annotation && String.equal attribute "__getitem__")
+    || (Type.is_iterable annotation && String.equal attribute "__setitem__")
+    || Type.contains_top annotation
   | AnalysisFailure _
   | BroadcastError _
   | ParserFailure _
@@ -4605,6 +4616,51 @@ let filter_interesting_error errors =
       false
   )
 
+let filter_stop_error errors =
+  List.filter errors ~f:(fun error -> 
+    match error.kind with
+    | UnsupportedOperandWithReference _ -> true
+    (* | IncompatibleParameterTypeWithReference { name; _} ->
+      Log.dump "%s" (Option.value name ~default:"");
+      true *)
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; attribute; _ } when
+      (Type.is_none actual || Type.is_optional actual) || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")
+      (* && ((String.equal attribute "get") || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")) *)
+      -> 
+        let _ = attribute in
+        true
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; attribute; _ } when
+      let actual = (fst (Type.split (List.nth_exn unions index))) in
+      (Type.is_none actual || Type.is_optional actual) || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")(* && ((String.equal attribute "get") || (String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__")) *)
+      ->
+        let _ = attribute in 
+        true
+    | NotCallableWithExpression _ | NotCallable _
+      (* when Type.is_none annotation || Type.is_optional annotation  *) ->
+      true
+    | IncompatibleParameterTypeWithReference { callee = Some callee_name; mismatch = { actual; _ }; _ } when (Type.is_none actual || Type.is_optional actual) ->
+        let builtin_functions = [
+          "str"; "int"; "float"; "bytes"; "bool"; "list"; "dict"; "tuple"; "set"; "len";
+        ]
+        in
+  
+        if List.exists builtin_functions ~f:(String.equal (Reference.show callee_name))
+        then true
+        else false
+    | IncompatibleParameterTypeWithReference { callee = Some callee_name; _ } ->
+        let builtin_functions = [
+          "str"; "int"; "float"; "bytes"; "bool"; "list"; "dict"; "tuple"; "set"; "len"; "sorted";
+        ]
+        in
+  
+        if List.exists builtin_functions ~f:(fun f -> String.is_substring ~substring:f (Reference.show callee_name))
+        then true
+        else false
+    
+    | _ -> 
+      false
+  )
+
 let filter ~resolution errors =
   let should_filter error =
     let is_mock_error { kind; _ } =
@@ -5273,7 +5329,7 @@ let filter_type_error errors =
       | UndefinedAttribute _ | UndefinedAttributeWithReference _ 
       | IncompatibleAttributeType _
       | NotCallable _ | NotCallableWithExpression _
-      | TooManyArguments _
+      | TooManyArguments _ | MissingArgument _ 
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _

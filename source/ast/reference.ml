@@ -70,7 +70,11 @@ let delocalize reference =
       qualifier @ [Identifier.sanitized head] @ tail
   | _ -> reference
 
-
+let is_target reference =
+  match reference with
+  | head :: _ when String.is_prefix ~prefix:"$target" head -> true
+  | _ -> false
+  
 let is_local reference =
   match reference with
   | head :: _ when String.is_prefix ~prefix:"$local_" head -> true
@@ -90,6 +94,15 @@ let is_cls reference =
   match reference with
   | head :: _ when String.is_prefix ~prefix:"$parameter$cls" head -> true
   | _ -> false
+
+let is_test name =
+  (
+  String.is_substring (show name) ~substring:"test_"
+  || String.is_substring (show name) ~substring:"test."
+  || String.is_substring (show name) ~substring:"tests."
+  || String.is_substring (show name) ~substring:"_test"
+  )
+  
 
 let sanitized reference = List.map ~f:Identifier.sanitized reference
 

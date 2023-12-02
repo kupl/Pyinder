@@ -81,34 +81,50 @@ module ClassSummaryResolution = struct
     x
   *)
 
-  let get_type_of_class_attribute ~function_table ~class_name ~attribute ~less_or_equal { class_var_type; class_attributes; _ } =
+  let get_type_of_class_attribute ~function_table ~class_name ~attribute ~type_join ~less_or_equal { class_var_type; class_attributes; _ } =
     let name = Reference.create attribute in
     let properties = ClassAttributes.get_class_property class_attributes in
 
     if AttrsSet.mem properties attribute then (
+      
       let reference = Reference.combine class_name name in
-      Some (FunctionTable.get_return_type ~less_or_equal function_table reference ArgTypes.empty)
+      (* let x = (FunctionTable.get_return_type ~less_or_equal ~property:true function_table reference ArgTypes.empty) in *)
+      (* Log.dump "HMM? %a => %a (%a)" Reference.pp reference Type.pp x Reference.pp reference; *)
+      Some (FunctionTable.get_return_type ~less_or_equal ~property:true function_table reference ArgTypes.empty)
     ) else (
-      ReferenceMap.find class_var_type name
+      let type_from_funcs_opt =
+        ReferenceMap.find class_var_type name
+      in 
+      match type_from_funcs_opt with
+      | Some v -> TypeFromFuncs.get_type ~type_join v
+      | None -> None
     )
 
-  let get_self_attributes_tree t =
+  let get_self_attributes_tree ~type_join t =
     (*let name = Reference.create "$parameter$self" in*)
     let reference_map = 
       get_class_var_type t
     in
     ReferenceMap.fold ~init:Unit.empty ~f:(fun ~key ~data sofar ->
+      let data = TypeFromFuncs.get_type ~type_join data in
+      match data with
+      | Some data ->
         Unit.set_annotation ~attribute_path:key ~annotation:(Annotation.create_mutable data) sofar
+      | _ -> sofar
     ) reference_map
     |> Unit.attributes
 
-  let get_temp_self_attributes_tree t =
+  let get_temp_self_attributes_tree ~type_join t =
       (*let name = Reference.create "$parameter$self" in*)
       let reference_map = 
         get_temp_class_var_type t
       in
       ReferenceMap.fold ~init:Unit.empty ~f:(fun ~key ~data sofar ->
+        let data = TypeFromFuncs.get_type ~type_join data in
+        match data with
+        | Some data ->
           Unit.set_annotation ~attribute_path:key ~annotation:(Annotation.create_mutable data) sofar
+        | _ -> sofar
       ) reference_map
       |> Unit.attributes
 
@@ -129,7 +145,9 @@ module ClassSummaryResolution = struct
     in
     { t with usage_attributes=AttributeStorage.join usage_attributes storage }
     
-  let join_with_merge_class_var_type ~define ~type_join ~properties ~(usedef_table: Usedef.UsedefState.t) ({ class_var_type; temp_class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
+  let join_with_merge_class_var_type ~define ~type_join ~less_or_equal ~properties ~(usedef_table: Usedef.UsedefState.t) 
+    ~final_summary:{ temp_class_var_type=final_temp_class_var_type; _ }
+    ({ class_var_type; temp_class_var_type; _ } as t) class_param (method_postcondition: Refinement.Store.t) =
 
     let _ = define, properties, method_postcondition in
     let _ = add_class_var_type in
@@ -137,22 +155,47 @@ module ClassSummaryResolution = struct
     let filter_keys = Reference.create class_param in
 
     let check_properties reference =
-      AttrsSet.exists properties ~f:(String.equal (Reference.show reference))
+      AttrsSet.exists properties ~f:(fun p -> 
+        if Reference.is_self reference || Reference.is_cls reference then
+          String.equal p (Reference.drop_head reference |> Reference.show)
+        else
+          String.equal p (Reference.show reference)
+      )
     in
 
     let check_class_variable reference =
       (Reference.is_prefix ~prefix:filter_keys reference) || Reference.is_self reference || Reference.is_cls reference
     in
 
+    let make_var_from_funcs ~key result_type =
+      let result_type = Type.our_dict_to_dict result_type in
+      let callees = 
+        ReferenceMap.find final_temp_class_var_type key
+        |> Option.value ~default:TypeFromFuncs.empty
+        |> TypeFromFuncs.get_callees ~typ:result_type ~less_or_equal
+      in
+      TypeFromFuncs.set TypeFromFuncs.empty ~key:result_type ~data:callees
+    in
+
+    let make_temp_var_from_funcs ~define result_type =
+      let result_type = Type.our_dict_to_dict result_type in
+
+      TypeFromFuncs.set TypeFromFuncs.empty ~key:result_type ~data:(Reference.Set.singleton define)
+    in
+
+
     let new_class_var_type =
       let update_check_used =
         Reference.Map.fold usedef_table.check_used ~init:ReferenceMap.empty ~f:(fun ~key ~data acc ->
           (* Log.dump "TEST : %a =>" Reference.pp key;
           Usedef.TypeSet.iter data ~f:(fun t -> Log.dump "::: %a" Type.pp t); *)
-          if check_properties key then
+          if check_properties key then (
             acc
+          )
           else if check_class_variable key then
-            ReferenceMap.set acc ~key:(Reference.drop_head key) ~data:(Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t))  
+            let key = Reference.drop_head key in
+            let data = make_var_from_funcs ~key (Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t)) in
+            ReferenceMap.set acc ~key ~data
           else
             acc
         )
@@ -162,10 +205,14 @@ module ClassSummaryResolution = struct
         Reference.Map.fold usedef_table.used_before_defined ~init:update_check_used ~f:(fun ~key ~data acc ->
           (* Log.dump "TEST : %a =>" Reference.pp key;
           Usedef.TypeSet.iter data ~f:(fun t -> Log.dump "::: %a" Type.pp t); *)
-          if check_properties key then
+          if check_properties key then (
             acc
+          )
           else if check_class_variable key then
-            ReferenceMap.set acc ~key:(Reference.drop_head key) ~data:(Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t))  
+            let key = Reference.drop_head key in
+            let data = make_var_from_funcs ~key (Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t)) in
+
+            ReferenceMap.set acc ~key ~data
           else
             acc
         )
@@ -175,33 +222,42 @@ module ClassSummaryResolution = struct
         Reference.Map.fold usedef_table.used_after_defined ~init:update_before ~f:(fun ~key ~data acc ->
           (* Log.dump "TEST : %a =>" Reference.pp key;
           Usedef.TypeSet.iter data ~f:(fun t -> Log.dump "::: %a" Type.pp t); *)
-          if check_properties key then
+          if check_properties key then (
             acc
+          )
           else if check_class_variable key then
-            ReferenceMap.set acc ~key:(Reference.drop_head key) ~data:(Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t))  
+            let key = Reference.drop_head key in
+            let data = make_var_from_funcs ~key (Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t)) in
+            ReferenceMap.set acc ~key ~data
           else
             acc
         )
       in
 
       update_after
-      |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join class_var_type
+      |> ReferenceMap.join_var_from_funcs class_var_type
+      (* |> ReferenceMap.join_var_from_funcs ~equal:Type.equal ~data_join:type_join class_var_type *)
     in
 
     let new_temp_class_var_type =
       Reference.Map.fold usedef_table.defined ~init:ReferenceMap.empty ~f:(fun ~key ~data acc ->
-        if check_properties key then
+        if check_properties key then (
           acc
+        )
         else if check_class_variable key then
-          ReferenceMap.set acc ~key:(Reference.drop_head key) ~data:(Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t))  
+          let key = Reference.drop_head key in
+          let data = make_temp_var_from_funcs ~define (Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t)) in
+          ReferenceMap.set acc ~key ~data
+          (* ReferenceMap.set acc ~key:(Reference.drop_head key) ~data:(Usedef.TypeSet.fold data ~init:Type.Bottom ~f:(fun acc t -> type_join acc t))   *)
         else
           acc
       )
-      |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join temp_class_var_type
+      |> ReferenceMap.join_var_from_funcs temp_class_var_type
+      (* |> ReferenceMap.join ~equal:Type.equal ~data_join:type_join temp_class_var_type *)
     in
 
-    let new_class_var_type = ReferenceMap.map new_class_var_type ~f:Type.our_dict_to_dict in
-    let new_temp_class_var_type = ReferenceMap.map new_temp_class_var_type ~f:Type.our_dict_to_dict in
+    (* let new_class_var_type = ReferenceMap.map new_class_var_type ~f:Type.our_dict_to_dict in
+    let new_temp_class_var_type = ReferenceMap.map new_temp_class_var_type ~f:Type.our_dict_to_dict in *)
 
     ClassSummary.{ t with class_var_type=new_class_var_type; temp_class_var_type=new_temp_class_var_type; }
     (*     (*
@@ -319,6 +375,127 @@ module ClassSummaryResolution = struct
 
     ClassSummary.{ t with class_var_type=new_class_var_type; temp_class_var_type=new_temp_class_var_type; }
  *)
+    let filter_used_variable ~used_variable { class_var_type; temp_class_var_type; _ } =
+      Reference.Map.fold used_variable ~init:Reference.Map.empty ~f:(fun ~key ~data:used_types acc -> 
+        let temp_type_from_funcs = 
+          ReferenceMap.find temp_class_var_type key
+          |> Option.value ~default:TypeFromFuncs.empty
+        in
+
+        let type_from_funcs = 
+          ReferenceMap.find class_var_type key
+          |> Option.value ~default:TypeFromFuncs.empty
+        in
+
+        let type_map =
+          TypeFromFuncs.fold temp_type_from_funcs ~init:Type.Map.empty ~f:(fun ~key:typ ~data:funcs acc ->
+            
+            let check_flag =
+              Usedef.TypeSet.exists used_types ~f:(fun t -> 
+                let t = Type.filter_unknown t in
+                let typ = Type.filter_unknown typ in
+                Type.can_union t ~f:(Type.equal typ) || Type.can_union typ ~f:(Type.equal t)
+              )
+            in
+
+            if check_flag then
+              let origin_functions = funcs in
+              let defined_functions = Reference.Set.empty in
+
+              let defined_functions = 
+                TypeFromFuncs.fold type_from_funcs ~init:defined_functions ~f:(fun ~key:other_typ ~data:other_funcs defined_functions ->
+                  if Type.can_union typ ~f:(Type.equal other_typ) || Type.can_union other_typ ~f:(Type.equal typ) then
+                    defined_functions
+                  else
+                    Reference.Set.diff other_funcs origin_functions
+                    |> Reference.Set.union defined_functions
+                )
+              in
+
+              let defined_functions = 
+                TypeFromFuncs.fold temp_type_from_funcs ~init:defined_functions ~f:(fun ~key:other_typ ~data:other_funcs defined_functions ->
+                  if Type.can_union typ ~f:(Type.equal other_typ) || Type.can_union other_typ ~f:(Type.equal typ) then
+                    defined_functions
+                  else
+                    Reference.Set.diff other_funcs origin_functions
+                    |> Reference.Set.union defined_functions
+                )
+              in
+
+              Type.Map.set ~key:typ ~data:(defined_functions, origin_functions) acc
+            else
+              acc
+          )
+        in
+
+        let type_map_filter = 
+          Type.Map.filter_keys type_map ~f:(fun t ->
+            TypeFromFuncs.existsi type_from_funcs ~f:(fun ~key:other_typ ~data:_ ->
+              Type.can_union other_typ ~f:(Type.equal t)
+            )
+            |> not
+          )
+        in
+
+        Reference.Map.set acc ~key ~data:type_map_filter
+
+        (* let origin_functions =
+          
+          |> TypeFromFuncs.get_all_callees
+        in
+
+        (match ReferenceMap.find class_var_type key with
+        | Some var_from_funcs ->
+          let type_to_reference_set_map =
+            Usedef.TypeSet.fold data ~init:Type.Map.empty ~f:(fun acc t ->
+              let filtered_typ, defined_functions, origin_functions = 
+                TypeFromFuncs.fold var_from_funcs ~init:(t, Reference.Set.empty, origin_functions) ~f:(fun ~key:typ ~data:funcs (origin_t, defined_functions, origin_functions) ->
+                  if Type.can_union t ~f:(Type.equal typ) then
+                    Type.filter_type origin_t ~f:(Type.equal typ), Reference.Set.union funcs defined_functions, Reference.Set.diff origin_functions funcs
+                  else
+                    origin_t, defined_functions, origin_functions
+                )
+              in
+
+              Type.Map.set acc ~key:filtered_typ ~data:(defined_functions, origin_functions)
+            )
+          in
+
+          (* let filtered_type_set, defined_functions =
+            Usedef.TypeSet.fold data ~init:(TypeSet.empty, Reference.Set.empty) 
+            TypeFromFuncs.fold var_from_funcs ~init:(data, Reference.Set.empty) ~f:(fun ~key:typ ~data:funcs (type_set, defined_functions) ->
+              if Type.can_union data ~f:(Type.equal typ) then
+                (Type.filter_type type_set ~f:(Type.equal typ), Reference.Set.union funcs defined_functions)
+              else
+                (type_set, defined_functions)
+            )
+          in *)
+
+          Reference.Map.set acc ~key ~data:type_to_reference_set_map
+
+        | None -> acc
+        ) *)
+      )
+
+  let update_test_passed_used_variable ~test_passed_used_variable ({ class_var_type; _ } as t) =
+    let class_var_type = 
+      Reference.Map.fold test_passed_used_variable ~init:class_var_type ~f:(fun ~key ~data acc ->
+        let type_from_funcs = 
+          Type.Map.fold data ~init:TypeFromFuncs.empty ~f:(fun ~key:typ ~data:(_, origin_functions) acc ->
+            TypeFromFuncs.set acc ~key:typ ~data:origin_functions
+          )
+        in
+
+        let data = 
+          ReferenceMap.find class_var_type key |> Option.value ~default:TypeFromFuncs.empty 
+          |> TypeFromFuncs.join type_from_funcs
+        in
+
+        ReferenceMap.set acc ~key ~data
+      )
+    in
+
+    { t with class_var_type; }
 end
 
 module ClassTableResolution = struct
@@ -326,16 +503,16 @@ module ClassTableResolution = struct
 
   let add_parent_attributes t class_name storage = add t ~class_name ~data:storage ~f:ClassSummaryResolution.add_parent_attributes
 
-  let get_type_of_class_attribute ~less_or_equal ~function_table t class_name attribute = get t ~class_name ~f:(
-    ClassSummaryResolution.get_type_of_class_attribute ~function_table ~class_name ~attribute ~less_or_equal)
+  let get_type_of_class_attribute ~type_join ~less_or_equal ~function_table t class_name attribute = get t ~class_name ~f:(
+    ClassSummaryResolution.get_type_of_class_attribute ~function_table ~class_name ~attribute ~type_join ~less_or_equal)
 
-  let get_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_self_attributes_tree
+  let get_self_attributes_tree ~type_join t class_name = get t ~class_name ~f:(ClassSummaryResolution.get_self_attributes_tree ~type_join)
 
-  let get_temp_self_attributes_tree t class_name = get t ~class_name ~f:ClassSummaryResolution.get_temp_self_attributes_tree
-
-  let join_with_merge_class_var_type ~type_join ~properties ~usedef_table t class_name class_param method_postcondition =
+  let get_temp_self_attributes_tree ~type_join t class_name = get t ~class_name ~f:(ClassSummaryResolution.get_temp_self_attributes_tree ~type_join)
+  let join_with_merge_class_var_type ~type_join ~less_or_equal ~define ~properties ~usedef_table ~final_class_table t class_name class_param method_postcondition =
     let class_summary = find_default t class_name in
-    let data = ClassSummaryResolution.join_with_merge_class_var_type ~define:class_name ~type_join ~properties ~usedef_table class_summary class_param method_postcondition in
+    let final_summary = find_default final_class_table class_name in
+    let data = ClassSummaryResolution.join_with_merge_class_var_type ~define ~type_join ~less_or_equal ~properties ~usedef_table ~final_summary class_summary class_param method_postcondition in
     ClassHash.set ~key:class_name ~data t
 
   let find_default_type_from_attributes ~key ~default_type:{ OurDomain.ClassAttributes.attributes; properties; methods } { AttributeStorage.attribute_set; call_set; } =
@@ -364,10 +541,151 @@ module ClassTableResolution = struct
     then [key]
     else []
 
+  let calculate_classes ~key t { AttributeStorage.attribute_set; call_set; } =
+    let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
+
+    let stub_info = !(OurDomain.our_model).stub_info in
+
+    (* Log.dump "HMM? %b" (OurDomain.StubInfo.is_empty stub_info); *)
+
+    let best_score = 
+      Identifier.Map.fold stub_info ~init:(-1.0) ~f:(fun ~key:_ ~data score ->
+        (* let should_analysis = 
+          match candidate_class with
+          | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+          | None -> true
+        in *)
+        let { StubInfo.attribute_set=stub_attribute_set; call_set=stub_call_set; } = data in
+
+        (* if should_analysis then ( *)
+        let field_set = AttrsSet.union_list [stub_attribute_set; (AttrsSet.of_list (Identifier.Map.keys stub_call_set))] in
+        let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+        (* AttrsSet.iter field_set ~f:(fun f -> Log.dump "FIELD : %s" f); *)
+        let iter_stub_info () = Identifier.Map.fold stub_call_set ~init:(-1.0) ~f:(fun ~key:right_key ~data:right score ->
+          let calc_method () = Identifier.Map.fold call_set ~init:(false, 0.0) ~f:(fun ~key:left_key ~data:left (flag, score) ->
+            if String.equal left_key right_key then (
+              let check = 
+                CallSet.for_all left ~f:(fun call_info -> 
+                  CallSet.exists right ~f:(fun signature -> 
+                    (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                    CallInfo.is_corresponding ~signature call_info
+                  )
+                )
+              in
+
+              if check
+              then (
+                true,
+                CallSet.fold ~init:score left ~f:(fun score call_info -> 
+                  CallSet.fold right ~init:score ~f:(fun score signature -> 
+                    (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                    if CallInfo.is_corresponding ~signature call_info
+                    then score +. (CallInfo.calculate ~signature call_info)
+                    else score
+                  )
+                )
+              )
+              else (flag, score)
+            )
+            else (
+              (flag, score)
+            )
+          )
+          in
+
+          let (flag, cur_score) = calc_method () in
+          if flag 
+          then Float.max score cur_score
+          else score
+        )
+        in
+
+
+        if field_flag then (
+          let cur_score = iter_stub_info () in
+          Float.max score cur_score
+        )
+        else score
+        (* ) else (
+          candidate_class
+        ) *)
+      )
+    in
+
+    let find_score = 
+      match ClassHash.find t key with
+      | Some { ClassSummary.class_attributes={ methods; _ }; _ } ->
+        Identifier.Map.fold2 call_set methods ~init:0.0 ~f:(fun ~key:_ ~data score ->
+          (match data with
+          | `Both (left, right) ->
+            CallSet.fold ~init:score left ~f:(fun score call_info -> 
+              CallSet.fold right ~init:score ~f:(fun score signature -> 
+                (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                if CallInfo.is_corresponding ~signature call_info
+                then (
+                  score +. (CallInfo.calculate ~signature call_info)
+                )
+                else (
+
+                  score
+                )
+              )
+            )
+          | `Right _ -> score
+          | `Left _ -> score
+          )
+        )
+      | None -> 0.0
+    in
+
+    let result = Float.(>) find_score best_score in
+
+    (* if not result then
+      Log.dump "%.3f %.3f" find_score best_score; *)
+
+    result
+    (*
+    ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
+      (* let should_analysis = 
+        match candidate_class with
+        | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+        | None -> true
+      in *)
+
+      (* if should_analysis then ( *)
+      let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+      let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+      let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+        flag &&  
+        (match data with
+        | `Both (left, right) ->
+          CallSet.for_all left ~f:(fun call_info -> 
+            CallSet.exists right ~f:(fun signature -> 
+              (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+              CallInfo.is_corresponding ~signature call_info)
+          )
+        | `Right _ -> true
+        | `Left _ -> false
+        )
+      )
+      in
+
+
+      if field_flag && method_flag ()
+      then key::candidate_class
+      else candidate_class
+      (* ) else (
+        candidate_class
+      ) *)
+    )*)
+
   let find_classes_from_attributes ~key ~successors t { AttributeStorage.attribute_set; call_set; } =
-    let _ = key in
+    let _ = key, successors in
     let default_attributes = 
-      ["add"; "get"; "append"; "extend"; "__getitem__"; "__setitem__";]
+      ["add"; "get"; "append"; "extend"; "__getitem__"; "__setitem__"; "update"; "keys"; "values"; "items";     
+      ]
       |> List.fold ~init:Identifier.Set.empty ~f:(fun acc t -> Identifier.Set.add acc t)
     in
 
@@ -377,25 +695,65 @@ module ClassTableResolution = struct
     in
 
     let all_attributes = Identifier.Set.union attribute_set call_attributes in
+    let stub_info = !(OurDomain.our_model).stub_info in
+
+    if false (* || true *) then (* For Baseline => True *)
+      let attribute_set = Identifier.Set.fold all_attributes ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
+
+      let class_set =
+        ClassHash.fold t ~init:Reference.Set.empty ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
+        (* let should_analysis = 
+          match candidate_class with
+          | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+          | None -> true
+        in *)
+
+        (* if should_analysis then ( *)
+        let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+        let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+        let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+          flag &&  
+          (match data with
+          | `Both (left, right) ->
+            CallSet.for_all left ~f:(fun call_info -> 
+              CallSet.exists right ~f:(fun signature -> 
+                (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                CallInfo.is_corresponding ~signature call_info)
+            )
+          | `Right _ -> true
+          | `Left _ -> false
+          )
+        )
+        in
+  
+  
+        if field_flag && method_flag ()
+        then (
+          Reference.Set.add candidate_class key
+        )
+        else candidate_class
+        (* ) else (
+          candidate_class
+        ) *)
+      )
+      in
+
+      (* if not (Identifier.Map.is_empty call_set) then (
+        List.iter more_accurate ~f:(fun c -> Log.dump "%a ==> %a" Expression.pp key Reference.pp c);
+      ); *)
 
 
-    if Identifier.Set.is_empty (Identifier.Set.diff all_attributes default_attributes)
-    then
-      []
-    else ( 
+      let class_set =
+        if Reference.Set.is_empty class_set then
+          ClassHash.fold t ~init:Reference.Set.empty ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
+            (* let should_analysis = 
+              match candidate_class with
+              | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+              | None -> true
+            in *)
 
-      let attribute_set = Identifier.Set.fold attribute_set ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
-
-      let more_accurate =
-        ClassHash.fold t ~init:None ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
-
-          let should_analysis = 
-            match candidate_class with
-            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
-            | None -> true
-          in
-
-          if should_analysis then (
+            (* if should_analysis then ( *)
             let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
             let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
 
@@ -406,7 +764,7 @@ module ClassTableResolution = struct
                 CallSet.for_all left ~f:(fun call_info -> 
                   CallSet.exists right ~f:(fun signature -> 
                     (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
-                    CallInfo.is_more_corresponding ~signature call_info)
+                    CallInfo.is_corresponding ~signature call_info)
                 )
               | `Right _ -> true
               | `Left _ -> false
@@ -416,11 +774,173 @@ module ClassTableResolution = struct
       
       
             if field_flag && method_flag ()
-            then Some key
+            then (
+              Reference.Set.add candidate_class key
+            )
             else candidate_class
-          ) else (
-            candidate_class
+            (* ) else (
+              candidate_class
+            ) *)
           )
+        else
+          class_set
+      (* if List.is_empty more_accurate then
+        ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
+          (* let should_analysis = 
+            match candidate_class with
+            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+            | None -> true
+          in *)
+
+          (* if should_analysis then (
+ *)
+          let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+          let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+          let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+            flag &&  
+            (match data with
+            | `Both (left, right) ->
+              CallSet.for_all left ~f:(fun call_info -> 
+                CallSet.exists right ~f:(fun signature -> CallInfo.is_corresponding ~signature call_info)
+              )
+            | `Right _ -> true
+            | `Left _ -> false
+            )
+          )
+          in
+
+
+          if field_flag && method_flag ()
+          then key::candidate_class
+          else candidate_class
+          (* ) else (
+            candidate_class
+          ) *)
+        )
+      else more_accurate *)
+      in
+
+      let stub_classes = 
+        Identifier.Map.fold stub_info ~init:Identifier.Set.empty ~f:(fun ~key ~data class_set ->
+          (* let should_analysis = 
+            match candidate_class with
+            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+            | None -> true
+          in *)
+          let { StubInfo.attribute_set=stub_attribute_set; call_set=stub_call_set; } = data in
+          let field_set = AttrsSet.union_list [stub_attribute_set; (AttrsSet.of_list (Identifier.Map.keys stub_call_set))] in
+          let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+
+          let iter_stub_info () = Identifier.Map.fold stub_call_set ~init:true ~f:(fun ~key:right_key ~data:right flag ->
+            let calc_method () = Identifier.Map.fold call_set ~init:flag ~f:(fun ~key:left_key ~data:left flag ->
+              if String.equal left_key right_key then (
+                let check = 
+                  CallSet.for_all left ~f:(fun call_info -> 
+                    CallSet.exists right ~f:(fun signature -> 
+                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                      CallInfo.is_corresponding ~signature call_info
+                    )
+                  )
+                in
+
+                if check
+                then (
+                  flag
+                )
+                else false
+              )
+              else (
+                flag
+              )
+            )
+            in
+
+            if calc_method () then
+              flag
+            else
+              false
+          )
+        in
+
+        if field_flag && (iter_stub_info ())
+        then 
+          Identifier.Set.add class_set key
+        else 
+          class_set
+      )
+      in
+
+      let stub_classes = Identifier.Set.fold stub_classes ~init:Reference.Set.empty ~f:(fun acc t -> Reference.Set.add acc (Reference.create t)) in
+      let _ = stub_classes in
+      Reference.Set.to_list class_set
+      (* Reference.Set.to_list (Reference.Set.union class_set stub_classes) *)
+
+    else if Identifier.Set.is_empty (Identifier.Set.diff all_attributes default_attributes)
+    then
+      []
+    else ( 
+      
+      let attribute_set = Identifier.Set.fold all_attributes ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
+
+      let class_set, score =
+        ClassHash.fold t ~init:(Reference.Set.empty, -1.0) ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } (candidate_class, score) ->
+          (* let should_analysis = 
+            match candidate_class with
+            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+            | None -> true
+          in *)
+
+          (* if should_analysis then ( *)
+          let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+          let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+          let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+            flag &&  
+            (match data with
+            | `Both (left, right) ->
+              CallSet.for_all left ~f:(fun call_info -> 
+                CallSet.exists right ~f:(fun signature -> 
+                  (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                  CallInfo.is_more_corresponding ~signature call_info)
+              )
+            | `Right _ -> true
+            | `Left _ -> false
+            )
+          )
+          in
+    
+    
+          if field_flag && method_flag ()
+          then (
+            let cur_score = Identifier.Map.fold2 call_set methods ~init:(0.0) ~f:(fun ~key:_ ~data score ->
+              (match data with
+              | `Both (left, right) ->
+                CallSet.fold left ~init:score ~f:(fun score call_info ->
+                  CallSet.fold right ~init:score ~f:(fun score signature -> 
+                    (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                    if CallInfo.is_corresponding ~signature call_info
+                    then score +. (CallInfo.calculate ~signature call_info)
+                    else score
+                  )
+                )
+              | `Right _ -> score
+              | `Left _ -> score
+              )
+            )
+            in
+
+            if Float.(>) cur_score score then
+              Reference.Set.singleton key, cur_score
+            else if Float.(=) cur_score score then
+              (Reference.Set.add candidate_class key, score)
+            else
+              (candidate_class, score)
+          )
+          else (candidate_class, score)
+          (* ) else (
+            candidate_class
+          ) *)
         )
       in
 
@@ -429,17 +949,78 @@ module ClassTableResolution = struct
       ); *)
 
 
-      let x =
-      if Option.is_none more_accurate then
-        ClassHash.fold t ~init:None ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
-          let should_analysis = 
-            match candidate_class with
-            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
-            | None -> true
-          in
+      let class_set, score =
+        if Reference.Set.is_empty class_set then
+          ClassHash.fold t ~init:(Reference.Set.empty, -1.0) ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } (candidate_class, score) ->
+            (* let should_analysis = 
+              match candidate_class with
+              | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+              | None -> true
+            in *)
 
-          if should_analysis then (
+            (* if should_analysis then ( *)
+            let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
+            let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
 
+            let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
+              flag &&  
+              (match data with
+              | `Both (left, right) ->
+                CallSet.for_all left ~f:(fun call_info -> 
+                  CallSet.exists right ~f:(fun signature -> 
+                    (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                    CallInfo.is_corresponding ~signature call_info)
+                )
+              | `Right _ -> true
+              | `Left _ -> false
+              )
+            )
+            in
+      
+      
+            if field_flag && method_flag ()
+            then (
+              let cur_score = Identifier.Map.fold2 call_set methods ~init:(0.0) ~f:(fun ~key:_ ~data score ->
+                (match data with
+                | `Both (left, right) ->
+                  CallSet.fold left ~init:score ~f:(fun score call_info ->
+                    CallSet.fold right ~init:score ~f:(fun score signature -> 
+                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                      if CallInfo.is_corresponding ~signature call_info
+                      then score +. (CallInfo.calculate ~signature call_info)
+                      else score
+                    )
+                  )
+                | `Right _ -> score
+                | `Left _ -> score
+                )
+              )
+              in
+
+              if Float.(>) cur_score score then
+                Reference.Set.singleton key, cur_score
+              else if Float.(=) cur_score score then
+                (Reference.Set.add candidate_class key, score)
+              else
+                (candidate_class, score)
+            )
+            else (candidate_class, score)
+            (* ) else (
+              candidate_class
+            ) *)
+          )
+        else
+          class_set, score
+        (* if List.is_empty more_accurate then
+          ClassHash.fold t ~init:[] ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } candidate_class ->
+            (* let should_analysis = 
+              match candidate_class with
+              | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+              | None -> true
+            in *)
+
+            (* if should_analysis then (
+  *)
             let field_set = AttrsSet.union_list [attributes; properties; (AttrsSet.of_list (Identifier.Map.keys methods))] in
             let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
             let method_flag () = Identifier.Map.fold2 call_set methods ~init:true ~f:(fun ~key:_ ~data flag ->
@@ -457,19 +1038,119 @@ module ClassTableResolution = struct
 
 
             if field_flag && method_flag ()
-            then Some key
+            then key::candidate_class
             else candidate_class
-          ) else (
-            candidate_class
+            (* ) else (
+              candidate_class
+            ) *)
           )
-        )
-      else more_accurate
-    in
+        else more_accurate *)
+      in
 
-    match x with
-    | Some x -> [x]
-    | None -> []
+      let stub_classes, stub_score = 
+        Identifier.Map.fold stub_info ~init:(Identifier.Set.empty, -1.0) ~f:(fun ~key ~data (class_set, score) ->
+          (* let should_analysis = 
+            match candidate_class with
+            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+            | None -> true
+          in *)
+          let { StubInfo.attribute_set=stub_attribute_set; call_set=stub_call_set; } = data in
+          let field_set = AttrsSet.union_list [stub_attribute_set; (AttrsSet.of_list (Identifier.Map.keys stub_call_set))] in
+          let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+
+
+          let iter_stub_info () = Identifier.Map.fold stub_call_set ~init:(true, 0.0) ~f:(fun ~key:right_key ~data:right (flag, score) ->
+            let calc_method () = Identifier.Map.fold call_set ~init:(flag, score) ~f:(fun ~key:left_key ~data:left (flag, score) ->
+              if String.equal left_key right_key then (
+                let check = 
+                  CallSet.for_all left ~f:(fun call_info -> 
+                    CallSet.exists right ~f:(fun signature -> 
+                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                      CallInfo.is_corresponding ~signature call_info
+                    )
+                  )
+                in
+
+                if check
+                then (
+                  flag,
+                  CallSet.fold ~init:score left ~f:(fun score call_info -> 
+                    CallSet.fold right ~init:score ~f:(fun score signature -> 
+                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                      if CallInfo.is_corresponding ~signature call_info
+                      then score +. (CallInfo.calculate ~signature call_info)
+                      else score
+                    )
+                  )
+                )
+                else (false, score)
+              )
+              else (
+                (flag, score)
+              )
+            )
+            in
+
+            let (calc_flag, cur_score) = calc_method () in
+            if calc_flag then
+              (flag, cur_score)
+            else
+              (false, 0.0)
+          )
+        in
+
+        if field_flag 
+        then 
+          let (flag, cur_score) = iter_stub_info () in
+          if flag then (
+            if (Float.(>) score cur_score) then
+              (class_set, score)
+            else if (Float.(=) score cur_score) then
+              (Identifier.Set.add class_set key, score)
+            else (Identifier.Set.singleton key, cur_score)
+          ) else
+            (class_set, score)
+        else 
+          (class_set, score)
+      )
+      in
+
+      let _ = stub_classes in
+
+      if Float.(>) score stub_score then (
+        Reference.Set.to_list class_set
+      )
+      else if Float.(=) score stub_score then
+        if Identifier.Set.length stub_classes = 1 then (
+          Reference.Set.to_list class_set
+        )
+        else
+          []
+      else
+        []
+      (* if not (Identifier.Map.is_empty call_set) then (
+        List.iter more_accurate ~f:(fun c -> Log.dump "%a ==> %a" Expression.pp key Reference.pp c);
+      ); *)
+    (*  match x with
+      | Some x -> [x]
+      | None -> []
+      ) *)
     )
+
+  (* let update_seen_path ~function_table t =
+    ClassHash.mapi_inplace t ~f:(fun ~key:_ ~data ->
+      ClassSummaryResolution.update_seen_path ~function_table data
+    )   *)
+    
+  let filter_used_variable ~class_name ~used_variable final_class_table =
+    let final_summary = find_default final_class_table class_name in
+    ClassSummaryResolution.filter_used_variable final_summary ~used_variable
+
+  let update_test_passed_used_variable ~class_name ~test_passed_used_variable t =
+    let class_summary = find_default t class_name in
+    let data = ClassSummaryResolution.update_test_passed_used_variable class_summary ~test_passed_used_variable in
+    ClassHash.set t ~key:class_name ~data
+
 end
 
 module ArgTypesResolution = struct
@@ -635,11 +1316,11 @@ module FunctionSummaryResolution = struct
     | _ -> None
     )
 
-  let find_class_of_attributes ~successors ~class_table ?(debug=false) { usage_attributes; _ } parent_usage_attributes =
+  let find_class_of_attributes ~successors ~class_table ~func_name ?(debug=false) { usage_attributes; _ } parent_usage_attributes =
 
-    let _ = debug in
+    let _ = debug, func_name in
     (* have to make proper filter *)
-    let extract_class ~key classes =
+    let extract_class ~key ~attributes classes =
       let _ = key in
       (* if debug then (
         List.iter classes ~f:(fun c -> Log.dump "BEFORE : %a" Reference.pp c);
@@ -701,24 +1382,43 @@ module FunctionSummaryResolution = struct
 
       (* if debug then
         List.iter filtered_classes ~f:(fun c -> Log.dump "TEST : %s" c); *)
-
-      if List.length filtered_classes > 1 then (
+      if false (* || true *) then  (* For Baseline => True *)
+        Some (List.map filtered_classes ~f:Reference.create)
+      else if List.length filtered_classes > 1 then (
         (* Log.dump "FIND %a" Expression.pp key;
         List.iter classes ~f:(fun c -> Log.dump "BEFORE : %s" c);
         List.iter filtered_classes ~f:(fun c -> Log.dump "TEST : %s" c); *)
         None
       )
       else if List.length filtered_classes = 1 then (
-        (* List.iter filtered_classes ~f:(fun c -> Log.dump "OK : %s" c); *)
-        List.nth_exn filtered_classes 0 |> Reference.create |> Option.some
+        let _ = attributes in
+        let _ = ClassTableResolution.calculate_classes in 
+        let class_key = List.nth_exn filtered_classes 0 |> Reference.create in
+        Some [class_key]
+        (* let class_key = List.nth_exn filtered_classes 0 |> Reference.create in
+        (* List.iter filtered_classes ~f:(fun c -> Log.dump "%a OK : %s" Reference.pp key c); *)
+        if (* true || *) (ClassTableResolution.calculate_classes ~key:class_key class_table attributes) (* For Baseline : true *)
+        then Some class_key
+        else (
+          (* let call_attributes = 
+            Identifier.Map.keys attributes.call_set 
+            |> List.fold ~init:Identifier.Set.empty ~f:(fun acc t -> Identifier.Set.add acc t)
+          in
+          let all_attributes = Identifier.Set.union attributes.attribute_set call_attributes in
+          let x = Identifier.Set.fold ~init:"" all_attributes ~f:(fun acc a -> acc ^ ", " ^ a) in
+          Log.dump "%a ==> %a (%s) :: %a" Expression.pp key Reference.pp class_key x Reference.pp func_name; *)
+          None
+        ) *)
       )
       else (
        None
       )
     in
+    
     let usage_attributes =
       parent_usage_attributes
       |> AttributeStorage.join usage_attributes
+      |> AttributeAnalysis.AttributeStorage.filter_single_class_param ~class_param:"$parameter$self"
     in 
     
     (* if debug then
@@ -741,18 +1441,33 @@ module FunctionSummaryResolution = struct
         (* let t1 = Timer.stop_in_sec timer in *)
 
         let x =
-          x
-          |> extract_class ~key
+            x
+            |> extract_class ~key ~attributes
         in
         
         (* let t2 = Timer.stop_in_sec timer in
-
-        Log.dump "%.3f %.3f" t1 t2; *)
         
+        Log.dump "%.3f %.3f" t1 t2; *)
+
+        
+
         x
         |> (function
         | None -> let _ = find_default_type_of_attributes in None (* find_default_type_of_attributes attributes *)
-        | Some v -> (* Log.dump "%a ==> %a (%a)" Expression.pp key Reference.pp v AttributeStorage.pp_data_set attributes; *) Some v
+        | Some v -> 
+          (* let call_attributes = 
+            Identifier.Map.keys attributes.call_set 
+            |> List.fold ~init:Identifier.Set.empty ~f:(fun acc t -> Identifier.Set.add acc t)
+          in *)
+  
+          (* let all_attributes = Identifier.Set.union attributes.attribute_set call_attributes in *)
+  
+          (* if Identifier.Set.length all_attributes <= 2 then (
+            let x = Identifier.Set.fold ~init:"" all_attributes ~f:(fun acc a -> acc ^ ", " ^ a) in
+            Log.dump "%a ==> %a (%s) :: %a" Expression.pp key Reference.pp v x Reference.pp func_name;
+          ); *)
+          
+          (* Log.dump "%a ==> %a (%a)" Expression.pp key Reference.pp v AttributeStorage.pp_data_set attributes; *) Some v
         
         )
     )
@@ -774,12 +1489,101 @@ module FunctionTableResolution = struct
   let find_class_of_attributes ~successors ~class_table (t: t) func_name parent_usage_attributes =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     let debug = 
-      String.is_substring (Reference.show func_name) ~substring:"capabilities.AlexaCapability.__init__"
+      String.is_substring (Reference.show func_name) ~substring:"salt.daemons.flo.core.SaltRaetRouter._process_road_rxmsg"
     in
 
     (* Log.dump "Check %a..." Reference.pp func_name; *)
 
-    FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table ~debug func_summary parent_usage_attributes
+    FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table ~debug ~func_name func_summary parent_usage_attributes
+
+  let can_call_in_test ~filtered_used_variable ~end_define t =
+    let rec bfs_call_chain ?(max=3) ~skip_set n call_chain =
+      if max = n then
+        []
+      else (
+        let callee_chain = CallChain.get_callee_chain call_chain in
+        let after_skip_set = List.fold callee_chain ~init:skip_set ~f:(fun acc callee -> Reference.Set.add acc callee) in
+        List.fold callee_chain ~init:[] ~f:(fun acc callee ->
+          if Reference.Set.mem skip_set callee then
+            acc
+          else (
+            let callee_inner_call_chain = 
+              FunctionHash.find t callee
+              >>| FunctionSummary.get_call_chain
+              |> Option.value ~default:CallChain.empty
+            in
+
+            acc@(callee::(bfs_call_chain ~skip_set:after_skip_set (n+1) callee_inner_call_chain))
+          )
+        )
+      )
+    in
+
+    let find_call_chain ~start_defines ~defined_defines ~end_define call_list =
+      let _, find_end =
+        List.fold call_list ~init:(false, false) ~f:(fun (s, e) call ->
+          if e then (s, e)
+          else (
+            if s
+            then (
+              if Reference.Set.mem defined_defines call
+              then (false, e)
+              else if Reference.equal end_define call
+              then (s, true)
+              else (s, e)
+            )
+            else (
+              (Reference.Set.mem start_defines call, e)
+            )
+          )  
+        ) 
+      in
+
+      find_end
+    in
+
+    let can_call ~start_defines ~defined_defines ~end_define () =
+      FunctionHash.existsi t ~f:(fun ~key ~data:{ FunctionSummary.call_chain; _ } ->
+        if Reference.is_test key then (
+
+          (* let setup_func = Reference.drop_last key in
+          let setup_func = Reference.combine setup_func (Reference.create "setUp") in
+          let call_chain =
+            Location.Map.set call_chain ~key:(Location.any) ~data:setup_func
+          in *)
+
+          let call_list = bfs_call_chain ~skip_set:Reference.Set.empty 0 call_chain in
+
+          (* List.iter call_list ~f:(fun c -> Log.dump "%a" Reference.pp c); *)
+
+          find_call_chain ~start_defines ~defined_defines ~end_define call_list
+        ) else (
+          false
+        )
+      )
+    in
+
+    Reference.Map.mapi filtered_used_variable ~f:(fun ~key ~data ->
+      Type.Map.filteri data ~f:(fun ~key:typ ~data -> 
+        let _ = key, typ in 
+
+        let defined_defines, start_defines = data in
+
+        
+
+        (* Reference.Set.iter defined_defines ~f:(fun defined_define -> Log.dump "defined_defines : %a" Reference.pp defined_define);
+
+        Reference.Set.iter start_defines ~f:(fun start_define -> Log.dump "start_defines : %a" Reference.pp start_define); *)
+
+        let result = can_call ~start_defines ~defined_defines ~end_define () in
+
+        (* Log.dump "%a, %a ==> %b" Reference.pp key Type.pp typ result; *)
+
+        result
+      )
+    )
+
+    
 
 end
 
@@ -789,11 +1593,11 @@ module OurSummaryResolution = struct
   let store_to_return_var_type ?usedef_table ?class_param ?local { function_table; _ } func_name arg_types store = 
     FunctionTableResolution.store_to_return_var_type ?usedef_table ?class_param ?local function_table func_name arg_types store
 
-  let get_type_of_class_attribute ~less_or_equal { class_table; function_table; } class_name attribute = ClassTableResolution.get_type_of_class_attribute ~less_or_equal ~function_table class_table class_name attribute
+  let get_type_of_class_attribute ~type_join ~less_or_equal { class_table; function_table; _ } class_name attribute = ClassTableResolution.get_type_of_class_attribute ~type_join ~less_or_equal ~function_table class_table class_name attribute
   
-  let get_self_attributes_tree { class_table; _ } class_name = ClassTableResolution.get_self_attributes_tree class_table class_name
+  let get_self_attributes_tree ~type_join { class_table; _ } class_name = ClassTableResolution.get_self_attributes_tree ~type_join class_table class_name
 
-  let get_temp_self_attributes_tree { class_table; _ } class_name = ClassTableResolution.get_temp_self_attributes_tree class_table class_name
+  let get_temp_self_attributes_tree ~type_join { class_table; _ } class_name = ClassTableResolution.get_temp_self_attributes_tree ~type_join class_table class_name
 
   let add_parent_attributes { class_table; _ } storage class_name class_var =
     (* 이거 짜야 댕 *)
@@ -851,7 +1655,18 @@ module OurSummaryResolution = struct
     candidates
   *)
 
-  let find_class_of_attributes ~successors { class_table; function_table; } func_name parent_usage_attributes  =
+  let find_class_of_attributes ~successors { class_table; function_table; _ } func_name parent_usage_attributes  =
     FunctionTableResolution.find_class_of_attributes ~successors ~class_table function_table func_name parent_usage_attributes
+
+  (* let update_seen_path { class_table; function_table; _ } =
+    ClassTableResolution.update_seen_path ~function_table class_table
+ *)
+
+  let can_call_in_test ~filtered_used_variable ~end_define { function_table; _ } =
+    FunctionTableResolution.can_call_in_test ~filtered_used_variable ~end_define function_table
+
+  let update_test_passed_used_variable ~class_name ~test_passed_used_variable { class_table; _ } =
+    ClassTableResolution.update_test_passed_used_variable ~class_name ~test_passed_used_variable class_table
+
 end
 

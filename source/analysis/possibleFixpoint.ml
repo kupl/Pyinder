@@ -61,7 +61,7 @@ module type PossibleFixpoint = sig
 
   val exit : t -> state option
 
-  val post_info : t -> (Resolution.t * Resolution.t) option Int.Map.t
+  val post_info : t -> (Resolution.t option * Resolution.t option) Int.Map.t
 
   (*
   val exit_possible : t -> state option
@@ -110,9 +110,18 @@ module Make (State : PossibleState) = struct
   let exit { postconditions; _ } = Hashtbl.find postconditions Cfg.exit_index
 
   let post_info { preconditions; postconditions; } =
-    Hashtbl.fold postconditions ~init:Int.Map.empty ~f:(fun ~key ~data:postcondition acc ->
-      
-      match State.get_resolution postcondition with
+    Hashtbl.fold preconditions ~init:Int.Map.empty ~f:(fun ~key ~data:precondition acc ->
+      match State.get_resolution precondition with
+      | Some precondition ->
+        let postcondition = Hashtbl.find_exn postconditions key in
+        (match State.get_resolution postcondition with
+        | Some postcondition -> 
+          Int.Map.set acc ~key ~data:(Some precondition, Some postcondition)
+        | _ -> Int.Map.set acc ~key ~data:(Some precondition, None) (* (Refinement.Store.empty, Refinement.Store.empty) *)
+        )
+      | _ -> Int.Map.set acc ~key ~data:(None, None) (* (Refinement.Store.empty, Refinement.Store.empty) *)
+    )
+      (* match State.get_resolution postcondition with
       | Some postcondition ->
         let precondition = Hashtbl.find_exn preconditions key in
         (match State.get_resolution precondition with
@@ -120,8 +129,8 @@ module Make (State : PossibleState) = struct
           Int.Map.set acc ~key ~data:(Some (precondition, postcondition))
         | _ -> Int.Map.set acc ~key ~data:None (* (Refinement.Store.empty, Refinement.Store.empty) *)
         )
-      | _ -> Int.Map.set acc ~key ~data:None (* (Refinement.Store.empty, Refinement.Store.empty) *)
-    )
+      | _ -> Int.Map.set acc ~key ~data:None (* (Refinement.Store.empty, Refinement.Store.empty) *) *)
+    
     (*
   let exit_possible { possibleconditions; _ } = Hashtbl.find possibleconditions Cfg.exit_index
     *)

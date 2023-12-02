@@ -29,7 +29,7 @@ module type UsedefState = sig
 
   val is_undefined : t -> Reference.t -> bool
 
-  val forward : statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t -> statement:Statement.t -> t
+  val forward : func_name:Reference.t -> statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
@@ -80,7 +80,10 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> post_info:(Resolution.t * Resolution.t) option Int.Map.t -> initial:state -> 
+  val forward : func_name:Reference.t -> cfg:Cfg.t -> post_info:(Resolution.t option * Resolution.t option) Int.Map.t -> initial:state -> 
+    get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t
+
+  val forward_for_exception : cfg:Cfg.t -> post_info:(Resolution.t option * Resolution.t option) Int.Map.t -> initial:state -> 
     get_usedef_state_of_func:(Reference.t -> VarTypeSet.t) -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t

@@ -131,7 +131,7 @@
  
  
  let do_check configuration =
-  Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.empty ~size:30000 ();
+  Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.empty ~size:100000 ();
    Scheduler.with_scheduler ~configuration ~f:(fun scheduler ->
        with_performance_tracking ~debug:configuration.debug (fun () ->
 
@@ -152,8 +152,10 @@
             let preprocess environment =
               Log.dump "Preprocess...";
               Analysis.OurDomain.save_mode "preprocess";
+              
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
               (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
+
               Analysis.OurDomain.save_mode "inference";
             in
 
@@ -182,12 +184,20 @@
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
               if (k >= 4) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
-                Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
-                Log.dump "Check";
-                Analysis.OurDomain.save_mode "error";
-                Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model;
+                Analysis.OurDomain.save_mode "last_inference";
+                
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
+                  |> Analysis.ErrorsEnvironment.set_environment environment
+                in
+                Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+                
+                Analysis.OurDomain.save_mode "error";
+                Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model;
+                Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+                Log.dump "Check";
+                let environment =
+                  Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
                   |> Analysis.ErrorsEnvironment.set_environment environment
                 in
                 Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
@@ -206,15 +216,22 @@
               )
               else (
                 let next_skip_set, next_our_model =
-                  if k = 0 then
+                  if k = 0 (* && false *) then (* For Baseline => false *)
                     (* Preprocess ... *)
                     (* Analysis.OurDomain.OurSummary.change_analysis_all our_model; *)
+                    let our_model = Analysis.OurDomain.OurSummary.set_stub_info our_model (Analysis.OurDomain.StubInfo.create ()) in
+              
                     let environment =
                       Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
                       |> Analysis.ErrorsEnvironment.set_environment environment
                     in
-                    preprocess environment;
+
+                    if !Analysis.OurDomain.on_attribute then
+                      preprocess environment;
+
                     let our_model = !Analysis.OurDomain.our_model in
+
+                    let our_model = Analysis.OurDomain.OurSummary.set_stub_info our_model (Analysis.OurDomain.StubInfo.empty) in
 
                     let next_skip_set = Ast.Reference.Set.empty in
                     (* let next_our_model = Analysis.OurDomain.OurSummary.change_analysis_all our_model in *)
@@ -229,6 +246,8 @@
                   then n+1
                   else 0
                 in
+
+                Analysis.OurDomain.save_mode "inference";
                 
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:next_our_model configuration
@@ -301,6 +320,9 @@
 
    
    
+   
+  
+
    
    let errors, ast_environment, _ = do_check configuration in
     

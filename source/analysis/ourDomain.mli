@@ -10,6 +10,14 @@
 open Core
 open AttributeAnalysis
 
+val on_any : bool ref
+val on_dataflow : bool ref
+val on_class_var : bool ref
+val on_attribute : bool ref
+
+
+val debug : bool ref
+
 module ReferenceHash : sig
     type key = Ast.Reference.t
     type ('a, 'b) hashtbl = ('a, 'b) Core_kernel__.Hashtbl.t
@@ -176,12 +184,34 @@ module ReferenceHash : sig
       Ppx_sexp_conv_lib.Sexp.t -> 'a__002_ t
 end
 
+module TypeFromFuncs : sig
+  type t = Reference.Set.t Type.Map.t
+
+  val empty : t
+
+  val set : t -> key:Type.t -> data:Reference.Set.t -> t
+
+  val fold : t -> init:'a -> f:(key:Type.t -> data:Reference.Set.t -> 'a -> 'a) -> 'a
+
+  val existsi : t -> f:(key:Type.t -> data:Reference.Set.t -> bool) -> bool
+
+  val get_type : type_join:(Type.t -> Type.t -> Type.t) -> t -> Type.t option
+
+  val get_all_callees : t -> Reference.Set.t
+
+  val get_callees : typ:Type.t -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.Set.t
+
+  val join : t -> t -> t
+end
+
 module ReferenceSet = Reference.Set
 
 module ReferenceMap : sig
   include Map.S with type Key.t = Reference.t
 
   val join : data_join:('a -> 'a -> 'a) -> equal:('a -> 'a -> bool) -> 'a t -> 'a t -> 'a t
+
+  val join_var_from_funcs : TypeFromFuncs.t t -> TypeFromFuncs.t t -> TypeFromFuncs.t t
 
   val diff : Type.t t -> Type.t t -> ReferenceSet.t
 end
@@ -214,6 +244,24 @@ module FunctionHash = ReferenceHash
 
 module AttrsSet : Set.S with type Elt.t = String.t
 
+
+module StubInfo : sig
+  type info = {
+    attribute_set: AttrsSet.t;
+    call_set: AttributeAnalysis.CallSet.t Identifier.Map.t;
+  }
+
+  type t = info Identifier.Map.t
+
+  val empty : t
+
+  val pp : Format.formatter -> t -> unit
+
+  val is_empty : t -> bool
+
+  val create : unit -> t
+end
+
 module ClassAttributes: sig
   type t = {
     attributes: AttrsSet.t;
@@ -233,9 +281,9 @@ end
 
 module ClassSummary: sig
   type t = {
-    class_var_type: Type.t ReferenceMap.t;
-    temp_class_var_type: Type.t ReferenceMap.t;
-    join_temp_class_var_type: Type.t ReferenceMap.t;
+    class_var_type: TypeFromFuncs.t ReferenceMap.t;
+    temp_class_var_type: TypeFromFuncs.t ReferenceMap.t;
+    join_temp_class_var_type: TypeFromFuncs.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set: ReferenceSet.t;
@@ -244,9 +292,11 @@ module ClassSummary: sig
 
   val join : type_join:(Type.t -> Type.t -> Type.t) -> t -> t -> t
 
-  val get_class_var_type : t -> Type.t ReferenceMap.t
+  val get_class_var_type : t -> TypeFromFuncs.t ReferenceMap.t
 
-  val get_temp_class_var_type : t -> Type.t ReferenceMap.t
+  val get_temp_class_var_type : t -> TypeFromFuncs.t ReferenceMap.t
+
+  val get_properties : t -> AttrsSet.t
 
   val pp_class_var_type : Format.formatter -> t -> unit
 
@@ -266,9 +316,9 @@ module ClassTable: sig
 
   val get : class_name:Reference.t -> f:(ClassSummary.t -> 'a) -> t -> 'a
 
-  val get_class_var_type : t -> Reference.t -> Type.t ReferenceMap.t
+  val get_class_var_type : t -> Reference.t -> TypeFromFuncs.t ReferenceMap.t
 
-  val get_temp_class_var_type : t -> Reference.t -> Type.t ReferenceMap.t
+  val get_temp_class_var_type : t -> Reference.t -> TypeFromFuncs.t ReferenceMap.t
 
   val pp : Format.formatter -> t -> unit
 end
@@ -344,6 +394,7 @@ module type FunctionSummary = sig
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     usedef_defined: VarTypeSet.t;
+    call_chain: CallChain.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
@@ -385,11 +436,16 @@ module FunctionSummary : sig
     usage_attributes : AttributeStorage.t;
     unique_analysis : UniqueAnalysis.UniqueStruct.t;
     usedef_defined: VarTypeSet.t;
+    call_chain: CallChain.t;
     unknown_decorator : bool;
     (*usedef_tables: UsedefStruct.t option;*)
   }
 
   val empty : t
+
+  val get_signatures : t -> Type.t Signatures.ArgTypesMap.t
+
+  val get_call_chain : t -> CallChain.t
 
   val add_return_var_type : t -> ArgTypes.t -> Reference.t -> Type.t -> t
 end
@@ -401,13 +457,14 @@ end
 module FunctionTable : sig
   type t = FunctionSummary.t FunctionHash.t
 
-  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> ArgTypes.t -> Type.t
+  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> ?property:bool -> t -> Reference.t -> ArgTypes.t -> Type.t
 end
 
 module type OurSummary = sig
   type t = {
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
+    stub_info : StubInfo.t;
   }
 end
 
@@ -415,6 +472,7 @@ module OurSummary : sig
   type t = {
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
+    stub_info : StubInfo.t;
   }
   [@@deriving equal, sexp]
 
@@ -470,6 +528,8 @@ module OurSummary : sig
 
   val set_usedef_defined : t -> Reference.t -> VarTypeSet.t -> unit
 
+  val set_call_chain : t -> Reference.t -> CallChain.t -> unit
+
   val set_unknown_decorator : t -> Reference.t -> unit
   (*
   val set_usedef_tables : t -> Reference.t -> UsedefStruct.t option -> t
@@ -477,6 +537,8 @@ module OurSummary : sig
   val get_class_vars : t -> Reference.Set.t Reference.Map.t
 
   val get_class_table : t -> ClassTable.t
+
+  val get_function_table : t -> FunctionTable.t
 
   (*
   val get_usedef_tables : t -> Reference.t -> UsedefStruct.t option
@@ -517,6 +579,8 @@ module OurSummary : sig
 
   val update_unseen_temp_class_var_type_to_unknown : t -> unit
 
+  val update_unseen_temp_class_var_type_to_var : t -> unit
+
   val set_all_class_var_type_to_empty : t -> unit
 
   val set_all_temp_class_var_type_from_join : t -> unit
@@ -524,6 +588,8 @@ module OurSummary : sig
   val set_all_join_temp_class_var_type_to_empty : t -> unit
 
   val set_class_table : t -> ClassTable.t -> t
+
+  val set_stub_info : t -> StubInfo.t -> t
 
   val get_class_summary : t -> Reference.t -> ClassSummary.t
 
@@ -536,6 +602,8 @@ module OurSummary : sig
   val get_module_var_type : t -> Reference.t -> string -> Type.t
 
   val get_class_property : t -> Reference.t -> AttrsSet.t
+
+  val check_attr : attr:string -> t -> Reference.t -> bool
 
   val change_analysis : t -> unit
 
@@ -562,13 +630,19 @@ val our_model : OurSummary.t ref
 
 val our_summary : OurSummary.t ref
 
+val stub_info : StubInfo.t ref
+
 val is_search_mode : string -> bool
 
 val is_inference_mode : string -> bool
 
+val is_last_inference_mode : string -> bool
+
 val is_error_mode : string -> bool
 
 val is_check_preprocess_mode : string -> bool
+
+val is_preprocess : bool ref
 
 val save_mode : string -> unit
 
@@ -594,4 +668,13 @@ val select_our_model : Reference.t -> OurSummary.t
 
 val is_first : bool ref
 
+
+
 (* val deubg : bool ref *)
+
+(* module OurDomainReadOnly : sig
+
+  type t
+
+  val create : OurSummary.t -> t
+end *)

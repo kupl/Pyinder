@@ -22,6 +22,19 @@ module CallInfo = struct
     double_star=false;
   }
 
+  let calculate ~signature target =
+    let position_score = 1.0 /. (Float.of_int (Int.abs (target.position - signature.position) + 1)) in
+    let default_score = 
+      (Float.of_int (Identifier.Set.length target.default) +. 1.0) /. (Float.of_int (Identifier.Set.length signature.default) +. 1.0)
+    in
+    let star_score =
+      1.0 /. (Float.of_int (Int.abs (Bool.to_int (not (Bool.equal target.star signature.star)) + Bool.to_int (not (Bool.equal target.double_star signature.double_star)) + 1)))
+    in
+
+    (* Log.dump "%.3f %.3f %.3f => %.3f" position_score default_score star_score (position_score *. default_score *. star_score); *)
+
+    position_score *. default_score *. star_score
+
   let of_arguments arguments =
     List.fold arguments ~init:empty ~f:(fun call argument ->
       let _, t = Call.Argument.unpack argument in
@@ -132,16 +145,17 @@ module AttributeStorage = struct
     )
 
  let filter_single_class_param ~class_param t =
-    filter_keys t ~f:(fun { Node.value; _} ->
-      match value with
+    filter_keys t ~f:(fun value ->
+      not (String.equal (Expression.show value) class_param)
+      (* match value with
       | Expression.Name name 
       | Call { callee={ Node.value=Expression.Name name; _ }; _} ->
         (match name_to_reference name with
         | Some reference -> 
-          not (Reference.equal reference (Reference.create class_param))
+          not (String.equal (Reference.show reference) class_param)
         | _ -> true
         )
-      | _ -> true
+      | _ -> true *)
     )
 
   let get_reference_list t =
@@ -199,8 +213,8 @@ module AttributeStorage = struct
     in
     LocInsensitiveExpMap.set storage ~key:target ~data
     
-  let is_inner_method callee =
-    String.is_prefix callee ~prefix:"__" && String.is_suffix callee ~suffix:"__"
+  (* let is_inner_method callee =
+    String.is_prefix callee ~prefix:"__" && String.is_suffix callee ~suffix:"__" *)
 
   let add_call target callee arguments storage =
     let call = 
@@ -378,7 +392,8 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
 
   let add_attribute ?arguments base attribute name =
     match name_to_reference name with
-    | Some reference when (Reference.is_local reference || Reference.is_parameter reference) && not (AttributeStorage.is_inner_method attribute) ->
+    | Some reference when (Reference.is_target reference || Reference.is_local reference || Reference.is_parameter reference) (* && not (AttributeStorage.is_inner_method attribute) *) ->
+      (* Log.dump "WHAT?? %b %b" is_assign (is_in_skip_set skip_map base attribute); *)
       if (not is_assign) && (is_in_skip_set skip_map base attribute)
       then
         (storage, skip_map) 
@@ -389,6 +404,9 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
           | _ -> AttributeStorage.add_attribute base attribute storage
           )
         in
+
+        
+
         (storage, skip_map)
     | _ -> (storage, skip_map) 
   in
@@ -404,6 +422,7 @@ and forward_expression ?(is_assign=false) ~expression:({ Node.value; _ } as expr
     |> forward_expression ~expression:left
     |> forward_expression ~expression:right
   | Call { callee={ Node.value=Expression.Name (Attribute { base; attribute; _ } as name); _ }; arguments; } ->
+    (* Log.dump "??? %a" Expression.pp expression; *)
     add_attribute ~arguments base attribute name 
     |> forward_expression ~expression:base
     |> (fun (storage, skip_map) -> 

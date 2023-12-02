@@ -2570,6 +2570,36 @@ let inverse_operator = function
   | "__ge__" -> Some "__le__"
   | _ -> None
 
+let inverse_math_operator = function
+  (* cf. https://docs.python.org/3/reference/datamodel.html#object.__radd__ *)
+  | "__add__" -> Some "__radd__"
+  | "__radd__" -> Some "__add__"
+  | "__sub__" -> Some "__rsub__"
+  | "__rsub__" -> Some "__sub__"
+  | "__mul__" -> Some "__rmul__"
+  | "__rmul__" -> Some "__mul__"
+  | "__matmul__" -> Some "__rmatmul__"
+  | "__rmatmul__" -> Some "__matmul__"
+  | "__truediv__" -> Some "__rtruediv__"
+  | "__rtruediv__" -> Some "__truediv__"
+  | "__floordiv__" -> Some "__rfloordiv__"
+  | "__rfloordiv__" -> Some "__floordiv__"
+  | "__mod__" -> Some "__rmod__"
+  | "__rmod__" -> Some "__mod__"
+  | "__divmod__" -> Some "__rdivmod__"
+  | "__rdivmod__" -> Some "__divmod__"
+  | "__pow__" -> Some "__rpow__"
+  | "__rpow__" -> Some "__pow__"
+  | "__lshift__" -> Some "__rlshift__"
+  | "__rlshift__" -> Some "__lshift__"
+  | "__rshift__" -> Some "__rrshift__"
+  | "__rrshift__" -> Some "__rshift__"
+  (* cf. https://docs.python.org/3/reference/datamodel.html#object.__lt__ *)
+  | "__lt__" -> Some "__gt__"
+  | "__gt__" -> Some "__lt__"
+  | "__le__" -> Some "__ge__"
+  | "__ge__" -> Some "__le__"
+  | _ -> None
 
 let is_operator = function
   | "__eq__"
@@ -2635,12 +2665,18 @@ let rec calc_similarity left right =
   | _ -> 0.0
 
 let is_used ~reference expression =
-  let fold_name ~folder:_ ~state name =
-    match name_to_reference name with
-    | Some name_reference ->
-      state || Reference.equal name_reference reference
-    | _ -> state
+  let fold_name ~folder ~state name =
+    match name with
+    | Name.Identifier _ -> (
+      match name_to_reference name with
+      | Some name_reference ->
+        state || Reference.equal name_reference reference
+      | _ -> state
+    )
+    | Name.Attribute { base; attribute = _; special = _ } -> Folder.fold ~folder ~state base
   in
+
+
   let folder = Folder.create_with_uniform_location_fold ~fold_name () in
   Folder.fold ~folder ~state:false expression
 

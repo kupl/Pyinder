@@ -4587,6 +4587,7 @@ class base class_metadata_environment dependency =
             |> fun annotation ->
             Some { Global.annotation; undecorated_signature = None; problem = None }
         | SimpleAssign { explicit_annotation; value; _ } ->
+          
             let explicit_annotation =
               explicit_annotation
               >>| self#parse_annotation ~assumptions
@@ -4627,6 +4628,9 @@ class base class_metadata_environment dependency =
              (unannotated_global_environment class_metadata_environment)
              ?dependency
       in
+
+      (* Log.dump "HMM %a %b" Ast.Reference.pp name class_lookup; *)
+
       if class_lookup then
         let primitive = Type.Primitive (Reference.show name) in
         Annotation.create_immutable (Type.meta primitive)

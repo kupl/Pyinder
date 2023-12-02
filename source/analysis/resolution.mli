@@ -88,6 +88,19 @@ val get_local_with_attributes
   t ->
   Annotation.t option
 
+val get_local_with_attributes_of_anno
+  :  ?global_fallback:bool ->
+  name:Expression.Name.t ->
+  t ->
+  Annotation.t option
+
+
+val get_local_with_attributes_of_temp
+  :  ?global_fallback:bool ->
+  name:Expression.Name.t ->
+  t ->
+  Annotation.t option
+
 val unset_local : t -> reference:Reference.t -> t
 
 val clear_temporary_annotations : t -> t

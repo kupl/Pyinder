@@ -25,6 +25,7 @@ end
 
 let produce_check_results global_environment define_info ~dependency =
   let define_name = define_info in 
+  (* let _ = our_model in  *)
   (* Log.dump "Start %a" Reference.pp define_name; *)
   (* let define_name, entry_arg_types = OurDomain.ArgTypesKey.from_key define_info in
   let _ = entry_arg_types in *)
@@ -49,17 +50,19 @@ let produce_check_results global_environment define_info ~dependency =
     type_check_controls, call_graph_builder, dependency
   in
 
+
   
   let mode = OurDomain.load_mode () in
 
 
 
   let x = 
-    if String.equal mode "preprocess" then
+    if String.equal mode "preprocess" then (
       TypeCheckPre.check_define_by_name
       ~global_environment
       ~dependency
       define_name
+    )
     else
       TypeCheck.check_define_by_name
       ~type_check_controls
@@ -163,7 +166,8 @@ module CheckResultsTable = Environment.EnvironmentTable.WithCache (struct
 
   let lazy_incremental = false
 
-  let produce_value = produce_check_results
+  let produce_value environment trigger = 
+      produce_check_results environment trigger
 
   let filter_upstream_dependency = function
     | SharedMemoryKeys.TypeCheckDefine name -> Some name
@@ -264,19 +268,25 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   let our_model = !OurDomain.our_model in
 
   let mode = OurDomain.load_mode () in
-  if !OurDomain.is_first || String.equal mode "error" then
+  if !OurDomain.is_first || String.equal mode "error" || (String.equal mode "last_inference") then
     List.iter all_defines ~f:(fun define -> 
      OurDomain.OurSummary.change_analysis_of_func our_model define
-    );
+     );
+
+    (* List.iter all_defines ~f:(fun t -> Log.dump "GO %a" Reference.pp t); *)
 
   let filter_test_defines =
-    List.filter all_defines ~f:(fun name ->
-      not (String.is_substring (Reference.show name) ~substring:".test."
-      || String.is_substring (Reference.show name) ~substring:".tests."
-      || String.is_substring (Reference.show name) ~substring:".test_"
+    if String.equal mode "check_preprocess" || (String.equal mode "inference" && !OurDomain.is_first) then
+      all_defines
+    else
+      List.filter all_defines ~f:(fun name ->
+        let _ = name in
+        not (Reference.is_test name)
       )
-    )
+      
   in
+
+  (* List.iter filter_test_defines ~f:(fun t -> Log.dump "GO %a" Reference.pp t); *)
 
   let filtered_defines =
     List.filter filter_test_defines ~f:(fun name ->
@@ -318,6 +328,10 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
   
   (* Log.dump "FINISH!!"; *)
+  (* if (String.equal mode "error") then (
+    (* Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model; *)
+    OurDomain.OurSummary.update_unseen_temp_class_var_type_to_var !OurDomain.our_model;
+  ); *)
   
   if String.equal mode "preprocess" then (
     (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
@@ -328,10 +342,14 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
   );
 
+  
+
   let read_only = read_only environment in
   (
   match type_join with
   | Some type_join ->
+    
+
     let updated_vars, our_errors =
       List.fold filtered_defines ~init:(Reference.Map.empty, !OurErrorDomain.our_errors) ~f:(fun (updated_vars, our_errors) define ->
         let timer = Timer.start () in
@@ -361,11 +379,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
           let class_vars = OurDomain.OurSummary.get_class_vars cur_summary in
 
-          (* if String.is_substring (Reference.show define) ~substring:"alexa.capabilities.AlexaCapability"
-            then (
-              Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
-             (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
-            ); *)
+          
 
             (* if String.equal (Reference.show define) "salt.state.State._run_check"
               then (
@@ -383,10 +397,24 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             (* OurDomain.OurSummary.set_callers our_model define (OurDomain.OurSummary.get_callers cur_summary define);
 
             OurDomain.OurSummary.set_usage_attributes our_model define (OurDomain.OurSummary.get_usage_attributes_from_func cur_summary define); *)
-          
+            (* if String.is_substring (Reference.show define) ~substring:"sklearn.model_selection._split.check_cv"
+              then (
+                (* Log.dump "OK! \n %a" OurDomain.OurSummary.pp our_model; *)
+                OurDomain.debug := true
+               (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
+              ); *)
 
           let our_model = !OurDomain.our_model in
           OurDomain.OurSummary.update ~type_join ~prev:cur_summary our_model;
+
+          (* if String.is_substring (Reference.show define) ~substring:"sklearn.model_selection._split.check_cv"
+            then (
+              (* Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_model; *)
+              Log.dump "OK! \n %a" OurDomain.OurSummary.pp our_model;
+              OurDomain.debug := false
+             (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)
+            ); *)
+
           let updated_vars = Reference.Map.merge updated_vars class_vars ~f:(fun ~key:_ data -> 
             match data with
             | `Both (a, b) -> Some (Reference.Set.union a b)
@@ -454,11 +482,13 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       )
     in
 
-    (* Reference.Set.iter updated_vars ~f:(fun v -> Log.dump "UPDATE %a" Reference.pp v); *)
-    (* Log.dump ">>> %a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
+    (* Reference.Map.iteri updated_vars ~f:(fun ~key ~data:_ -> Log.dump "UPDATE %a" Reference.pp key);
+    Log.dump ">>> %a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
 
+    (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     let _ = updated_vars in
-    if (String.equal mode "inference") then (
+
+    if (String.equal mode "inference") || (String.equal mode "last_inference") then (
       OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars !OurDomain.our_model;
     );
     if not (String.equal mode "preprocess") then (
@@ -467,8 +497,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
 
     (* For Baseline => update all *)
-    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model; *)
-
+    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model;
+ *)
     
     
     let _ = OurDomain.OurSummary.update_default_value in
@@ -478,7 +508,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     ); *)
 
-    (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
+    
     (* OurDomain.our_model := our_summary; *)
     if String.equal mode "error" then
       OurErrorDomain.our_errors := our_errors;

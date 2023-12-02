@@ -31,6 +31,8 @@ val combine : t -> t -> t
 
 val delocalize : t -> t
 
+val is_target : t -> bool
+
 val is_local : t -> bool
 
 val is_parameter : t -> bool
@@ -38,6 +40,8 @@ val is_parameter : t -> bool
 val is_self : t -> bool
 
 val is_cls : t -> bool
+
+val is_test : t -> bool
 
 val sanitized : t -> t
 

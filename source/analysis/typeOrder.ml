@@ -128,9 +128,17 @@ module OrderImplementation = struct
         left
         right
       =
+      let on_any = !OurDomain.on_any in
 
       (* let origin_left, origin_right = left, right in *)
-
+      let left, right =
+        if not on_any
+        then (
+          (if Type.can_unknown left then Type.Any else left),
+          (if Type.can_unknown right then Type.Any else right)
+        )
+        else left, right
+      in
       (* let timer = Timer.start () in *)
       let left, right =
         Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) left,
@@ -147,6 +155,8 @@ module OrderImplementation = struct
         Log.dump "JOINDA %.5f %.5f" tt0 tt1;
         Log.dump "LEFT %a RIGHT %a" Type.pp left Type.pp right;
       );   *)
+      
+
       let x =
       if Type.equal left right then
         left
@@ -160,7 +170,9 @@ module OrderImplementation = struct
         match left, right with
         | Type.Unknown, _
         | _, Type.Unknown ->
-          union
+          if on_any
+          then union
+          else Type.Any 
         | Type.Bottom, other
         | other, Type.Bottom ->
             other
@@ -678,6 +690,15 @@ module OrderImplementation = struct
 
 
     and meet ({ is_protocol; assumptions = { protocol_assumptions; _ }; _ } as order) left right =
+      let left, right =
+        if not !OurDomain.on_any
+        then (
+          (if Type.can_unknown left then Type.Any else left),
+          (if Type.can_unknown right then Type.Any else right)
+        )
+        else left, right
+      in
+
       if Type.equal left right then
         left
       else
@@ -690,9 +711,12 @@ module OrderImplementation = struct
         | Type.Bottom, _
         | _, Type.Bottom ->
             Type.Bottom
-        | Type.Unknown, _
-        | _, Type.Unknown ->
-            Type.Unknown
+        | Type.Unknown, other
+        | other, Type.Unknown ->
+            if !OurDomain.on_any then
+              Type.Unknown
+            else
+              other
         | Type.ParameterVariadicComponent _, _
         | _, Type.ParameterVariadicComponent _ ->
             Type.Bottom

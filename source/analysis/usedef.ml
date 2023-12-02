@@ -31,7 +31,7 @@ module type UsedefState = sig
 
   val is_undefined : t -> Reference.t -> bool
 
-  val forward : statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t -> statement:Statement.t -> t
+  val forward : func_name:Reference.t -> statement_key:int -> post_info:(Resolution.t * Resolution.t) -> get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
@@ -108,6 +108,9 @@ module UsedefState = struct
 
   let pp format t = 
     Format.fprintf format "%a\n\n" pp_table t.usedef_table;
+    Format.fprintf format "[ CheckUsed Variables ] => \n";
+    Reference.Map.iteri t.check_used ~f:(fun ~key ~data -> Format.fprintf format "%a => %a" Reference.pp key pp_type_set data);
+    Format.fprintf format "\n";
     Format.fprintf format "[ Used Before Variables ] => \n";
     Reference.Map.iteri t.used_before_defined ~f:(fun ~key ~data -> Format.fprintf format "%a => %a" Reference.pp key pp_type_set data);
     Format.fprintf format "\n";
@@ -268,12 +271,26 @@ let get_both_variables usedef_table =
     |> defined_merge callee_def_variables_map
 
   let update_check_used ~post_info:(_, post) ~defined t usedef_table =
-    let filtered_check_used = Reference.Map.mapi t.check_used ~f:(fun ~key ~data ->
+
+    let defined_diff =
+      Reference.Map.symmetric_diff defined t.defined ~data_equal:TypeSet.equal
+    in
+
+    let filtered_check_used =
+      Sequence.fold defined_diff ~init:t.check_used ~f:(fun acc (key, data) ->
+        match data with
+        | `Left _ | `Unequal _ ->
+          Reference.Map.remove acc key
+        | _ -> acc 
+      )
+    in
+
+    (* let filtered_check_used = Reference.Map.mapi t.check_used ~f:(fun ~key ~data ->
       match Reference.Map.find defined key with
       | Some type_set -> TypeSet.diff data type_set
       | _ -> data
     ) |> Reference.Map.filter ~f:(fun data -> not (TypeSet.is_empty data))
-    in
+    in *)
     
     let check_use_variables = get_check_use_variables usedef_table in
     set_variables ~refinement:(Resolution.get_annotation_store post) ~init:filtered_check_used check_use_variables
@@ -462,7 +479,7 @@ let get_both_variables usedef_table =
             UnaryOperator.operator = UnaryOperator.Not;
             operand = { Node.value = Name name; _ };
           } when is_simple_name name 
-          -> VarSet.empty
+          -> VarSet.singleton (name_to_reference_exn name)
       | UnaryOperator e -> forward_expression_type_check ~post_info e.operand
       | WalrusOperator e -> VarSet.union (forward_expression_type_check ~post_info e.target) (forward_expression_type_check ~post_info e.value)
       | Yield (Some e) -> forward_expression_type_check ~post_info e
@@ -521,12 +538,13 @@ let get_both_variables usedef_table =
       ) 
     (* | BooleanOperator e -> 
       defined_merge (forward_expression_call ~post_info ~get_usedef_state_of_func e.left) (forward_expression_call ~post_info ~get_usedef_state_of_func e.right) *)
+
     | Call e -> 
       let f accum (a: Call.Argument.t) =
         (* For Use Condition *)
-        (* match (Node.value a.value) with
+        match (Node.value a.value) with
         | Name name when is_simple_name name -> accum
-        | _ -> *)
+        | _ ->
           defined_merge accum (forward_expression_call ~post_info ~get_usedef_state_of_func a.value)
       in
 
@@ -647,12 +665,27 @@ let get_both_variables usedef_table =
       when is_simple_name name
       ->
         VarSet.empty
+    | Call
+        {
+          callee = { Node.value = Name (Name.Attribute { base = { Node.value = Constant String _; _}; attribute = "format"; _ }); _ };
+          arguments;
+        }
+        ->
+        let f accum (a: Call.Argument.t) =
+          (* For Use Condition *)
+          match (Node.value a.value) with
+          | Name name when is_simple_name name -> 
+            VarSet.union accum (VarSet.singleton (name_to_reference_exn name))
+          | _ ->
+            VarSet.union accum (forward_expression ~post_info a.value)
+        in
+        (List.fold ~init:VarSet.empty ~f arguments)
     | Call e -> 
       let f accum (a: Call.Argument.t) =
         (* For Use Condition *)
-        (* match (Node.value a.value) with
+        match (Node.value a.value) with
         | Name name when is_simple_name name -> accum
-        | _ -> *)
+        | _ ->
           VarSet.union accum (forward_expression ~post_info a.value)
       in
       VarSet.union (forward_expression ~post_info e.callee) (List.fold ~init:VarSet.empty ~f e.arguments)
@@ -780,7 +813,7 @@ let get_both_variables usedef_table =
     usedef_map
     
 
-  let forward_statement ~(statement: Statement.t) ~post_info ~get_usedef_state_of_func state =
+  let forward_statement ~func_name ~(statement: Statement.t) ~post_info ~get_usedef_state_of_func state =
 
     (* Log.dump "WHY %a" Statement.pp statement; *)
 
@@ -790,7 +823,7 @@ let get_both_variables usedef_table =
     | Assert { 
       Assert.test = { Node.value=ComparisonOperator { left = { Node.value = Name _; _ }; operator= Is | IsNot; right = { Node.value = Constant _; _ }; }; _}; 
       origin=(Assert.Origin.If { true_branch }) | (Assert.Origin.While { true_branch });  
-      _ } when not true_branch -> 
+      _ } when (not true_branch) && not (String.equal (Reference.last func_name) "__init__") -> 
       state
     | Assert { Assert.test; _ } -> 
       (* Log.dump "HMM? %a" Expression.pp test ; *)
@@ -820,8 +853,8 @@ let get_both_variables usedef_table =
       (* Log.dump "HMM? %a" Statement.pp statement; *)
       state
 
-  let forward ~statement_key:_ ~post_info ~get_usedef_state_of_func state ~statement =
-    let usedef_table = forward_statement ~statement ~post_info ~get_usedef_state_of_func usedef_create in
+  let forward ~func_name ~statement_key:_ ~post_info ~get_usedef_state_of_func state ~statement =
+    let usedef_table = forward_statement ~func_name ~statement ~post_info ~get_usedef_state_of_func usedef_create in
     
 
     let x = update_state ~post_info state usedef_table in
@@ -855,7 +888,10 @@ module type UsedefFixpoint = sig
 
   val find_usedef_table_of_location : t -> Cfg.t -> Location.t -> state option
 
-  val forward : cfg:Cfg.t -> post_info:(Resolution.t * Resolution.t) option Int.Map.t -> initial:state -> 
+  val forward : func_name:Reference.t -> cfg:Cfg.t -> post_info:(Resolution.t option * Resolution.t option) Int.Map.t -> initial:state -> 
+    get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t
+
+  val forward_for_exception : cfg:Cfg.t -> post_info:(Resolution.t option * Resolution.t option) Int.Map.t -> initial:state -> 
     get_usedef_state_of_func:(Reference.t -> OurDomain.VarTypeSet.t) -> t
 
   val backward : cfg:Cfg.t -> initial:state -> t
@@ -1003,16 +1039,19 @@ module Make (State : UsedefState) = struct
       let node_id = Cfg.Node.id node in
       let usedef_table = 
         match Int.Map.find post_info (Cfg.Node.id node) with
-        | Some (Some post_info) ->
-          (* Log.dump "??? %a" Cfg.Node.pp node; *)
+        | Some (Some pre, Some post) ->
           let usedef_table = 
             Hashtbl.find usedef_tables node_id
             |> Option.value ~default:State.bottom
             |> join_with_predecessors_usedef_tables node
           in
           (* Log.dump "CHECK NODE : %a" Cfg.Node.pp node; *)
-          let usedef_table = transition ~post_info node_id usedef_table (Cfg.Node.statements node) in
+          let usedef_table = transition ~post_info:(pre, post) node_id usedef_table (Cfg.Node.statements node) in
+
+          (* Log.dump "===> %a" State.pp usedef_table; *)
+
           usedef_table
+          
           (* check_usdef_vartype ~post_info usedef_table *)
         | _ -> State.bottom
       in
@@ -1088,11 +1127,132 @@ module Make (State : UsedefState) = struct
 
     { usedef_tables; }
 
-  let forward ~cfg ~post_info ~initial ~get_usedef_state_of_func =
+let our_compute_fixpoint_for_exception cfg ~initial_index ~initial ~post_info ~predecessors ~successors ~transition =
+    (*
+     * This is the implementation of a monotonically increasing chaotic fixpoint
+     * iteration sequence with widening over a control-flow graph (CFG) using the
+     * recursive iteration strategy induced by a weak topological ordering of the
+     * nodes in the control-flow graph. The recursive iteration strategy is
+     * described in Bourdoncle's paper on weak topological orderings:
+     *
+     *   F. Bourdoncle. Efficient chaotic iteration strategies with widenings.
+     *   In Formal Methods in Programming and Their Applications, pp 128-141.
+     *)
+    let components = WeakTopologicalOrder.create ~cfg ~entry_index:initial_index ~successors in
+
+    let usedef_tables = Int.Table.create () in
+
+    let join_with_predecessors_usedef_tables node state =
+      if Int.equal (Cfg.Node.id node) initial_index then
+        State.join state initial
+      else
+          predecessors node
+          |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
+                Hashtbl.find usedef_tables predecessor_index
+                |> Option.value ~default:State.bottom
+                |> State.join sofar)
+      
+      (* if Int.equal (Cfg.Node.id node) initial_index then
+        State.join state initial
+      else
+          predecessors node
+          |> Set.fold ~init:state ~f:(fun sofar predecessor_index ->
+                Hashtbl.find usedef_tables predecessor_index
+                |> Option.value ~default:State.bottom
+                |> State.join sofar) *)
+    in
+
+    let analyze_node node =
+      let node_id = Cfg.Node.id node in
+      let usedef_table = 
+        Hashtbl.find usedef_tables node_id
+        |> Option.value ~default:State.bottom
+        |> join_with_predecessors_usedef_tables node
+      in
+
+      let usedef_table = 
+        match Int.Map.find post_info (Cfg.Node.id node) with
+        | Some (Some pre, None) ->
+          transition ~post_info:(pre, pre) node_id usedef_table (Cfg.Node.statements node)
+        | _ -> usedef_table
+      in
+      (* let usedef_table =
+        usedef_table
+        |> join_with_predecessors_usedef_tables node
+      in *)
+      (* Log.dump "[[[ USEDEF TABLE: Node %d ]]] \n\n%a\n\n" node_id pp_vartype_set usedef_table; *)
+      Hashtbl.set usedef_tables ~key:node_id ~data:usedef_table;
+
+    in
+    let rec analyze_component = function
+      | { WeakTopologicalOrder.Component.kind = Node node; _ } -> 
+        analyze_node node
+      | { kind = Cycle { head; components }; _ } ->
+          (* Loop에 해당하는 거 같음 *)
+          let head_id = Cfg.Node.id head in
+          let rec iterate local_iteration =
+            analyze_node head;
+            List.iter ~f:analyze_component components;
+            let current_head_precondition = Hashtbl.find_exn usedef_tables head_id in
+            let new_head_precondition =
+              join_with_predecessors_usedef_tables head current_head_precondition
+            in
+
+            let converged =
+              (* VarTypeSet.is_subset new_head_precondition ~of_:current_head_precondition *)
+              State.less_or_equal ~left:new_head_precondition ~right:current_head_precondition
+            in
+            (* Log.log
+              ~section:`Fixpoint
+              "\n%a\n  { <= (result %b) (iteration = %d) }\n\n%a"
+              State.pp
+              new_head_precondition
+              converged
+              local_iteration
+              State.pp
+              current_head_precondition; *)
+            if not converged then (
+              let precondition =
+                (* VarTypeSet.union current_head_precondition new_head_precondition *)
+                State.widen
+                  ~previous:current_head_precondition
+                  ~next:new_head_precondition
+                  ~iteration:local_iteration
+              in
+              Hashtbl.set usedef_tables ~key:head_id ~data:precondition;
+              iterate (local_iteration + 1))
+            else
+              (* At this point, we know we have a local fixpoint.
+               * Since operators are monotonic, `new_head_precondition` is also
+               * a post fixpoint. This is basically the argument for performing
+               * decreasing iteration sequence with a narrowing operator.
+               * Therefore, `new_head_precondition` might be more precise,
+               * let's use it at the result.
+               *)
+              Hashtbl.set usedef_tables ~key:head_id ~data:new_head_precondition
+          in
+          iterate 0
+    in
+    List.iter ~f:analyze_component components;
+
+    (*
+    Hashtbl.iteri class_hierachy ~f:(fun ~key:ref ~data:define_list -> 
+      Format.printf "[Reference] \n %a \n" Reference.pp ref;
+      Hashtbl.iteri define_list ~f:(fun ~key:define ~data:summary ->
+        Format.printf "\n %a \n" Define.pp define;
+        Format.printf "\n %a \n" Summary.pp summary;
+      );
+    );
+    *)
+    
+
+    { usedef_tables; }
+
+  let forward ~func_name ~cfg ~post_info ~initial ~get_usedef_state_of_func =
     let transition ~post_info node_id init statements =
       let forward statement_index before statement =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
-        let after = State.forward ~statement_key ~post_info ~get_usedef_state_of_func before ~statement in
+        let after = State.forward ~func_name ~statement_key ~post_info ~get_usedef_state_of_func before ~statement in
         (*
         Format.printf "\n\n  {  %a  } \n\n"
         Statement.pp
@@ -1113,6 +1273,39 @@ module Make (State : UsedefState) = struct
       List.foldi ~f:forward ~init statements
     in
     our_compute_fixpoint
+      cfg
+      ~initial_index:Cfg.entry_index
+      ~initial
+      ~post_info
+      ~predecessors:Cfg.Node.predecessors
+      ~successors:Cfg.Node.successors
+      ~transition
+
+  let forward_for_exception ~cfg ~post_info ~initial ~get_usedef_state_of_func =
+    let transition ~post_info node_id init statements =
+      let forward statement_index before statement =
+        let statement_key = [%hash: int * int] (node_id, statement_index) in
+        let after = State.forward ~func_name:Reference.empty ~statement_key ~post_info ~get_usedef_state_of_func before ~statement in
+        (*
+        Format.printf "\n\n  {  %a  } \n\n"
+        Statement.pp
+        statement
+        ;
+        *)
+        (*Log.log
+          ~section:`Fixpoint
+          "\n%a\n  {  %a  }\n\n%a"
+          State.pp
+          before
+          Statement.pp
+          statement
+          State.pp
+          after;*)
+        after
+      in
+      List.foldi ~f:forward ~init statements
+    in
+    our_compute_fixpoint_for_exception
       cfg
       ~initial_index:Cfg.entry_index
       ~initial

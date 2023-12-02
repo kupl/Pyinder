@@ -1990,24 +1990,36 @@ let rec is_valid_none ~reference statement_list =
     | Assign { target; value={Node.value=Name name; _ }; _ } when Expression.is_simple_name name ->
       Some (is_used target)
     | Assign { target; value; _ } ->
-      if is_used_call value || false (* Only Function Check *)
+      if is_used_call value && false (* Only Function Check *)
       then Some true
       else
       if is_used value
-      then None
-      else Some (is_used target)
+      then (
+        None
+      )
+      else (
+        let used = is_used target in
+        match Node.value target with
+        | Name _ -> Some used
+        | _ when used -> None
+        | _ -> Some false
+      )
     | Delete t_list ->
       if List.fold t_list ~init:false ~f:(fun flag t -> flag || is_used t)
       then None
       else Some false 
     | Expression t ->
-      if is_used_call t || false (* Only Function Check *)
+      if is_used_call t && false (* Only Function Check *)
       then Some true
-      else if is_used t
-      then None
+      else if is_used t 
+      then (
+        None
+      )
       else Some false 
     | For { iterator; body; orelse; _ } ->
-      if is_used iterator
+      if is_check_none iterator
+      then Some true
+      else if is_used iterator
       then None
       else (
         match is_valid_none ~reference body, is_valid_none ~reference orelse with
@@ -2025,6 +2037,8 @@ let rec is_valid_none ~reference statement_list =
     | If { test; body; orelse; } ->
       if is_check_none test
       then Some true
+      else if is_used test then
+        None
       else (
         match is_valid_none ~reference body, is_valid_none ~reference orelse with
         | Some valid_body, Some valid_orelse ->
