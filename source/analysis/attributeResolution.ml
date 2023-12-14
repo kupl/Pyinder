@@ -1527,6 +1527,7 @@ module SignatureSelection = struct
       | KeywordOnly { annotation = parameter_annotation; _ }, arguments
       | Named { annotation = parameter_annotation; _ }, arguments
       | Keywords parameter_annotation, arguments -> (
+        (* Log.dump "GOOD %a" Type.pp parameter_annotation; *)
           let rec check ~arguments signature_match =
             match arguments with
             | [] -> signature_match
@@ -1568,6 +1569,7 @@ module SignatureSelection = struct
                   in
                   match iterable_item_type with
                   | Some iterable_item_type ->
+
                       check_argument_and_set_constraints_and_reasons
                         ~position
                         ~argument_location
@@ -1577,6 +1579,7 @@ module SignatureSelection = struct
                         signature_match
                       |> check ~arguments:tail
                   | None ->
+
                       let argument_location =
                         expression >>| Node.location |> Option.value ~default:Location.any
                       in
@@ -1597,6 +1600,7 @@ module SignatureSelection = struct
                     extract_iterable_item_type ~synthetic_variable ~generic_iterable_type resolved
                     |> update_signature_match_for_iterable ~create_error ~resolved
                 | SingleStar -> (
+
                     let signature_match_for_single_element =
                       match parameter, index_into_starred_tuple, resolved with
                       | ( (PositionalOnly _ | Named _),
@@ -1643,9 +1647,12 @@ module SignatureSelection = struct
                       else
                         resolved, None
                     in
+
                     match weakening_error with
-                    | Some weakening_error -> add_annotation_error signature_match weakening_error
-                    | None -> argument_annotation |> check_argument |> check ~arguments:tail))
+                    | Some weakening_error -> 
+                      add_annotation_error signature_match weakening_error
+                    | None -> 
+                      argument_annotation |> check_argument |> check ~arguments:tail))
           in
           match is_generic_lambda parameter arguments with
           | Some _ -> signature_match (* Handle this later in `special_case_lambda_parameter` *)
@@ -1823,7 +1830,59 @@ module SignatureSelection = struct
     | Defined parameters ->
         get_parameter_argument_mapping ~parameters ~all_parameters ~self_argument arguments
         |> check_arguments_against_parameters ~callable
-        |> fun signature_match -> [signature_match]
+        |> fun signature_match -> 
+          let flag, name =
+            List.foldi parameters ~init:(false, "") ~f:(fun i (flag, name) parameter ->
+              if flag then 
+                (flag, name)
+              else (
+                let result = 
+                  List.exists arguments ~f:(fun argument ->
+                    if argument.position = i then (
+                      (match parameter, argument.kind with
+                      | Parameter.Named { name; _ }, SingleStar -> 
+                        List.existsi parameters ~f:(fun j parameter ->
+                          match parameter with
+                          | Parameter.Keywords _ -> 
+                            i < j
+                          | _ -> false
+                        ) &&
+                        List.exists arguments ~f:(fun argument ->
+                          match argument.kind with
+                          | Named other_name when String.equal name (Node.value other_name) -> 
+                            i < argument.position
+                          | _ -> false
+                        )
+                      | _ -> false
+                      )
+                    ) else (
+                      false
+                    )
+                  )
+                in
+
+                let name = 
+                  match parameter with
+                  | Parameter.Named { name; _ } -> name
+                  | _ -> ""
+                in
+
+                if result && not (String.equal "" name) then
+                  (result, name)
+                else
+                  (result, "")
+                )
+              )
+          in
+          
+          let signature_match =
+            if flag && not (String.equal "" name) then (
+              { signature_match with reasons = { signature_match.reasons with arity = (MultipleKeyword name)::signature_match.reasons.arity} }
+            )
+            else signature_match
+          in
+
+          [signature_match]
     | Undefined -> [base_signature_match]
     | ParameterVariadicTypeVariable { head; variable }
       when Type.Variable.Variadic.Parameters.is_free variable -> (
@@ -1990,6 +2049,7 @@ module SignatureSelection = struct
           | TooManyArguments _ -> 1
           | TypedDictionaryInitializationError _ -> 1
           | UnexpectedKeyword _ -> 1
+          | MultipleKeyword _ -> -2
         in
         let get_most_important best_reason reason =
           if importance reason > importance best_reason then
@@ -2983,6 +3043,7 @@ class base class_metadata_environment dependency =
             ~problem:None
           |> Option.some
       | None ->
+          let x=
           self#uninstantiated_attribute_tables
             ~assumptions
             ~transitive
@@ -2990,8 +3051,12 @@ class base class_metadata_environment dependency =
             ~include_generated_attributes
             ~special_method
             class_name
+          
           >>= Sequence.find_map ~f:(fun table ->
                   UninstantiatedAttributeTable.lookup_name table attribute_name)
+          in
+          (* Log.dump "END X %s" class_name; *)
+          x
           >>| self#instantiate_attribute
                 ~assumptions
                 ~accessed_through_class
@@ -3059,6 +3124,9 @@ class base class_metadata_environment dependency =
         ?instantiated
         ?(apply_descriptors = true)
         attribute =
+      (* let class_name = AnnotatedAttribute.parent attribute in
+      let attribute_name = AnnotatedAttribute.name attribute in
+      Log.dump "%s.%s" class_name attribute_name; *)
       let get_attribute = self#attribute in
       let class_name = AnnotatedAttribute.parent attribute in
       let attribute_name = AnnotatedAttribute.name attribute in
@@ -3986,7 +4054,10 @@ class base class_metadata_environment dependency =
                   |> Reference.show
               | _ -> Reference.show name
             in
+
             match simple_decorator_name, argument with
+            | name, argument when String.is_substring name ~substring:"timeit" ->
+              Decorators.apply ~argument ~name |> Result.return
             | ( ("click.decorators.pass_context" | "click.decorators.pass_obj"),
                 Type.Callable callable ) ->
                 (* Suppress caller/callee parameter matching by altering the click entry point to
@@ -4546,6 +4617,9 @@ class base class_metadata_environment dependency =
             let annotation =
               Result.ok decorated |> Option.value ~default:Type.Any |> Annotation.create_immutable
             in
+
+            (* Log.dump "OHOH %a" Annotation.pp annotation; *)
+
             Some
               {
                 Global.annotation;

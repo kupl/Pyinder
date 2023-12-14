@@ -39,6 +39,8 @@ module ResolvedReference = struct
     | PlaceholderStub { stub_module; remaining } ->
         Some (Reference.combine stub_module (Reference.create_from_list remaining))
     | ModuleAttribute { from; name; remaining = []; _ } -> Some (Reference.create ~prefix:from name)
+    | ModuleAttribute { from; name; remaining = [remain]; _ } when String.equal name remain
+      -> Some (Reference.create ~prefix:from name)
     | ModuleAttribute _ -> None
 end
 

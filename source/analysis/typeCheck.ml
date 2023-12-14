@@ -293,6 +293,7 @@ let errors_from_not_found
           error_and_location_from_typed_dictionary_mismatch mismatch)
       |> List.map ~f:(fun (location, error) -> Some location, error)
   | UnexpectedKeyword name -> [None, Error.UnexpectedKeyword { callee; name }]
+  | MultipleKeyword name -> [None, Error.UnexpectedKeyword { callee; name }]
 
 
 let rec unpack_callable_and_self_argument ~signature_select ~global_resolution input =
@@ -14333,7 +14334,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
               (* Log.dump "(%a) %a ====> %b" Reference.pp name Reference.pp reference is_valid_none; *)
 
-              if is_valid_none (* || true *) (* For Baseline => must true *)
+              if is_valid_none (* || true  *)(* For Baseline => must true *)
               then Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
               else resolution
             | _ ->
@@ -14420,12 +14421,12 @@ let exit_state ~resolution (module Context : OurContext) =
             Log.dump "HMM >>> %a\n" OurDomain.ArgTypes.pp arg_types;
           ); *)
 
-        (* if String.is_substring (Reference.show name) ~substring:"__setitem__"
+        (* if String.is_substring (Reference.show name) ~substring:"trig_substitution_rule"
         then (
           Log.dump "START %a" Resolution.pp resolution;
           Log.dump "HMM %a" OurDomain.ArgTypes.pp arg_types;
-        );
- *)
+        ); *)
+
         (* Log.dump "NAME %a" Reference.pp name;
         Log.dump "START %a" Resolution.pp resolution; *)
       (* let timer = Timer.start () in *)

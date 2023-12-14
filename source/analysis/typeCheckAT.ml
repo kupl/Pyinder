@@ -217,6 +217,7 @@ let errors_from_not_found
           error_and_location_from_typed_dictionary_mismatch mismatch)
       |> List.map ~f:(fun (location, error) -> Some location, error)
   | UnexpectedKeyword name -> [None, Error.UnexpectedKeyword { callee; name }]
+  | MultipleKeyword name -> [None, Error.UnexpectedKeyword { callee; name }]
 
 
 let rec unpack_callable_and_self_argument ~signature_select ~global_resolution input =

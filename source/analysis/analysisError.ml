@@ -5329,10 +5329,11 @@ let filter_type_error errors =
       | UndefinedAttribute _ | UndefinedAttributeWithReference _ 
       | IncompatibleAttributeType _
       | NotCallable _ | NotCallableWithExpression _
-      | TooManyArguments _ | MissingArgument _ 
+      | TooManyArguments _ | MissingArgument _  | UnexpectedKeyword _ 
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
+       -> false
       | UndefinedImport _ 
       | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
       | IncompatibleReturnType _
@@ -5340,7 +5341,9 @@ let filter_type_error errors =
       | InvalidType _
       | InconsistentOverride _
       | IncompleteType _ 
-        -> false
+        -> 
+          
+          false
       | _ -> false
       )
   )

@@ -134,6 +134,11 @@ let create ~configuration:({ Configuration.Analysis.excludes; _ } as configurati
   let is_excluded =
     List.exists excludes ~f:(fun regexp -> Str.string_match regexp absolute_path 0)
   in
+
+  let is_excluded =
+    is_excluded || (String.is_substring ~substring:"benchmarks" absolute_path) || (String.is_substring ~substring:"miscellaneous" absolute_path)
+  in
+
   let extension = Configuration.Analysis.find_extension configuration path in
   match is_excluded, extension with
   | true, _ -> None

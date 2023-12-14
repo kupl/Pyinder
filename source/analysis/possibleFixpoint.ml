@@ -227,6 +227,8 @@ module Make (State : PossibleState) = struct
           Log.dump "%a" Cfg.Node.pp node;
         ); *)
 
+        (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node); *)
+
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
       let postcondition = transition node_id precondition (Cfg.Node.statements node) in
 
@@ -253,8 +255,8 @@ module Make (State : PossibleState) = struct
         Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
           ); *)
 
-          (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
-          Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+          
+          (* Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
           Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition); *)
       (*
       if Int.equal 3 (Cfg.Node.id node)

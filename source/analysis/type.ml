@@ -1953,6 +1953,10 @@ let is_none = function
   | NoneType -> true
   | _ -> false
 
+let is_bool = function
+  | Primitive "bool" -> true
+  | Literal (Boolean _ ) -> true
+  | _ -> false
 
 let is_noreturn = function
   | Primitive "typing.NoReturn" -> true
@@ -2333,6 +2337,8 @@ let bool = Primitive "bool"
 let bytes = Primitive "bytes"
 
 let complex = Primitive "complex"
+
+let primitive s = Primitive s
 
 let dictionary ~key ~value = Parametric { name = "dict"; parameters = [Single key; Single value;]}
 
@@ -7701,7 +7707,7 @@ let narrow_union_inner ~join ~less_or_equal t =
       then List.nth_exn filter_unknown_loose_t_list 0 
       else if check_length check_loose_t_list > 4
       then (
-        Top
+        Any
       )
       else
         result
@@ -7733,7 +7739,18 @@ let narrow_union ~join ~less_or_equal annotation =
   snd (InstantiateTransform.visit () annotation)
 
 let narrow_return_type t =
-  
+  let make_return t_list none_unknown =
+    let cand = 
+      List.fold t_list ~init:none_unknown ~f:(fun acc t ->
+        if is_bool t then (t::acc)
+        else acc  
+      )
+    in
+    if List.is_empty cand then Unknown 
+    else if List.exists cand ~f:is_unknown
+    then Union cand
+    else Union (Unknown::cand)
+  in
 
   match t with
   | Union t_list ->
@@ -7748,10 +7765,12 @@ let narrow_return_type t =
     | [], _::_ -> 
       let cls, non_cls = List.partition_tf recursive ~f:(fun t -> is_primitive t && String.is_substring (show t) ~substring:".") in
       if (List.length cls > 0) && (List.length non_cls > 0)
-      then Any
+      then (
+        make_return non_cls none_unknown
+      )
       else t
     | [], [] -> Unknown
-    | _ -> Any
+    | _ -> make_return others none_unknown
     )
   | _ -> t
 

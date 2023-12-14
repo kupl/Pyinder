@@ -67,6 +67,7 @@ type reason =
   | TypedDictionaryInitializationError of
       WeakenMutableLiterals.typed_dictionary_mismatch Node.t list
   | UnexpectedKeyword of Identifier.t
+  | MultipleKeyword of Identifier.t
 [@@deriving show, sexp, compare]
 
 (* TODO(T108707096): Implement location-insensitive compare for the remaining branches containing

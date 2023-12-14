@@ -6,6 +6,8 @@ module T = struct
 
   let empty = Location.Map.empty
 
+  let length = Location.Map.length
+
   let join left right = 
     Location.Map.merge left right ~f:(fun ~key:_ -> function
       | `Left callee | `Right callee -> Some callee

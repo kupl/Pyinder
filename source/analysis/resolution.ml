@@ -210,7 +210,21 @@ let get_local ?(global_fallback = true) ~reference { annotation_store; global_re
     | Some _ as result -> result
     | None when global_fallback ->
         let global = GlobalResolution.global global_resolution in
-        Reference.delocalize reference |> global >>| fun { annotation; _ } -> annotation
+        let annotation = 
+          Reference.delocalize reference |> global >>| fun { annotation; _ } -> annotation
+        in
+
+        (match annotation with
+        | Some anno when Type.is_any (Annotation.annotation anno) ->
+          let file = Reference.delocalize reference |> Reference.first in
+          let var = Reference.delocalize reference |> Reference.last in
+          let t = OurDomain.OurSummary.get_module_var_type !OurDomain.our_model (Reference.create file) var  in 
+          if Type.is_unknown t then
+            annotation
+          else
+            Some (Annotation.create_mutable t)
+        | _ -> annotation
+        )
     | None -> None
   )
 

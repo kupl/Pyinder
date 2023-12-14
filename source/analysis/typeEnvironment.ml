@@ -277,13 +277,40 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
   let filter_test_defines =
     if String.equal mode "check_preprocess" || (String.equal mode "inference" && !OurDomain.is_first) then
-      all_defines
+    (
+      List.filter all_defines ~f:(fun name ->
+        (not (String.is_substring ~substring:"sympy." (Reference.show name))) || 
+        (not (String.is_substring ~substring:"Lib." (Reference.show name))) ||
+        not (Reference.is_test name)
+      )
+    )
+      
     else
       List.filter all_defines ~f:(fun name ->
         let _ = name in
         not (Reference.is_test name)
       )
       
+  in
+
+  let filter_test_defines =
+    List.filter filter_test_defines ~f:(fun name ->
+      not ((String.is_substring ~substring:"sympy." (Reference.show name)) && (
+        (String.is_substring ~substring:"miscellaneous" (Reference.show name)) ||
+        (String.is_substring ~substring:"benchmarks" (Reference.show name)) ||
+        (String.is_substring ~substring:"rubi" (Reference.show name)) ||
+        (String.is_substring ~substring:"hyperexpand" (Reference.show name))
+      ))
+    )
+  in
+
+  let filter_test_defines =
+    List.filter filter_test_defines ~f:(fun name ->
+      not ((String.is_substring ~substring:"Lib." (Reference.show name)) && (
+        (String.is_substring ~substring:"etree" (Reference.show name)) ||
+        (Reference.is_test name)
+      ))
+    )
   in
 
   (* List.iter filter_test_defines ~f:(fun t -> Log.dump "GO %a" Reference.pp t); *)
@@ -497,8 +524,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
 
     (* For Baseline => update all *)
-    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model;
- *)
+    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model; *)
+
     
     
     let _ = OurDomain.OurSummary.update_default_value in

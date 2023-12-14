@@ -1513,7 +1513,10 @@ module FunctionTableResolution = struct
               |> Option.value ~default:CallChain.empty
             in
 
-            acc@(callee::(bfs_call_chain ~skip_set:after_skip_set (n+1) callee_inner_call_chain))
+            if CallChain.length callee_inner_call_chain > 100000 then
+              acc
+            else
+              acc@(callee::(bfs_call_chain ~skip_set:after_skip_set (n+1) callee_inner_call_chain))
           )
         )
       )

@@ -475,6 +475,8 @@ val bytes : t
 
 val complex : t
 
+val primitive : string -> t
+
 val dictionary : key:t -> value:t -> t
 
 val our_typed_dictionary : key:t -> value:t -> typed_dict:t Record.OurTypedDictionary.record -> t

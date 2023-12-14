@@ -8,9 +8,9 @@ exception NotEqualException;;
 *)
 
 let on_any = ref true
-let on_dataflow = ref false
+let on_dataflow = ref true
 let on_class_var = ref true
-let on_attribute = ref true
+let on_attribute = ref false
 
 
 let debug = ref false
@@ -125,6 +125,11 @@ end
 module ReferenceMap = struct
   include Map.Make (Reference)
 
+  let find_by_suffix t key =
+    fold t ~init:None ~f:(fun ~key:ref ~data acc ->
+      if String.equal (Reference.last ref) key then Some data
+      else acc
+    )
   let update_default_value prev next =
     merge prev next ~f:(fun ~key:_ data ->
       match data with
@@ -1160,7 +1165,8 @@ module Signatures = struct
     match return_info_list with
     | [] -> Type.Unknown
     | { return_var_type; _ }::_ ->
-      let typ = ReferenceMap.find return_var_type (Reference.create attribute) in
+
+      let typ = ReferenceMap.find_by_suffix return_var_type attribute in
       (match typ with
       | Some t -> t
       | _ -> Type.Unknown
@@ -1920,8 +1926,14 @@ module FunctionTable = struct
         >>| FunctionHash.find_exn t
         |> Option.value ~default:FunctionSummary.empty
       in
+
       (* let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in *)
-      FunctionSummary.get_return_type func_summary arg_types
+      let x = FunctionSummary.get_return_type func_summary arg_types in
+
+      (* if String.is_substring (Reference.show name) ~substring:"solveset" then
+        Log.dump "%a ==> %a" Reference.pp name Type.pp x; *)
+
+      x
     | _ -> Type.Unknown
 
   let get_functions t prefix =
@@ -2237,7 +2249,6 @@ module OurSummary = struct
   let get_module_var_type { function_table; _ } func_prefix attribute =
     let func_name = Reference.combine func_prefix (Reference.create "$toplevel") in
     FunctionTable.get_module_var_type function_table func_name attribute
-
 
   let get_analysis_set { class_table; function_table; _ } =
     let get_functions =

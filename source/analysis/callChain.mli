@@ -4,6 +4,8 @@ type t = Reference.t Location.Map.t [@@deriving compare, sexp, equal]
 
 val empty : t
 
+val length : t -> int
+
 val join : t -> t -> t
 
 val set_callee : location:Location.t -> callee:Reference.t -> t -> t

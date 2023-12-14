@@ -272,6 +272,8 @@ let attribute_from_class_name
         | None -> None)
   in
   try
+    (* Log.dump "START"; *)
+    let x =
     AttributeResolution.ReadOnly.attribute
       ~instantiated
       ~transitive
@@ -282,6 +284,9 @@ let attribute_from_class_name
       (attribute_resolution resolution)
       ~attribute_name:name
       class_name
+    in
+    (* Log.dump "END?"; *)
+    x
     |> access
   with
   | ClassHierarchy.Untracked untracked_type ->
@@ -505,6 +510,8 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       Log.dump "Origin Signature Time %.3f" sig_time;
     ); *)
 
+  (* Log.dump "OK HERE"; *)
+
   x
   |> (function
     | SignatureSelectionTypes.Found { selected_return_annotation } ->
@@ -562,7 +569,9 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
         );
         SignatureSelectionTypes.Found { selected_return_annotation }
       )
-    | t -> t
+    | t -> 
+      (* Log.dump "???"; *)
+      t
   )
 
 
