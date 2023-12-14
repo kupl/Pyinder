@@ -395,7 +395,7 @@ module ClassSummaryResolution = struct
                 let t = Type.filter_unknown t in
                 let typ = Type.filter_unknown typ in
                 Type.can_union t ~f:(Type.equal typ) || Type.can_union typ ~f:(Type.equal t)
-              )
+              ) && not (Reference.Set.is_empty funcs)
             in
 
             if check_flag then

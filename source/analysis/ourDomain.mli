@@ -618,6 +618,8 @@ module OurSummary : sig
   val has_analysis : t -> bool
 
   val get_functions_of_class : t -> Reference.t list list
+
+  val add_implicit_to_join : t -> Reference.t -> Reference.t -> Type.t -> unit
 end
 
 val global_summary : string

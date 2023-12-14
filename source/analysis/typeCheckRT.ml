@@ -1547,11 +1547,13 @@ module TypeCheckRT (Context : OurContext) = struct
                       
                       OurTypeSet.OurSummaryResolution.get_type_of_class_attribute ~type_join ~less_or_equal final_model (Type.class_name class_data.instantiated) attribute_name
                       |> (fun t ->
-                      (*  Log.dump "%s, %a => %a" attribute_name Reference.pp (Type.class_name class_data.instantiated) Type.pp t; *)
+                       
                         match t with
-                        | None -> annotation
+                        | None -> 
+                          (* Log.dump "%s, %a => %a" attribute_name Reference.pp (Type.class_name class_data.instantiated) Annotation.pp annotation; *)
+                          annotation
                         | Some t -> 
-                          
+                          (* Log.dump "%s, %a => %a" attribute_name Reference.pp (Type.class_name class_data.instantiated) Type.pp t; *)
                          (*  if String.is_substring (Reference.show define_name) ~substring:"luigi.contrib.redshift.S3CopyToTable.run"
                             then (
                               Log.dump "FIND %s.%s ==> %a" (Expression.show base) name Type.pp t;
@@ -5114,7 +5116,7 @@ module TypeCheckRT (Context : OurContext) = struct
         | Some name_reference ->
           let resolved = forward_reference ~resolution ~errors:[] name_reference in
           (* Log.dump "Reference %a => %a" Reference.pp name_reference Type.pp resolved.resolved; *)
-          
+          let resolved =
           (match resolved.resolved with
           | Type.Any ->
             let final_model = !OurDomain.our_model in
@@ -5129,8 +5131,9 @@ module TypeCheckRT (Context : OurContext) = struct
             
           | _ -> resolved
           )
-          (* Log.dump "%a.%s >>>> %a" Expression.pp base attribute Type.pp resolved.resolved;
-          resolved *)
+          in
+          (* Log.dump "%a.%s >>>> %a" Expression.pp base attribute Type.pp resolved.resolved; *)
+          resolved
         | None ->
 
           (* let tt =
@@ -8932,7 +8935,9 @@ module TypeCheckRT (Context : OurContext) = struct
         (* Check that variance isn't widened on inheritence. Don't check for other errors. Nested
             classes and functions are analyzed separately. *)
         (* Class 에 모든 define body가 담겨 있음 *)
-        if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then
+        if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ()) then (
+          (* List.iter class_statement.top_level_unbound_names ~f:(fun { name; _ } -> Log.dump "HMM %s" name); *)
+
           (*let { StatementDefine.Signature.name; _ } = define_signature in*)
           List.iter class_statement.body ~f:(fun ({ Node.value; _ } as statement) -> 
             match value with
@@ -9005,6 +9010,7 @@ module TypeCheckRT (Context : OurContext) = struct
               ()
             | _ -> ()
           )
+        )
         else ();
 
 
@@ -9085,7 +9091,7 @@ module TypeCheckRT (Context : OurContext) = struct
               "bool";
             ]
           in
-          let rec get_attributes_of_class ~our_model ~done_attrs ~visit_set name = 
+          let rec get_attributes_of_class ?(is_first=false) ~our_model ~done_attrs ~visit_set name = 
             
             let class_summary = GlobalResolution.class_summary global_resolution (Type.Primitive (Reference.show name)) in
             let visit_set = Reference.Set.add visit_set name in
@@ -9097,6 +9103,34 @@ module TypeCheckRT (Context : OurContext) = struct
               ->
               
               let class_attrs = ClassSummary.attributes class_summary in
+
+              if not (Reference.is_test name) then (
+                let only_explicit =
+                  Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name=attr_name; }; _ } only_explicit -> 
+                    match kind with
+                    | Simple { values; _ } ->
+                      if List.length values = 1 then (
+                        let { ClassSummary.Attribute.value; origin; } = List.hd_exn values in
+                        match origin, Node.value value with
+                        | Explicit, Expression.Constant _ ->
+                          let t = Resolution.resolve_expression_to_type resolution value in
+                          (match t with
+                          | Type.Unknown -> only_explicit
+                          | _ -> Identifier.Map.set ~key:attr_name ~data:t only_explicit
+                          )
+                        | _ -> only_explicit
+                      ) else (
+                        only_explicit
+                      )
+                    | _ -> only_explicit
+                  ) class_attrs Identifier.Map.empty
+                in
+
+                Identifier.Map.iteri only_explicit ~f:(fun ~key ~data ->
+                  (* Log.dump "%s => %a" key Type.pp data; *)
+                  OurDomain.OurSummary.add_implicit_to_join our_model class_statement.name (Reference.create key) data
+                );
+              );
             
               let done_attrs = Identifier.SerializableMap.fold (fun _ { Node.value={ClassSummary.Attribute.kind; name=attr_name; }; _ } done_attrs -> 
 
@@ -9104,12 +9138,16 @@ module TypeCheckRT (Context : OurContext) = struct
 
                 (match kind with
                 | _ when Identifier.Set.exists done_attrs ~f:(fun done_attr -> String.equal done_attr attr_name) -> ()
-                | Simple { values; _ } ->
+                | Simple { values; implicit; _ } ->
+                  let _ = implicit, is_first in
+
+
+
                   let is_column =
                     List.exists values ~f:(fun { value; _ } ->
                       (* if String.is_substring ~substring:"State" (Reference.show name) then
                         Log.dump "%a TEST %s ==> %a" Reference.pp name attr_name Expression.pp value; *)
-
+                        (* Log.dump "%a TEST %s ==> %a (%b, %b, %b, %b, %b)" Reference.pp name attr_name Expression.pp value toplevel frozen primitive implicit nested_class; *)
                       match Node.value value with
                       | Expression.Call { callee = { Node.value = Name n; _ }; _ } when is_simple_name n ->
                         let name_reference = name_to_reference n in
@@ -9140,8 +9178,9 @@ module TypeCheckRT (Context : OurContext) = struct
                   in
 
                   if is_column || is_luigi_param then ()
-                  else
+                  else (
                     OurDomain.OurSummary.add_class_attribute our_model class_statement.name attr_name
+                  )
                 | Property _ ->
                   OurDomain.OurSummary.add_class_property our_model class_statement.name attr_name
                 | Method { signatures; _ } ->
@@ -9179,7 +9218,7 @@ module TypeCheckRT (Context : OurContext) = struct
             )
           in
           let our_model = !Context.our_summary in
-          get_attributes_of_class ~our_model ~done_attrs:Identifier.Set.empty ~visit_set:Reference.Set.empty class_statement.name;
+          get_attributes_of_class ~is_first:true ~our_model ~done_attrs:Identifier.Set.empty ~visit_set:Reference.Set.empty class_statement.name;
 
           (* if String.is_substring (Reference.show class_statement.name) ~substring:"pandas.core.indexes.multi.MultiIndex"
             then (

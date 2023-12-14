@@ -14334,7 +14334,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
               (* Log.dump "(%a) %a ====> %b" Reference.pp name Reference.pp reference is_valid_none; *)
 
-              if is_valid_none (* || true  *)(* For Baseline => must true *)
+              if is_valid_none (* || true *) (* For Baseline => must true *)
               then Resolution.refine_local resolution ~temporary:true ~reference ~annotation:(Annotation.create_mutable (Type.union [Type.Unknown; value_resolved]))
               else resolution
             | _ ->

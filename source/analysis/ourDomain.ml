@@ -10,7 +10,7 @@ exception NotEqualException;;
 let on_any = ref true
 let on_dataflow = ref true
 let on_class_var = ref true
-let on_attribute = ref false
+let on_attribute = ref true
 
 
 let debug = ref false
@@ -604,6 +604,11 @@ module ClassSummary = struct
     (* should_analysis=true; *)
   }
 
+  let add_implicit_to_join ({ join_temp_class_var_type; _ } as t) reference typ =
+    let empty_typefuncs = TypeFromFuncs.empty in
+    let typefuncs = TypeFromFuncs.set ~key:typ ~data:Reference.Set.empty empty_typefuncs in
+    { t with join_temp_class_var_type=ReferenceMap.set join_temp_class_var_type ~key:reference ~data:typefuncs; }
+
   (* let should_analysis { should_analysis; _ } = should_analysis *)
   let get_class_var_type { class_var_type; _ } = class_var_type
 
@@ -774,6 +779,11 @@ module ClassTable = struct
   let add ~class_name ~data ~f t =
     let class_info = find_default t class_name in
     ClassHash.set t ~key:class_name ~data:(f class_info data)
+
+  let add_implicit_to_join t class_name reference typ =
+    let class_info = find_default t class_name in
+    let class_info = ClassSummary.add_implicit_to_join class_info reference typ in
+    ClassHash.set t ~key:class_name ~data:class_info
 
   let add_attribute t class_name attr = add t ~class_name ~data:attr ~f:ClassSummary.add_attribute
 
@@ -2296,6 +2306,9 @@ module OurSummary = struct
 
   let has_analysis { class_table; function_table; _ } =
     ClassTable.has_analysis class_table && FunctionTable.has_analysis function_table
+
+  let add_implicit_to_join { class_table; _ } =
+    ClassTable.add_implicit_to_join class_table
 
 end
 
