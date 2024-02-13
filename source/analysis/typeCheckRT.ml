@@ -3099,6 +3099,8 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let { StatementDefine.Signature.name; _ } = define_signature in
 
+      (* Log.dump "HMM"; *)
+
       let resolution =
         if Reference.is_test name then
           resolution
@@ -3332,6 +3334,8 @@ module TypeCheckRT (Context : OurContext) = struct
                       (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then *)
                         let { StatementDefine.Signature.name; _ } = define_signature in
                         let our_summary = !Context.our_summary in
+
+                        (* Log.dump "??? %a" Reference.pp reference; *)
 
                         if !OurDomain.on_dataflow then
                           OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) ~caller_name:name our_summary reference arg_types;

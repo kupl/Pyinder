@@ -149,11 +149,11 @@ let less_or_equal resolution = full_order resolution |> TypeOrder.always_less_or
 let join resolution left right = 
   let order = full_order resolution in
   TypeOrder.join order left right
-  |> Type.narrow_iterable ~max_depth:3
+  (*|> Type.narrow_iterable ~max_depth:3*)
 
-let meet resolution = full_order resolution |> TypeOrder.meet
+let meet resolution = full_order resolution |> TypeOrder.meet |> Type.narrow_iterable ~max_depth:3
 
-let widen resolution = full_order resolution |> TypeOrder.widen
+let widen resolution = full_order resolution |> TypeOrder.widen |> Type.narrow_iterable ~max_depth:3
 
 let types_are_orderable resolution type0 type1 =
   less_or_equal resolution ~left:type0 ~right:type1

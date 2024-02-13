@@ -627,7 +627,7 @@ module OrderImplementation = struct
         Log.dump "JOIN %.3f %.3f\nLeft : %a =>\n%a\nRight : %a =>\n%a\n" tt0 total_time Type.pp origin_left Type.pp left Type.pp origin_right Type.pp right;
       );  *)
 
-      x
+      Type.narrow_union ~join:(join order) ~less_or_equal:(always_less_or_equal order) x
 
 
 
@@ -687,7 +687,7 @@ module OrderImplementation = struct
       in
       parameters
       >>| fun parameters -> { annotation = meet order left_annotation right_annotation; parameters }
-
+      
 
     and meet ({ is_protocol; assumptions = { protocol_assumptions; _ }; _ } as order) left right =
       let left, right =
