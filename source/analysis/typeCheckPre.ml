@@ -17,6 +17,7 @@ let preprocess ~our_model ~global_resolution define =
     define
   in
 
+  (* let timer = Timer.start () in *)
   
   let final_model = !OurDomain.our_model in
 
@@ -66,6 +67,7 @@ let preprocess ~our_model ~global_resolution define =
       let total_usage_attributes = 
         AttributeAnalysis.AttributeStorage.join parameter_usage_attributes parent_usage_attributes 
         |>  AttributeAnalysis.AttributeStorage.filter_single_class_param ~class_param
+        |> AttributeAnalysis.AttributeStorage.filter_higher_items
       in
 
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
@@ -74,15 +76,23 @@ let preprocess ~our_model ~global_resolution define =
       (* if String.is_substring (Reference.show name) ~substring:"foo" then
         Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
  *)
+      (* let info_time = Timer.stop_in_sec timer in *)
+
       let x =
       OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name total_usage_attributes
       in
 
+      (* let infer_time = Timer.stop_in_sec timer in *)
+
+      (* if Float.(>.) infer_time 0.1 then
+        Log.dump "Infer time : %.3f" info_time infer_time; *)
 
       x
     | _ -> OurTypeSet.OurSummaryResolution.find_class_of_attributes ~successors final_model name parameter_usage_attributes
     )
   in  
+
+  
 
   (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
     (
@@ -90,6 +100,9 @@ let preprocess ~our_model ~global_resolution define =
         Log.dump "Expression %a ==> %a" Expression.pp key Reference.pp data;  
       )
     ); *)
+
+  (* if (LocInsensitiveExpMap.length func_attrs) > 0 then
+    Log.dump "ATTR NUM >>> %i" (LocInsensitiveExpMap.length func_attrs); *)
 
   LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key:({ Node.value; _ } as expression) ~data ->
     match value with

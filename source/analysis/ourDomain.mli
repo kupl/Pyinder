@@ -670,7 +670,7 @@ val select_our_model : Reference.t -> OurSummary.t
 
 val is_first : bool ref
 
-
+val all_defines : Reference.t list ref
 
 (* val deubg : bool ref *)
 

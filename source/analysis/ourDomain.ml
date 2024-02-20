@@ -1902,12 +1902,12 @@ module FunctionTable = struct
   let get_callable ~join ~less_or_equal ~successors t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
-      let class_name = Reference.drop_last name in 
+      (* let class_name = Reference.drop_last name in 
       let func_name = Reference.last name in
       let successors = 
         successors (Reference.show class_name) 
         |> List.map ~f:(fun s -> Reference.create ~prefix:(Reference.create s) func_name ) 
-      in
+      in *)
       let _ = successors in
 
       let func_summary = 
@@ -1923,12 +1923,12 @@ module FunctionTable = struct
   let get_callable_return_type ~successors t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
-      let class_name = Reference.drop_last name in 
+      (* let class_name = Reference.drop_last name in 
       let func_name = Reference.last name in
       let successors = 
         successors (Reference.show class_name) 
         |> List.map ~f:(fun s -> Reference.create ~prefix:(Reference.create s) func_name ) 
-      in
+      in *)
       let _ = successors in
 
       let func_summary = 
@@ -1980,7 +1980,7 @@ module FunctionTable = struct
   let change_analysis_of_argtypes t callers =
     ReferenceMap.iteri callers ~f:(fun ~key ~data -> 
       match FunctionHash.find t key with
-      | Some func_summary when not (String.is_suffix (Reference.show key) ~suffix:"__init__") -> 
+      | Some func_summary when not (Reference.is_initialize key) -> 
         (* Log.dump "%a ..." Reference.pp key; *)
         (* Log.dump "%a ..." Reference.pp key;
         ArgTypesOptSet.iter data ~f:(fun arg_types -> 
@@ -2000,7 +2000,7 @@ module FunctionTable = struct
 
   let change_analysis_of_func t func_name =
     match FunctionHash.find t func_name with
-    | Some v when not (String.is_suffix (Reference.show func_name) ~suffix:"__init__") -> 
+    | Some v when not (Reference.is_initialize func_name) -> 
       (* Log.dump "%a ..." Reference.pp func_name; *)
       FunctionHash.set ~key:func_name ~data:(FunctionSummary.change_analysis v) t
     | _ -> ()
@@ -2056,7 +2056,7 @@ module OurSummary = struct
 
 
   let update_check_preprocess ~define ~type_join ~prev next =
-    if (String.is_suffix (Reference.show define) ~suffix:"__init__")
+    if (Reference.is_initialize define)
     then ( 
       ClassTable.join ~type_join prev.class_table next.class_table;
       ClassTable.set_all_class_var_type_to_empty next.class_table;
@@ -2554,3 +2554,5 @@ let is_first = ref true
     in
     { func_summary; class_summary } 
 end *)
+
+let all_defines = ref []

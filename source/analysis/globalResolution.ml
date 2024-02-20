@@ -151,9 +151,12 @@ let join resolution left right =
   TypeOrder.join order left right
   (*|> Type.narrow_iterable ~max_depth:3*)
 
-let meet resolution = full_order resolution |> TypeOrder.meet |> Type.narrow_iterable ~max_depth:3
+let meet resolution left right = 
+  let order = full_order resolution in 
+  TypeOrder.meet order left right |> Type.narrow_iterable ~max_depth:3
 
-let widen resolution = full_order resolution |> TypeOrder.widen |> Type.narrow_iterable ~max_depth:3
+let widen resolution = 
+  full_order resolution |> TypeOrder.widen
 
 let types_are_orderable resolution type0 type1 =
   less_or_equal resolution ~left:type0 ~right:type1
@@ -505,8 +508,8 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
   let x =
     AttributeResolution.ReadOnly.signature_select ?dependency ~resolve_with_locals ~arguments ~callable ~self_argument (attribute_resolution resolution) 
   in
-  (* let sig_time = Timer.stop_in_sec timer in
-    if Float.(>.) sig_time 0.5 then (
+  (* let sig_time = Timer.stop_in_sec timer in *)
+    (* if Float.(>.) sig_time 0.5 then (
       Log.dump "Origin Signature Time %.3f" sig_time;
     ); *)
 
@@ -515,7 +518,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
   x
   |> (function
     | SignatureSelectionTypes.Found { selected_return_annotation } ->
-      let timer = Timer.start () in
+      (* let timer = Timer.start () in *)
       (match selected_return_annotation with
       | Type.Callable t -> (* TODO : Modify Resolution of callable *)
       (* Log.dump "Before ... %a" Type.pp (Callable t); *)
@@ -526,10 +529,11 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal ~successors:(successors ~resolution) final_model arg_types t in
       (* Log.dump "After ... %a" Type.pp (Callable callable); *)
-      let total_time = Timer.stop_in_sec timer in
-      if Float.(>.) total_time 1.0 then (
-        Log.dump "Signature Time %.3f" total_time;
-      );
+      (* let total_time = Timer.stop_in_sec timer in
+      if Float.(>.) total_time 0.05 then (
+        (* Log.dump "%a +++ %a ===> %a" Type.pp return_type Type.pp prev_type Type.pp selected_return_annotation; *)
+        Log.dump "Signature Time %.3f => %.3f" sig_time total_time;
+      ); *)
 
       SignatureSelectionTypes.Found { selected_return_annotation = (Callable callable) }
       | Parametric { name = "BoundMethod"; parameters = [Single (Callable t); other]} ->
@@ -540,10 +544,11 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
       let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
       let callable = OurDomain.OurSummary.get_callable ~join ~less_or_equal ~successors:(successors ~resolution) final_model arg_types t in
       (* Log.dump "After... %a" Type.pp (Callable callable); *)
-      let total_time = Timer.stop_in_sec timer in
-      if Float.(>.) total_time 1.0 then (
-        Log.dump "Signature Time %.3f" total_time;
-      );
+      (* let total_time = Timer.stop_in_sec timer in *)
+      (* if Float.(>.) total_time 0.05 then (
+        (* Log.dump "%a +++ %a ===> %a" Type.pp return_type Type.pp prev_type Type.pp selected_return_annotation; *)
+        Log.dump "BoundMethod Time %.3f => %.3f" sig_time total_time;
+      ); *)
       SignatureSelectionTypes.Found { selected_return_annotation = (Parametric { name = "BoundMethod"; parameters = [Single (Callable callable); other]}) }
       | _ -> 
         let type_join = join resolution in
@@ -552,6 +557,8 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
         let return_type = OurDomain.OurSummary.get_callable_return_type ~successors:(successors ~resolution) final_model arg_types callable in
 
         (* Log.dump "Before %a" Type.pp selected_return_annotation; *)
+
+        (* let prev_type = selected_return_annotation in *)
 
         let selected_return_annotation =
           (match return_type, selected_return_annotation with
@@ -563,13 +570,21 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
 
         (* Log.dump "After %a" Type.pp selected_return_annotation; *)
 
-        let total_time = Timer.stop_in_sec timer in
-        if Float.(>.) total_time 1.0 then (
-          Log.dump "Select Time %.3f" total_time;
-        );
+        (* let total_time = Timer.stop_in_sec timer in
+        if Float.(>.) total_time 0.1 then (
+          (* Log.dump "%a +++ %a ===> %a" Type.pp return_type Type.pp prev_type Type.pp selected_return_annotation; *)
+          match callable.kind with
+          | Named s -> Log.dump "Select Time (%a) %.3f => %.3f (%a => %a)" Reference.pp s sig_time total_time Type.pp prev_type Type.pp selected_return_annotation;
+          | _ -> Log.dump "Select Time (Anonymous) %.3f => %.3f (%a => %a)" sig_time total_time Type.pp prev_type Type.pp selected_return_annotation;
+        ); *)
         SignatureSelectionTypes.Found { selected_return_annotation }
       )
     | t -> 
+      (* let total_time = Timer.stop_in_sec timer in
+        if Float.(>.) total_time 0.1 then (
+          (* Log.dump "%a +++ %a ===> %a" Type.pp return_type Type.pp prev_type Type.pp selected_return_annotation; *)
+           Log.dump "NotFound Time %.3f => %.3f" sig_time total_time
+        ); *)
       (* Log.dump "???"; *)
       t
   )

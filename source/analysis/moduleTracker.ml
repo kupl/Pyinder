@@ -506,6 +506,7 @@ module Base = struct
     let get_raw_code = load_raw_code ~configuration in
     let is_updatable = configuration_allows_update configuration in
     Statistics.performance ~name:"module tracker built" ~timer ~phase_name:"Module tracking" ();
+    Log.dump "Module tracker built => %.2f" (Timer.stop_in_sec timer);
     { layouts; controls; is_updatable; get_raw_code }
 
 

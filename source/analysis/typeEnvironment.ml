@@ -24,6 +24,7 @@ end
 
 
 let produce_check_results global_environment define_info ~dependency =
+  let timer = Timer.start () in
   let define_name = define_info in 
   (* let _ = our_model in  *)
   (* Log.dump "Start %a" Reference.pp define_name; *)
@@ -54,7 +55,7 @@ let produce_check_results global_environment define_info ~dependency =
   
   let mode = OurDomain.load_mode () in
 
-
+  let init_time = Timer.stop_in_sec timer in
 
   let x = 
     if String.equal mode "preprocess" then (
@@ -72,6 +73,15 @@ let produce_check_results global_environment define_info ~dependency =
       ~entry_arg_types:OurDomain.ArgTypes.empty
       define_name
   in
+
+  let analysis_time = Timer.stop_in_sec timer in
+
+  let _ = init_time, analysis_time in 
+
+  (* if Float.(>.) analysis_time 0.5 then (
+    Log.dump ">>> %a (%.3f => %.3f)" Reference.pp define_name init_time analysis_time;
+    (* Log.dump "START \n%a\nEnd" OurDomain.OurSummary.pp !Context.our_summary; *)
+  ); *)
 
   (* Log.dump "End %a" Reference.pp define_name; *)
   (*
@@ -221,6 +231,22 @@ let populate_for_definitions ~scheduler environment defines =
       scheduler
       ~policy:
         (Scheduler.Policy.fixed_chunk_size
+           ~minimum_chunk_size:100
+           ~minimum_chunks_per_worker:2
+           ~preferred_chunk_size:5000
+           ())
+      ~initial:0
+      ~map
+      ~reduce
+      ~inputs:defines
+      ()
+  in
+
+  (* let _ =
+    SharedMemoryKeys.DependencyKey.Registry.collected_map_reduce
+      scheduler
+      ~policy:
+        (Scheduler.Policy.fixed_chunk_size
            ~minimum_chunk_size:10
            ~minimum_chunks_per_worker:2
            ~preferred_chunk_size:100
@@ -230,42 +256,60 @@ let populate_for_definitions ~scheduler environment defines =
       ~reduce
       ~inputs:defines
       ()
-  in
+  in *)
 
   Statistics.performance ~name:"check_TypeCheck" ~phase_name:"Type check" ~timer ()
 
 
 let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) environment qualifiers =
-  Profiling.track_shared_memory_usage ~name:"Before legacy type check" ();
-  let all_defines =
-    let unannotated_global_environment =
-      global_environment environment
-      |> AnnotatedGlobalEnvironment.read_only
-      |> AnnotatedGlobalEnvironment.ReadOnly.unannotated_global_environment
-    in
 
-    let map _ qualifiers =
-      List.concat_map qualifiers ~f:(fun qualifier ->
-          UnannotatedGlobalEnvironment.ReadOnly.get_define_names
-            unannotated_global_environment
-            qualifier)
-    in
-    Scheduler.map_reduce
-      scheduler
-      ~policy:
-        (Scheduler.Policy.fixed_chunk_count
-           ~minimum_chunks_per_worker:1
-           ~minimum_chunk_size:100
-           ~preferred_chunks_per_worker:5
-           ())
-      ~initial:[]
-      ~map
-      ~reduce:List.append
-      ~inputs:qualifiers
-      ()
-  in
-  (* List.iter qualifiers ~f:(fun q -> Log.dump "Qual : %a" Reference.pp q); *)
+  let timer = Timer.start () in
+
+  Profiling.track_shared_memory_usage ~name:"Before legacy type check" ();
   let our_model = !OurDomain.our_model in
+  let all_defines = !OurDomain.all_defines in
+
+  let all_defines =
+    if List.is_empty all_defines then (
+      let all_defines = 
+        let unannotated_global_environment =
+          global_environment environment
+          |> AnnotatedGlobalEnvironment.read_only
+          |> AnnotatedGlobalEnvironment.ReadOnly.unannotated_global_environment
+        in
+
+        let map _ qualifiers =
+          List.concat_map qualifiers ~f:(fun qualifier ->
+              UnannotatedGlobalEnvironment.ReadOnly.get_define_names
+                unannotated_global_environment
+                qualifier)
+        in
+        Scheduler.map_reduce
+          scheduler
+          ~policy:
+            (Scheduler.Policy.fixed_chunk_count
+              ~minimum_chunks_per_worker:1
+              ~minimum_chunk_size:100
+              ~preferred_chunks_per_worker:5
+              ())
+          ~initial:[]
+          ~map
+          ~reduce:List.append
+          ~inputs:qualifiers
+          ()
+        
+      in
+      OurDomain.all_defines := all_defines;
+      all_defines
+    )
+    else
+      all_defines
+  in
+
+  let time = Timer.stop_in_sec timer in
+  Log.dump "Found %d functions in %f seconds" (List.length all_defines) time;
+  (* List.iter qualifiers ~f:(fun q -> Log.dump "Qual : %a" Reference.pp q); *)
+  
 
   let mode = OurDomain.load_mode () in
   if !OurDomain.is_first || String.equal mode "error" || (String.equal mode "last_inference") then
@@ -276,22 +320,38 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     (* List.iter all_defines ~f:(fun t -> Log.dump "GO %a" Reference.pp t); *)
 
   let filter_test_defines =
-    if String.equal mode "check_preprocess" || (String.equal mode "inference" && !OurDomain.is_first) then
+    if String.equal mode "check_preprocess" || String.equal mode "preprocess" || (String.equal mode "inference" && !OurDomain.is_first) then
     (
       List.filter all_defines ~f:(fun name ->
-        (not (String.is_substring ~substring:"sympy." (Reference.show name))) || 
-        (not (String.is_substring ~substring:"Lib." (Reference.show name))) ||
-        not (Reference.is_test name)
+        let flag =
+        (* (not (String.is_substring ~substring:"sympy." (Reference.show name))) &&
+        (not (String.is_substring ~substring:"Lib." (Reference.show name))) && *)
+        (* (not (Reference.is_test name)) && *)
+        (not (Reference.is_just_check name))
+        in
+
+        (* Log.dump "%a ==> %b" Reference.pp name flag; *)
+
+        flag
       )
     )
       
     else
       List.filter all_defines ~f:(fun name ->
         let _ = name in
-        not (Reference.is_test name)
+        let flag = 
+        (not (Reference.is_test name)) &&
+        (not (Reference.is_just_check name))
+        in
+
+        (* Log.dump "%a ==> %b" Reference.pp name flag; *)
+
+        flag
       )
       
   in
+
+  Log.dump "OKOK %i => %i" (List.length all_defines) (List.length filter_test_defines);
 
   let filter_test_defines =
     List.filter filter_test_defines ~f:(fun name ->
@@ -312,7 +372,6 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       ))
     )
   in
-
   (* List.iter filter_test_defines ~f:(fun t -> Log.dump "GO %a" Reference.pp t); *)
 
   let filtered_defines =
@@ -335,6 +394,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   (* let prev_temp_class_var_type = OurDomain.OurSummary.get_temp_class_var_type our_model in *)
 
   populate_for_definitions ~scheduler environment filtered_defines;
+
+  let time = Timer.stop_in_sec timer in
+  Log.dump "Type checking took %f seconds" time;
 
   OurDomain.OurSummary.set_all_join_temp_class_var_type_to_empty our_model;
   let _ = type_join in
@@ -398,6 +460,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           OurDomain.ExpressionMap.iteri expression_map ~f:(fun ~key ~data -> 
             OurDomain.OurSummary.set_preprocess our_model define key data
           );
+          let our_model = !OurDomain.our_model in
+          OurDomain.OurSummary.set_usage_attributes our_model define AttributeAnalysis.AttributeStorage.empty;
           OurDomain.OurSummary.set_unique_analysis our_model define unique_analysis;
           updated_vars, our_errors
         | Some t -> 

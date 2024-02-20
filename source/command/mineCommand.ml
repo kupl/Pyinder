@@ -153,7 +153,11 @@
               Log.dump "Preprocess...";
               Analysis.OurDomain.save_mode "preprocess";
               
+              let timer = Timer.start () in
+
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+
+              Log.dump "END %.3f" (Timer.stop_in_sec timer);
               (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
 
               Analysis.OurDomain.save_mode "inference";
@@ -182,7 +186,7 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 4) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
+              if (k >= 1) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
                 Analysis.OurDomain.save_mode "last_inference";
                 
@@ -194,7 +198,7 @@
                 
                 Analysis.OurDomain.save_mode "error";
                 Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model;
-                Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model;
+                (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
                 Log.dump "Check";
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration

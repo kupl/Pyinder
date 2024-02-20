@@ -2640,7 +2640,7 @@ module TypeCheckRT (Context : OurContext) = struct
             | _ -> { callable_data with selected_return_annotation })
         | ( (Found { selected_return_annotation; _ } as found_return_annotation),
             { kind = Named access; _ } )
-          when not (String.equal "__init__" (Reference.last access)) ->
+          when not (Reference.is_initialize access) ->
             Type.split selected_return_annotation
             |> fst
             |> Type.primitive_name
@@ -2692,7 +2692,7 @@ module TypeCheckRT (Context : OurContext) = struct
             } ->
               
             (match callable.kind with
-            | Named reference when not (String.equal (Reference.last reference) "__init__") ->
+            | Named reference when not (Reference.is_initialize reference) ->
               let our_model = !OurDomain.our_model in
               let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument ~arguments callable in
               let less_or_equal = GlobalResolution.less_or_equal global_resolution in 
@@ -2883,7 +2883,7 @@ module TypeCheckRT (Context : OurContext) = struct
               else (
                 match callable.kind with
                 | Named reference ->
-                  if String.equal (Reference.last reference) "__init__"
+                  if (Reference.is_initialize reference)
                   then (
                     closest_return_annotation
                   )
@@ -3102,7 +3102,7 @@ module TypeCheckRT (Context : OurContext) = struct
       (* Log.dump "HMM"; *)
 
       let resolution =
-        if Reference.is_test name then
+        if (Reference.is_test name || Reference.is_just_check name) then
           resolution
         else (
           List.fold callables_with_selected_return_annotations ~init:resolution ~f:(fun resolution callable ->
@@ -3337,7 +3337,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
                         (* Log.dump "??? %a" Reference.pp reference; *)
 
-                        if !OurDomain.on_dataflow then
+                        if !OurDomain.on_dataflow && (not (Reference.is_test name || Reference.is_just_check name)) then
                           OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) ~caller_name:name our_summary reference arg_types;
 
                         ();
@@ -8819,7 +8819,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
         let { StatementDefine.Signature.name; _ } = define_signature in
         
-        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name)) then
+        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) not (Reference.is_initialize name) then
           let our_summary = !Context.our_summary in
           let entry_arg_types = !Context.entry_arg_types in
           let convert_actual =

@@ -105,8 +105,6 @@ module AttributeStorage = struct
   type t = data_set LocInsensitiveExpMap.t
   [@@deriving sexp, equal, compare]
 
-  
-
   let empty_data_set = { 
     attribute_set=Identifier.Set.empty;
     call_set=Identifier.Map.empty;
@@ -125,6 +123,11 @@ module AttributeStorage = struct
 
   let filter_keys t ~f =
     LocInsensitiveExpMap.filter_keys t ~f
+
+  let filter_higher_items ?(num_item=3) t =
+    LocInsensitiveExpMap.filter t ~f:(fun { attribute_set; call_set; } ->
+      (Identifier.Set.length attribute_set) + (Identifier.Map.length call_set) >= num_item
+    )
 
   let get_all_attributes t =
     LocInsensitiveExpMap.fold t ~init:Identifier.Set.empty ~f:(fun ~key:_ ~data:{ attribute_set; _ } acc -> 

@@ -12,6 +12,8 @@ module LocInsensitiveExpMap : sig
     [@@deriving show]
 
     val set : 'a t -> key:Expression.t -> data:'a -> 'a t
+
+    val length : 'a t -> int
 end
 
 (*

@@ -881,6 +881,8 @@ module ClassTableResolution = struct
       []
     else ( 
       
+      (* let timer = Timer.start () in *)
+
       let attribute_set = Identifier.Set.fold all_attributes ~init:AttrsSet.empty ~f:(fun acc attr -> AttrsSet.add acc attr) in
 
       let class_set, score =
@@ -944,13 +946,16 @@ module ClassTableResolution = struct
         )
       in
 
+      (* let t1 = Timer.stop_in_sec timer in
+      let first = class_set in *)
+
       (* if not (Identifier.Map.is_empty call_set) then (
         List.iter more_accurate ~f:(fun c -> Log.dump "%a ==> %a" Expression.pp key Reference.pp c);
       ); *)
 
 
       let class_set, score =
-        if Reference.Set.is_empty class_set then
+        if false && Reference.Set.is_empty class_set then
           ClassHash.fold t ~init:(Reference.Set.empty, -1.0) ~f:(fun ~key ~data:{ ClassSummary.class_attributes={ attributes; properties; methods }; _ } (candidate_class, score) ->
             (* let should_analysis = 
               match candidate_class with
@@ -1047,75 +1052,85 @@ module ClassTableResolution = struct
         else more_accurate *)
       in
 
+      (* let t2 = Timer.stop_in_sec timer in
+      let second = class_set in *)
+
       let stub_classes, stub_score = 
-        Identifier.Map.fold stub_info ~init:(Identifier.Set.empty, -1.0) ~f:(fun ~key ~data (class_set, score) ->
-          (* let should_analysis = 
-            match candidate_class with
-            | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
-            | None -> true
-          in *)
-          let { StubInfo.attribute_set=stub_attribute_set; call_set=stub_call_set; } = data in
-          let field_set = AttrsSet.union_list [stub_attribute_set; (AttrsSet.of_list (Identifier.Map.keys stub_call_set))] in
-          let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
+        if ReferenceSet.is_empty class_set then (
+          Identifier.Set.empty, -1.0
+        ) else (
+          Identifier.Map.fold stub_info ~init:(Identifier.Set.empty, -1.0) ~f:(fun ~key ~data (class_set, score) ->
+            (* let should_analysis = 
+              match candidate_class with
+              | Some cls -> List.exists (successors (Reference.show cls)) ~f:(String.equal (Reference.show key))
+              | None -> true
+            in *)
+            let { StubInfo.attribute_set=stub_attribute_set; call_set=stub_call_set; } = data in
+            let field_set = AttrsSet.union_list [stub_attribute_set; (AttrsSet.of_list (Identifier.Map.keys stub_call_set))] in
+            let field_flag = AttrsSet.is_subset attribute_set ~of_:field_set in
 
 
-          let iter_stub_info () = Identifier.Map.fold stub_call_set ~init:(true, 0.0) ~f:(fun ~key:right_key ~data:right (flag, score) ->
-            let calc_method () = Identifier.Map.fold call_set ~init:(flag, score) ~f:(fun ~key:left_key ~data:left (flag, score) ->
-              if String.equal left_key right_key then (
-                let check = 
-                  CallSet.for_all left ~f:(fun call_info -> 
-                    CallSet.exists right ~f:(fun signature -> 
-                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
-                      CallInfo.is_corresponding ~signature call_info
+            let iter_stub_info () = Identifier.Map.fold stub_call_set ~init:(true, 0.0) ~f:(fun ~key:right_key ~data:right (flag, score) ->
+              let calc_method () = Identifier.Map.fold call_set ~init:(flag, score) ~f:(fun ~key:left_key ~data:left (flag, score) ->
+                if String.equal left_key right_key then (
+                  let check = 
+                    CallSet.for_all left ~f:(fun call_info -> 
+                      CallSet.exists right ~f:(fun signature -> 
+                        (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                        CallInfo.is_corresponding ~signature call_info
+                      )
+                    )
+                  in
+
+                  if check
+                  then (
+                    flag,
+                    CallSet.fold ~init:score left ~f:(fun score call_info -> 
+                      CallSet.fold right ~init:score ~f:(fun score signature -> 
+                        (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
+                        if CallInfo.is_corresponding ~signature call_info
+                        then score +. (CallInfo.calculate ~signature call_info)
+                        else score
+                      )
                     )
                   )
-                in
-
-                if check
-                then (
-                  flag,
-                  CallSet.fold ~init:score left ~f:(fun score call_info -> 
-                    CallSet.fold right ~init:score ~f:(fun score signature -> 
-                      (* Log.dump "%a\n ==> \n%a" CallInfo.pp signature CallInfo.pp call_info; *)
-                      if CallInfo.is_corresponding ~signature call_info
-                      then score +. (CallInfo.calculate ~signature call_info)
-                      else score
-                    )
-                  )
+                  else (false, score)
                 )
-                else (false, score)
+                else (
+                  (flag, score)
+                )
               )
-              else (
-                (flag, score)
-              )
+              in
+
+              let (calc_flag, cur_score) = calc_method () in
+              if calc_flag then
+                (flag, cur_score)
+              else
+                (false, 0.0)
             )
             in
 
-            let (calc_flag, cur_score) = calc_method () in
-            if calc_flag then
-              (flag, cur_score)
-            else
-              (false, 0.0)
-          )
-        in
-
-        if field_flag 
-        then 
-          let (flag, cur_score) = iter_stub_info () in
-          if flag then (
-            if (Float.(>) score cur_score) then
+            if field_flag 
+            then 
+              let (flag, cur_score) = iter_stub_info () in
+              if flag then (
+                if (Float.(>) score cur_score) then
+                  (class_set, score)
+                else if (Float.(=) score cur_score) then
+                  (Identifier.Set.add class_set key, score)
+                else (Identifier.Set.singleton key, cur_score)
+              ) else
+                (class_set, score)
+            else 
               (class_set, score)
-            else if (Float.(=) score cur_score) then
-              (Identifier.Set.add class_set key, score)
-            else (Identifier.Set.singleton key, cur_score)
-          ) else
-            (class_set, score)
-        else 
-          (class_set, score)
-      )
+          )
+        )
       in
 
-      let _ = stub_classes in
+      (* let t3 = Timer.stop_in_sec timer in *)
+
+      (* if Float.(>.) t3 0.1 then
+        Log.dump "Time : %.3f %.3f %.3f (%i => %i)" t1 t2 t3 (ReferenceSet.length first) (ReferenceSet.length second); *)
 
       if Float.(>) score stub_score then (
         Reference.Set.to_list class_set
@@ -1424,6 +1439,7 @@ module FunctionSummaryResolution = struct
     (* if debug then
       Log.dump "GOGO"; *)
     
+    let x =
     AttributeStorage.mapi usage_attributes ~f:(fun ~key ~data:attributes -> 
         let _ = key in
         (* if debug then 
@@ -1445,9 +1461,10 @@ module FunctionSummaryResolution = struct
             |> extract_class ~key ~attributes
         in
         
-        (* let t2 = Timer.stop_in_sec timer in
+        (* let t2 = Timer.stop_in_sec timer in *)
         
-        Log.dump "%.3f %.3f" t1 t2; *)
+        (* if Float.(>.) t2 0.1 then
+          Log.dump "%a %.3f %.3f" Expression.pp key t1 t2; *)
 
         
 
@@ -1471,7 +1488,9 @@ module FunctionSummaryResolution = struct
         
         )
     )
-    |> LocInsensitiveExpMap.filter_map ~f:(fun v -> 
+    in
+
+    x |> LocInsensitiveExpMap.filter_map ~f:(fun v -> 
       match v with
       | Some v -> Some v
       | _ -> v  

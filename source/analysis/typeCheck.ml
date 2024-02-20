@@ -1450,7 +1450,7 @@ module State (Context : Context) = struct
             | _ -> { callable_data with selected_return_annotation })
         | ( (Found { selected_return_annotation; _ } as found_return_annotation),
             { kind = Named access; _ } )
-          when String.equal "__init__" (Reference.last access) ->
+          when Reference.is_initialize access ->
             Type.split selected_return_annotation
             |> fst
             |> Type.primitive_name
@@ -14053,6 +14053,7 @@ let exit_state ~resolution (module Context : OurContext) =
                 | Some origin when Type.is_top (Annotation.annotation origin) || Type.is_any (Annotation.annotation origin) || Type.is_unknown (Annotation.annotation origin) -> 
                   duck_annotation 
                 | Some origin -> 
+                  (* origin *)
                   Annotation.join ~type_join:(GlobalResolution.join global_resolution) origin duck_annotation 
                 )
               in
@@ -14235,7 +14236,7 @@ let exit_state ~resolution (module Context : OurContext) =
       if OurDomain.is_check_preprocess_mode (OurDomain.load_mode ())
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
       (* else if (!OurDomain.is_first) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) *)
-      else if (not (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()))) && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name)
+      else if (not (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()))) && not (Reference.is_initialize name)
       then OurDomain.OurSummary.get_analysis_arg_types our_summary name 
       else if List.length arg_types_list > 0
       then ( 
@@ -14326,7 +14327,7 @@ let exit_state ~resolution (module Context : OurContext) =
             resolution
           else  (
             match value_resolved with
-            | t when Type.is_none t && not (Reference.is_suffix ~suffix:(Reference.create "__init__") name) -> 
+            | t when Type.is_none t && not (Reference.is_initialize name) -> 
               (* Resolution.refine_local resolution ~reference ~annotation:(Annotation.create_mutable value_resolved) *)
               let is_valid_none = 
                 is_valid_none ~reference body |> Option.value ~default:false
@@ -14362,7 +14363,7 @@ let exit_state ~resolution (module Context : OurContext) =
         else if (OurDomain.is_inference_mode (OurDomain.load_mode ()) || OurDomain.is_last_inference_mode (OurDomain.load_mode ()) || OurDomain.is_error_mode (OurDomain.load_mode ())) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name))
         then
           update_resolution_from_value resolution 
-        else if (Reference.is_suffix ~suffix:(Reference.create "__init__") name) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name)) then
+        else if (Reference.is_initialize name) && (not (OurDomain.OurSummary.get_unknown_decorator !OurDomain.our_model name)) then
           update_resolution_from_value resolution 
         else
           resolution
@@ -14389,7 +14390,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | t -> t
       in
 
-      if not ((Reference.is_suffix ~suffix:(Reference.create "__init__") name) || (Type.is_unknown return_annotation)) then (
+      if not ((Reference.is_initialize name) || (Type.is_unknown return_annotation)) then (
         OurDomain.OurSummary.add_return_annotation (* ~type_join:(GlobalResolution.join global_resolution) *) our_summary name (* arg_types *) return_annotation;
         (* Context.our_summary := our_summary *)
       );
@@ -14570,7 +14571,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | Some state ->
           
           (match state.rt_type with
-          | Value v when (!OurDomain.on_class_var) || (Reference.is_suffix ~suffix:(Reference.create "__init__") name) ->
+          | Value v when (!OurDomain.on_class_var) || (Reference.is_initialize name) ->
             (* Log.dump "WHY?? %a" Resolution.pp v; *)
             (* if String.is_substring (Reference.show name) ~substring:"blueprints.Blueprint.group"
               then (

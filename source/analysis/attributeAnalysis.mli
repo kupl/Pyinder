@@ -54,6 +54,7 @@ module AttributeStorage :
     val get_all_attributes : t -> Identifier.Set.t
     val get_single_class_param : t -> t
     val filter_keys : t -> f:(LocInsensitiveExp.t -> bool) -> t
+    val filter_higher_items : ?num_item:int -> t -> t
     val filter_single_class_param : class_param:string -> t -> t
     val get_reference_list : t -> Reference.t list
     val pp_identifier_set : Format.formatter -> Identifier.Set.t -> unit

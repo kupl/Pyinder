@@ -258,7 +258,7 @@ module OurErrorList = struct
     (* Log.dump "%i => %i" (LocationMap.length t) (LocationMap.length x); *)
 
     let _ = x in
-    x
+    x 
 
     (* LocationMap.fold t ~init:0 ~f:(fun ~key:_ ~data acc ->
       List.length data + acc  

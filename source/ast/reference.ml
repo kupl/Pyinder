@@ -103,6 +103,28 @@ let is_test name =
   || String.is_substring (show name) ~substring:"_test"
   )
   
+let is_validate name =
+  (
+  String.is_substring (show name) ~substring:".validate_"
+  || String.is_substring (show name) ~substring:"._validate_"
+  )
+
+let is_assert name =
+  (
+  String.is_substring (show name) ~substring:".assert_"
+  || String.is_substring (show name) ~substring:"._assert_"
+  )
+
+let is_is name =
+  (
+  String.is_substring (show name) ~substring:".is_"
+  || String.is_substring (show name) ~substring:"._is_"
+  )
+
+let is_just_check name =
+  is_validate name || is_assert name || is_is name
+
+
 
 let sanitized reference = List.map ~f:Identifier.sanitized reference
 
@@ -214,3 +236,12 @@ let possible_qualifiers reference =
     | _ :: tail -> recurse tail (reverse tail :: sofar)
   in
   recurse (reverse reference) []
+
+let is_init name =
+  String.is_substring ~substring:"__init__" (last name)
+
+let is_new name =
+  String.is_substring ~substring:"__new__" (last name)
+
+let is_initialize name = 
+  is_init name || is_new name
