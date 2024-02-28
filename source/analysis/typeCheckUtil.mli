@@ -15,9 +15,9 @@ module LocalErrorMap : sig
 
   val empty : unit -> t
 
-  val set : t -> statement_key:int -> errors:Error.t list -> unit
+  val set : statement_key:int -> errors:Error.t list -> t -> unit
 
-  val append : t -> statement_key:int -> error:Error.t -> unit
+  val append : statement_key:int -> error:Error.t -> t -> unit
 
   val all_errors : t -> Error.t list
 end

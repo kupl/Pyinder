@@ -13,6 +13,7 @@ module Stmt = Statement.Statement
 module Class = Statement.Class
 module Define = Statement.Define
 
+
 module type PossibleState = sig
   type t [@@deriving show]
 
@@ -41,7 +42,7 @@ module type PossibleState = sig
   val widen_possible : previous:t -> next:t -> iteration:int -> t
   *)
 
-  val forward : statement_key:int -> t -> statement:Statement.t -> t
+  val forward : statement_key:int -> context:AstContext.t -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end
@@ -230,7 +231,9 @@ module Make (State : PossibleState) = struct
         (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node); *)
 
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
-      let postcondition = transition node_id precondition (Cfg.Node.statements node) in
+      let postcondition = transition ~context:!AstContext.context node_id precondition (Cfg.Node.statements node) in
+
+      AstContext.context := AstContext.set_context !AstContext.context node;
 
       let trans_time = Timer.stop_in_sec timer in
       let _ = trans_time in
@@ -399,7 +402,6 @@ module Make (State : PossibleState) = struct
       | { WeakTopologicalOrder.Component.kind = Node node; _ } -> 
         analyze_node node
       | { kind = Cycle { head; components }; _ } ->
-          (* Loop에 해당하는 거 같음 *)
           let head_id = Cfg.Node.id head in
           let rec iterate local_iteration =
             analyze_node head;
@@ -446,10 +448,10 @@ module Make (State : PossibleState) = struct
 
 
   let forward ~cfg ~initial func_name =
-    let transition node_id init statements =
+    let transition ~context node_id init statements =
       let forward statement_index before statement =
         let statement_key = [%hash: int * int] (node_id, statement_index) in
-        let after = State.forward ~statement_key before ~statement in
+        let after = State.forward ~statement_key ~context before ~statement in
         (*
         Format.printf "\n\n  {  %a  } \n\n"
         Statement.pp

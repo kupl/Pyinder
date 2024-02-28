@@ -377,6 +377,8 @@ module Signatures : sig
   type t = return_info ArgTypesMap.t (* Argumets의 Type*)
   [@@deriving sexp, equal]
 
+  val yojson_of_t : t -> Yojson.Safe.json
+
   val get_return_var_type : t -> ArgTypes.t -> Type.t ReferenceMap.t
 
   val set_return_var_type : t -> ArgTypes.t -> Type.t ReferenceMap.t -> t

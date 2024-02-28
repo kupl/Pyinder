@@ -33,6 +33,8 @@ module Node : sig
 
   val id : t -> int
 
+  val kind : t -> kind
+
   val statements : t -> Statement.t list
 
   val successors : t -> Int.Set.t

@@ -9,9 +9,9 @@ module LocalErrorMap = struct
 
   let empty () = Int.Table.create ()
 
-  let set error_map ~statement_key ~errors = Int.Table.set error_map ~key:statement_key ~data:errors
+  let set ~statement_key ~errors error_map = Int.Table.set error_map ~key:statement_key ~data:errors
 
-  let append error_map ~statement_key ~error =
+  let append ~statement_key ~error error_map =
     Int.Table.add_multi error_map ~key:statement_key ~data:error
 
 

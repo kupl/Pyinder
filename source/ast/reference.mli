@@ -43,8 +43,6 @@ val is_cls : t -> bool
 
 val is_test : t -> bool
 
-val is_validate : t -> bool
-
 val is_assert : t -> bool
 
 val is_is : t -> bool

@@ -73,9 +73,9 @@ let preprocess ~our_model ~global_resolution define =
       (* Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
 
       
-      (* if String.is_substring (Reference.show name) ~substring:"foo" then
-        Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes;
- *)
+      (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.async_add_entity" then
+        Log.dump "Name : %a ===> \n %a" Reference.pp name AttributeAnalysis.AttributeStorage.pp total_usage_attributes; *)
+
       (* let info_time = Timer.stop_in_sec timer in *)
 
       let x =
@@ -94,10 +94,14 @@ let preprocess ~our_model ~global_resolution define =
 
   
 
-  (* if String.is_substring (Reference.show name) ~substring:"capabilities.AlexaCapability.__init__" then
+  (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.async_add_entity" then
     (
       LocInsensitiveExpMap.iteri func_attrs ~f:(fun ~key ~data -> 
-        Log.dump "Expression %a ==> %a" Expression.pp key Reference.pp data;  
+        let duck_type = 
+          List.map data ~f:(fun d -> Type.Primitive (Reference.show d))
+          |> Type.union
+        in
+        Log.dump "Expression %a ==> %a" Expression.pp key Type.pp duck_type;  
       )
     ); *)
 

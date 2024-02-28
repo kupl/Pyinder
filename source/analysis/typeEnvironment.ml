@@ -351,7 +351,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       
   in
 
-  Log.dump "OKOK %i => %i" (List.length all_defines) (List.length filter_test_defines);
+  (* Log.dump "OKOK %i => %i" (List.length all_defines) (List.length filter_test_defines); *)
 
   let filter_test_defines =
     List.filter filter_test_defines ~f:(fun name ->
@@ -386,6 +386,8 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
       List.map arg_types ~f:(fun arg_type -> OurDomain.ArgTypesKey.to_key define arg_type) @ acc
     ) *)
   in
+
+  Log.dump "OKOK %i => %i" (List.length all_defines) (List.length filtered_defines);
 
   (*
   if List.length filtered_defines < 20 then
@@ -461,7 +463,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             OurDomain.OurSummary.set_preprocess our_model define key data
           );
           let our_model = !OurDomain.our_model in
-          OurDomain.OurSummary.set_usage_attributes our_model define AttributeAnalysis.AttributeStorage.empty;
+          (* OurDomain.OurSummary.set_usage_attributes our_model define AttributeAnalysis.AttributeStorage.empty; *)
           OurDomain.OurSummary.set_unique_analysis our_model define unique_analysis;
           updated_vars, our_errors
         | Some t -> 
@@ -472,7 +474,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
           
 
-            (* if String.equal (Reference.show define) "salt.state.State._run_check"
+            (* if String.equal (Reference.show define) "homeassistant.helpers.entity_component.EntityComponent.async_add_entity"
               then (
                 Log.dump "OK! \n %a" OurDomain.OurSummary.pp cur_summary;
                (*  List.iter errors ~f:(fun e -> Log.dump "[[ TEST ]]] \n%a" Error.pp e) *)

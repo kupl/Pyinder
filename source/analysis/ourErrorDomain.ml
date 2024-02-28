@@ -21,7 +21,12 @@ module Cause = struct
     | Exp of (Expression.t * Type.t)
     [@@deriving sexp, compare]
 
-  type t = cause [@@deriving sexp, compare]
+  type t = {
+    cause : cause;
+    context : AstContext.t;
+  } [@@deriving sexp, compare]
+
+  let create ~cause ~context = { cause; context }
 
   let calc_metric left right =
     (* Reference.Set.iter left_reference_set ~f:(fun r -> Log.dump "%a" Reference.pp r);
@@ -108,6 +113,7 @@ module OurCauseMap = struct
     ErrorMap.filter t ~f:(fun data -> List.length data <= 1) *)
 
   let dbscan ~epsilon ~min_pts t =
+    let _ = epsilon in
     let rec find_cluster check_points cluster_points =
       if ErrorSet.is_empty check_points
       then cluster_points
@@ -115,13 +121,21 @@ module OurCauseMap = struct
         let new_check_points = 
           ErrorSet.fold check_points ~init:ErrorSet.empty ~f:(fun new_check_points check_point ->
             let inner_points = 
-              ErrorMap.fold t ~init:[] ~f:(fun ~key ~data acc -> 
-                let distance = (Cause.calc_metric data (ErrorMap.find_exn t check_point)) in
-                (* Log.dump "[FIRST]\n\n%a\n\n[SECOND]\n\n%a\n\n" Error.pp key Error.pp check_point;
-                Log.dump "Distance : %.3f\n\n" distance; *)
-                if Float.(<=.) distance epsilon
-                then key::acc
-                else acc
+              ErrorMap.fold t ~init:[] ~f:(fun ~key ~data:{ Cause.cause; context; } acc -> 
+                let { Cause.cause=check_cause; context=check_context; } = (ErrorMap.find_exn t check_point) in
+
+                if AstContext.compare context check_context = 0
+                then acc
+                else (
+
+                  let cause_distance = (Cause.calc_metric cause check_cause ) in
+                  let context_distance = (AstContext.calc_metric context check_context) in
+                  (* Log.dump "[FIRST]\n\n%a\n\n[SECOND]\n\n%a\n\n" Error.pp key Error.pp check_point;
+                  Log.dump "Distance : %.3f\n\n" (cause_distance *. 0.6 +. context_distance *. 0.4); *)
+                  if Float.(<=.) cause_distance 0.25 && Float.(<=.) context_distance 0.75
+                  then key::acc
+                  else acc
+                )
               )
             in
 
@@ -148,9 +162,11 @@ module OurCauseMap = struct
       | Some (key, data) ->
         let new_cluster = find_cluster (ErrorSet.singleton key) (ErrorSet.singleton key) in
 
-        (* if ErrorSet.length new_cluster > 1 then
-        (* Log.dump "\n[[ CLUTER ]]"; *)
-        ErrorSet.iter new_cluster ~f:(fun error -> Log.dump ">> %a" Error.pp error); *)
+        (* if ErrorSet.length new_cluster > 1 then (
+          Log.dump "\n[[ CLUSTER ]]";
+          Log.dump ">> %a" Error.pp key;
+          ErrorSet.iter new_cluster ~f:(fun error -> Log.dump ">> %a" Error.pp error);
+        ); *)
 
         let next_t = ErrorMap.filter_keys t ~f:(fun key -> not (ErrorSet.mem new_cluster key)) in
 
@@ -195,9 +211,11 @@ module OurErrorList = struct
 
   let cause_analysis t our_model =
     let cause_map, loc_map =
-      LocationMap.fold t ~init:(OurCauseMap.empty, LocationMap.empty) ~f:(fun ~key ~data:({ Error.signature={ Node.value={ name; _ }; _ }; _ } as error) (acc, locmap) ->
+      LocationMap.fold t ~init:(OurCauseMap.empty, LocationMap.empty) ~f:(
+        fun ~key ~data:({ Error.signature={ Node.value={ name; _ }; _ }; context; _ } as error) (acc, locmap) ->
         
         
+
         let _ = error in
         let location = Location.strip_module key in
         let unique_analysis = OurDomain.OurSummary.get_unique_analysis our_model name in
@@ -230,9 +248,9 @@ module OurErrorList = struct
             )
             |> (function 
               | left::[right] ->
-                OurCauseMap.set acc ~key:error ~data:(Cause.Binary (left, right))
+                OurCauseMap.set acc ~key:error ~data:(Cause.create ~cause:(Cause.Binary (left, right)) ~context)
               | [cause] ->
-                OurCauseMap.set acc ~key:error ~data:cause
+                OurCauseMap.set acc ~key:error ~data:(Cause.create ~cause ~context)
               | _ -> acc
             )
               (* let data = OurCauseMap.find ~key:(error_reference_set, typ) acc |> Option.value ~default:[] in *)
@@ -245,8 +263,7 @@ module OurErrorList = struct
     let _ = OurCauseMap.dbscan in
     let x =
     cause_map
-    (* |> OurCauseMap.dbscan ~epsilon:0.10 ~min_pts:2 *)
-    (* |> OurCauseMap.filter_singleton *)
+    |> OurCauseMap.dbscan ~epsilon:0.30 ~min_pts:2
     |> cause_map_to_t
     |> LocationMap.merge loc_map ~f:(fun ~key:_ data ->
       match data with
@@ -255,7 +272,17 @@ module OurErrorList = struct
     )
     in
 
-    (* Log.dump "%i => %i" (LocationMap.length t) (LocationMap.length x); *)
+    (* let other_x =
+      cause_map
+      |> cause_map_to_t
+      |> LocationMap.merge loc_map ~f:(fun ~key:_ data ->
+        match data with
+        | `Left v | `Right v -> Some v
+        | `Both (a, b) -> if Error.compare a b = 0 then Some a else None
+      )
+    in *)
+
+    Log.dump "%i => %i" (LocationMap.length t) (LocationMap.length x);
 
     let _ = x in
     x 

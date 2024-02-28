@@ -76,3 +76,4 @@ module PossibleFixpoint = PossibleFixpoint
 module UniqueAnalysis = UniqueAnalysis
 module Usedef = Usedef
 module AttributeAnalysis = AttributeAnalysis
+module AstContext = AstContext

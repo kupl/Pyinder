@@ -571,3 +571,13 @@ val is_used : reference:Reference.t -> t -> bool
 val is_used_call : reference:Reference.t -> t -> bool
 
 val is_check_none : reference:Reference.t -> t -> bool
+
+module ExpressionCounter : sig
+  type t
+
+  val empty : t
+
+  val count_expression_num : state:t -> Expression.t -> t
+
+  val calc_similarity : t -> t -> float
+end

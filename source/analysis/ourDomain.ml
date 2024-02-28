@@ -125,6 +125,14 @@ end
 module ReferenceMap = struct
   include Map.Make (Reference)
 
+  let yojson_of_t ~yojson_of_data t =
+    (* let open Yojson.Basic in *)
+    `Assoc (
+      fold t ~init:[] ~f:(fun ~key ~data acc ->
+        (Reference.show key, yojson_of_data data)::acc
+      )
+    )
+
   let find_by_suffix t key =
     fold t ~init:None ~f:(fun ~key:ref ~data acc ->
       if String.equal (Reference.last ref) key then Some data
@@ -298,6 +306,14 @@ module ArgTypes = struct
   type t = Type.t IdentifierMap.t [@@deriving sexp, equal, compare]
 
   let empty = IdentifierMap.empty
+
+  let yojson_of_t t : Yojson.Safe.json =
+    (* let open Yojson.Basic in *)
+    `Assoc (
+      IdentifierMap.fold t ~init:[] ~f:(fun ~key ~data acc ->
+        (key, Type.to_yojson data)::acc
+      )
+    )
 
   let is_empty = IdentifierMap.is_empty
 
@@ -910,7 +926,25 @@ module Signatures = struct
   module ArgTypesMap = Map.Make (ArgTypes)
 
   type t = return_info ArgTypesMap.t [@@deriving sexp, equal](* Argumets의 Type*)
-  
+
+  let yojson_of_return_info : return_info -> Yojson.Safe.json =
+    (* let open Yojson.Basic in *)
+    function
+    | { return_var_type; return_type; _ } ->
+      `Assoc [
+        ("return_var_type", ReferenceMap.yojson_of_t ~yojson_of_data:Type.to_yojson return_var_type);
+        ("return_type", Type.to_yojson return_type);
+      ]
+
+  let yojson_of_t t : Yojson.Safe.t =
+    (* let open Yojson.Basic in *)
+    let f (arg_types, return_info) =
+      `Assoc [
+        ("arg_types", ArgTypes.yojson_of_t arg_types);
+        ("return_info", yojson_of_return_info return_info);
+      ]
+    in
+    `List (List.map (ArgTypesMap.to_alist t) ~f)
 
   let empty = ArgTypesMap.empty
 

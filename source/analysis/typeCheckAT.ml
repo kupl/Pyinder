@@ -6796,7 +6796,8 @@ module TypeCheckAT (Context : Context) = struct
     state
 
 
-  let forward ~statement_key state ~statement =
+  let forward ~statement_key ~context state ~statement =
+    let _ = context in 
 
     match state with
     | Unreachable -> state

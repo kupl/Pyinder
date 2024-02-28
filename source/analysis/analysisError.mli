@@ -478,6 +478,7 @@ type t = {
   location: Location.WithModule.t;
   kind: kind;
   signature: Statement.Define.Signature.t Node.t;
+  context: AstContext.t;
   cause: (Reference.t * Type.t) option;
 }
 [@@deriving compare, show, sexp, hash]
@@ -538,6 +539,8 @@ val join_at_define : resolution:GlobalResolution.t -> t list -> t list
 val join_at_source : resolution:GlobalResolution.t -> t list -> t list
 
 val deduplicate : t list -> t list
+
+val deduplicate_with_context : (t * AstContext.t) list -> (t * AstContext.t) list
 
 val filter_typical_errors : exist:(Expression.t * Type.t -> bool) -> t list -> t list
 

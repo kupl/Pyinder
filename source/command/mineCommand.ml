@@ -169,7 +169,7 @@
 
               (* Ast.Reference.Set.iter skip_set ~f:(fun s -> Log.dump ">>> %a" Ast.Reference.pp s); *)
 
-              if k >= 3 then
+              if k >= 2 then
                 Analysis.OurDomain.is_first := false;
           
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set environment;
@@ -186,7 +186,7 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 1) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
+              if (k >= 2) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
                 Analysis.OurDomain.save_mode "last_inference";
                 

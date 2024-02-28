@@ -102,12 +102,6 @@ let is_test name =
   || String.is_substring (show name) ~substring:"tests."
   || String.is_substring (show name) ~substring:"_test"
   )
-  
-let is_validate name =
-  (
-  String.is_substring (show name) ~substring:".validate_"
-  || String.is_substring (show name) ~substring:"._validate_"
-  )
 
 let is_assert name =
   (
@@ -122,7 +116,7 @@ let is_is name =
   )
 
 let is_just_check name =
-  is_validate name || is_assert name || is_is name
+  is_assert name || is_is name
 
 
 

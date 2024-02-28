@@ -36,7 +36,7 @@ module type PossibleState = sig
 
   val widen_possible : previous:t -> next:t -> iteration:int -> t
 *)  
-  val forward : statement_key:int -> t -> statement:Statement.t -> t
+  val forward : statement_key:int -> context:AstContext.t -> t -> statement:Statement.t -> t
 
   val backward : statement_key:int -> t -> statement:Statement.t -> t
 end

@@ -12971,7 +12971,9 @@ module PossibleState (Context : OurContext) = struct
       rt_type=TypeCheckRT.initial ~resolution;
     }
 
-  let forward ~statement_key { at_type; rt_type; } ~statement =
+  let forward ~statement_key ~context { at_type; rt_type; } ~statement =
+    let _ = context in
+
     let rt_resolution ~at_resolution =
       match rt_type with
       | Unreachable -> rt_type
@@ -13393,6 +13395,7 @@ let emit_errors_on_exit (module Context : Context) ~errors_sofar ~resolution () 
             Error.create
               ~location:(Location.with_module ~module_reference:Context.qualifier location)
               ~kind
+              
               ~define:Context.define
           in
           List.map wrongly_overriding_fields ~f:create_override_error
@@ -13475,6 +13478,7 @@ let emit_errors_on_exit (module Context : Context) ~errors_sofar ~resolution () 
                              ~location:
                                (Location.with_module ~module_reference:Context.qualifier location)
                              ~kind
+                             
                              ~define:Context.define)
                     in
                     GlobalResolution.overrides ~resolution:global_resolution ~name class_name
@@ -13538,6 +13542,7 @@ let emit_errors_on_exit (module Context : Context) ~errors_sofar ~resolution () 
             Error.create
               ~location:(Location.with_module ~module_reference:Context.qualifier location)
               ~kind:(Error.MissingOverloadImplementation name)
+              
               ~define:Context.define
           in
           error :: errors
@@ -13866,6 +13871,7 @@ let exit_state ~resolution (module Context : OurContext) =
   (* our_summary 업데이트 시 여기 바꾸기 *)
   let our_summary = !Context.our_summary in
   let global_resolution = Resolution.global_resolution resolution in
+  
   (*
   let _ = our_model in
   let resolution = 
@@ -14401,7 +14407,7 @@ let exit_state ~resolution (module Context : OurContext) =
 
       let initial = { initial with rt_type=Value resolution; } in
       
-      (* if String.is_substring (Reference.show name) ~substring:"pandas.io.formats.html.HTMLFormatter._write_col_header"
+      (* if String.is_substring (Reference.show name) ~substring:"homeassistant.helpers.entity_component.EntityComponent.async_add_entity"
         then (
           Log.dump "[[ TEST ]]] \n%a" Resolution.pp resolution;
         ); *)
@@ -14435,14 +14441,17 @@ let exit_state ~resolution (module Context : OurContext) =
       (* if String.equal "sklearn.model_selection._split.check_cv" (Reference.show name) then
         Log.dump "WHAT?????"; *)
 
+      (* Log.dump "Start %a" Reference.pp name; *)
+
+      AstContext.context := AstContext.empty;
+
       let fixpoint = PossibleFixpoint.forward ~cfg ~initial name in
       (* let fixpoint_time = Timer.stop_in_sec timer in
-
       
       if Float.(>) fixpoint_time 1.0 then
         Log.dump "Fixpoint for %a took %f seconds" Reference.pp name fixpoint_time; *)
 
-        
+      AstContext.context := AstContext.empty;
 
       let exit = PossibleFixpoint.exit fixpoint in
       let post_info = PossibleFixpoint.post_info fixpoint in 
@@ -14559,8 +14568,8 @@ let exit_state ~resolution (module Context : OurContext) =
           )
         in
         *)
-
-      (* Log.dump ">>> %a" Reference.pp name; *)
+      (* Log.dump "End %a" Reference.pp name; *)
+      
       (* Arg Return Types 등록 *)
       let last_state = Hashtbl.find fixpoint.postconditions Cfg.normal_index in
       let our_summary = !Context.our_summary in
@@ -14625,7 +14634,8 @@ let exit_state ~resolution (module Context : OurContext) =
                 ); *)
               (* Log.dump "RESULT : %a\n" OurDomain.ClassTable.pp class_table; *)
               OurDomain.OurSummary.set_class_table our_summary class_table
-            | _ ->           
+            | _ ->        
+              (* Log.dump "%a PLAY %a" Reference.pp name Resolution.pp v;    *)
               let local = String.is_suffix ~suffix:".$toplevel" (Reference.show name) in
               OurTypeSet.OurSummaryResolution.store_to_return_var_type ~local ~usedef_table our_summary name arg_types (Resolution.get_annotation_store v);
               our_summary
@@ -14747,6 +14757,8 @@ let exit_state ~resolution (module Context : OurContext) =
       then (
         Log.dump "START %a (%i)" Reference.pp name (List.length check_arg_types_list);
       ); *)
+
+    (* Log.dump ">>> %a (%i)" Reference.pp name (List.length check_arg_types_list); *)
 
     let errors, local_annotations, callees = 
       (* check_define_of_arg_types Context.entry_arg_types *)

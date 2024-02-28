@@ -1836,6 +1836,8 @@ module TypeCheckRT (Context : OurContext) = struct
         ); *)
       (* Log.dump "Callee %a Type %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee); *)
 
+      (* Log.dump "[Forward Callable] %a / %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee); *)
+
       let resolved_dict_get callee_resolved =
 
         let rec resolved_dict_get callee_resolved =
@@ -3664,12 +3666,12 @@ module TypeCheckRT (Context : OurContext) = struct
 
       (* Log.dump "HMM %a %s" Reference.pp define_name (Expression.show (Callee.expression callee)); *)
 
-      (* if String.equal (Reference.show define_name) "sklearn.linear_model.coordinate_descent.LinearModelCV.fit"
-        && (String.is_substring (Expression.show expression) ~substring:"check_cv")
+      (* if String.is_substring (Reference.show define_name) ~substring:"t.really"
        (*  && (String.equal (Expression.show (Callee.expression callee)) "$local_salt?state?State?call$ret.__getitem__") *)
         then (
           (* Log.dump "%a" Resolution.pp resolved.resolution; *)
-          Log.dump "END Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved)
+          Log.dump "END Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved);
+          List.iter resolved.errors ~f:(fun e -> Log.dump "%a" Error.pp e);
         ); *)
 
         (* if String.is_substring (Reference.show define_name) ~substring:"Order._eval_subs"
@@ -5118,6 +5120,7 @@ module TypeCheckRT (Context : OurContext) = struct
           >>| fun reference -> GlobalResolution.legacy_resolve_exports global_resolution ~reference
         with
         | Some name_reference ->
+          (* Log.dump "NAME : %a" Name.pp name; *)
           let resolved = forward_reference ~resolution ~errors:[] name_reference in
           (* Log.dump "Reference %a => %a" Reference.pp name_reference Type.pp resolved.resolved; *)
           let resolved =
@@ -5140,6 +5143,7 @@ module TypeCheckRT (Context : OurContext) = struct
           resolved
         | None ->
 
+          (* Log.dump "NAME : %a" Name.pp name; *)
           (* let tt =
           Ast.Expression.name_to_reference base
           >>= GlobalResolution.resolve_exports global_resolution
@@ -10564,7 +10568,7 @@ module TypeCheckRT (Context : OurContext) = struct
     forward_statement ~resolution ~at_resolution ~statement *)
 
 
-  let forward ~statement_key:_ state ~statement:_ = state
+  let forward ~statement_key:_ ~context:_ state ~statement:_ = state
 
   let backward ~statement_key:_ state ~statement:_ = state
 end

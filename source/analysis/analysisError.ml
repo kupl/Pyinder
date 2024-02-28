@@ -2597,6 +2597,7 @@ module T = struct
     location: Location.WithModule.t;
     kind: kind;
     signature: Define.Signature.t Node.t;
+    context: AstContext.t;
     cause: (Reference.t * Type.t) option;
   }
   [@@deriving compare, sexp, show, hash]
@@ -2610,7 +2611,7 @@ include Hashable.Make (T)
 
 let create ~location ~kind ~define =
   let { Node.value = { Define.signature; _ }; location = define_location } = define in
-  { location; kind; signature = { Node.value = signature; location = define_location }; cause=None; }
+  { location; kind; signature = { Node.value = signature; location = define_location }; context=(!AstContext.context); cause=None; }
 
 
 let module_reference { location = { Location.WithModule.module_reference; _ }; _ } =
@@ -2701,7 +2702,7 @@ module Instantiated = struct
     }
 end
 
-let instantiate ~show_error_traces ~lookup ?scenarios { location; kind; signature; cause; } =
+let instantiate ~show_error_traces ~lookup ?scenarios { location; kind; signature; cause; _ } =
   Instantiated.create
     ~location:(Location.WithModule.instantiate ~lookup location)
     ~kind
@@ -3856,7 +3857,7 @@ let join_without_resolution ~type_join left right =
     else
       right.location
   in
-  { location; kind; signature = left.signature; cause=None; }
+  { location; kind; signature = left.signature; context = left.context; cause=None; }
 
 let join ~resolution left right =
   let join_mismatch left right =
@@ -4410,7 +4411,7 @@ let join ~resolution left right =
     else
       right.location
   in
-  { location; kind; signature = left.signature; cause=None; }
+  { location; kind; signature = left.signature; context = left.context; cause=None; }
 
 
 let meet ~resolution:_ left _ =
@@ -4501,6 +4502,10 @@ let deduplicate errors =
   List.iter errors ~f:(Core.Hash_set.add error_set);
   let x = Core.Hash_set.to_list error_set in
   x
+
+let deduplicate_with_context (errors: (t * AstContext.t) list) =
+  let uniq_cons x xs = if List.mem xs x ~equal:(fun (x, _) (y, _) -> compare x y = 0) then xs else x :: xs in
+  List.fold_right ~f:uniq_cons ~init:[] errors
 
 let filter_typical_errors ~exist errors =
   List.filter errors ~f:(fun { kind; _ } ->
