@@ -11,6 +11,7 @@ type kind =
 module T = struct
   type t =
     | Empty
+    (* | Define of string *)
     | Context of kind * t
   [@@deriving compare, sexp, show, hash]
 

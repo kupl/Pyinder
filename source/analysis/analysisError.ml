@@ -4564,9 +4564,20 @@ let get_expression_type errors =
     | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; _ }) ->
 
       (reference, operand)::acc
-    | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; reference; _ }
+    | IncompatibleParameterTypeWithReference { name; callee; mismatch = { actual; _ }; reference; _ }
     ->
-      (reference, actual)::acc
+      (match name, callee with
+      | Some name, Some callee -> 
+        let name_exp = 
+          name |> Reference.create |> Expression.create_name_from_reference_without_location
+        in
+        let exp = Expression.Expression.Name name_exp |> Node.create_with_default_location in
+        let typ = callee |> Reference.drop_last |> Reference.show in
+        let _ = exp, typ in
+        (reference, actual)::acc
+        (* (exp, Primitive typ)::(reference, actual)::acc *)
+      | _ -> (reference, actual)::acc
+      )
 
     | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; _ } when
       Type.is_none actual || Type.is_optional actual

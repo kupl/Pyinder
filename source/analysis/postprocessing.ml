@@ -36,6 +36,7 @@ let handle_ignores_and_fixmes
     List.iter ignore_lines ~f:register_unused_ignore;
     unused_ignores, ignore_lookup
   in
+  let before_errors = errors in
   let errors =
     let not_ignored error =
       let ignored = ref false in
@@ -71,10 +72,20 @@ let handle_ignores_and_fixmes
         line
       in
       Hashtbl.find ignore_lookup key >>| List.iter ~f:process_ignore |> ignore;
+
+      if !ignored then (
+        Log.dump "Ignoring error %a" Error.pp error;
+      );
+
       not !ignored
     in
     List.filter ~f:not_ignored errors
   in
+
+  if (List.length before_errors) > (List.length errors) then (
+    Log.dump "Before: %d, After: %d" (List.length before_errors) (List.length errors);
+  );
+
   let unused_ignore_errors =
     let to_error unused_ignore =
       {

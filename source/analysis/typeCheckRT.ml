@@ -125,6 +125,17 @@ let errors_from_not_found
                 | None -> default_expression
                 )
               in
+              let name =
+                (
+                  match name with
+                  | Some name -> Some name
+                  | None -> (
+                    match callee_expression with
+                    | Some { Node.value = Expression.Name name; _ } -> name_to_reference name >>| Reference.show
+                    | _ -> None
+                  )
+                )
+              in
               let normal = 
                   Error.IncompatibleParameterTypeWithReference { name; position; callee; reference=target_expression; mismatch }
               in

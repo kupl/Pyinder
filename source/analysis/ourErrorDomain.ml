@@ -114,18 +114,21 @@ module OurCauseMap = struct
 
   let dbscan ~epsilon ~min_pts t =
     let _ = epsilon in
-    let rec find_cluster check_points cluster_points =
+    let rec find_cluster ~errors check_points cluster_points =
       if ErrorSet.is_empty check_points
       then cluster_points
       else
         let new_check_points = 
           ErrorSet.fold check_points ~init:ErrorSet.empty ~f:(fun new_check_points check_point ->
             let inner_points = 
-              ErrorMap.fold t ~init:[] ~f:(fun ~key ~data:{ Cause.cause; context; } acc -> 
-                let { Cause.cause=check_cause; context=check_context; } = (ErrorMap.find_exn t check_point) in
+              ErrorMap.fold errors ~init:[] ~f:(fun ~key ~data:{ Cause.cause; context; } acc -> 
+                let { Cause.cause=check_cause; context=check_context; } = (ErrorMap.find_exn errors check_point) in
 
                 if AstContext.compare context check_context = 0
-                then acc
+                then (
+                  Log.dump "Same Context";
+                  acc
+                )
                 else (
 
                   let cause_distance = (Cause.calc_metric cause check_cause ) in
@@ -153,22 +156,31 @@ module OurCauseMap = struct
           )
         in
 
-        find_cluster new_check_points (ErrorSet.union cluster_points new_check_points)
+        find_cluster ~errors new_check_points (ErrorSet.union cluster_points new_check_points)
     in
 
     let rec get_noise_point t noise_map =
       match ErrorMap.nth t 0 with
       | None -> noise_map
       | Some (key, data) ->
-        let new_cluster = find_cluster (ErrorSet.singleton key) (ErrorSet.singleton key) in
+        let new_cluster = find_cluster ~errors:t (ErrorSet.singleton key) (ErrorSet.singleton key) in
 
         (* if ErrorSet.length new_cluster > 1 then (
           Log.dump "\n[[ CLUSTER ]]";
-          Log.dump ">> %a" Error.pp key;
+          (* Log.dump ">> %a" Error.pp key; *)
           ErrorSet.iter new_cluster ~f:(fun error -> Log.dump ">> %a" Error.pp error);
         ); *)
 
+        (* if ErrorSet.length new_cluster = 1 then (
+          Log.dump "\n[[ SINGLE ]]";
+          (* Log.dump ">> %a" Error.pp key; *)
+          ErrorSet.iter new_cluster ~f:(fun error -> Log.dump ">> %a" Error.pp error);
+        );
+ *)
+
         let next_t = ErrorMap.filter_keys t ~f:(fun key -> not (ErrorSet.mem new_cluster key)) in
+
+        (* Log.dump "LENGTH %i" (ErrorMap.length next_t); *)
 
         if ErrorSet.length new_cluster = 1 
         then get_noise_point next_t (ErrorMap.set ~key ~data noise_map)
@@ -263,7 +275,7 @@ module OurErrorList = struct
     let _ = OurCauseMap.dbscan in
     let x =
     cause_map
-    |> OurCauseMap.dbscan ~epsilon:0.30 ~min_pts:2
+    (* |> OurCauseMap.dbscan ~epsilon:0.30 ~min_pts:2 *)
     |> cause_map_to_t
     |> LocationMap.merge loc_map ~f:(fun ~key:_ data ->
       match data with
