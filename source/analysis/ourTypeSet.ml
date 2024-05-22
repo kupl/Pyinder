@@ -90,7 +90,7 @@ module ClassSummaryResolution = struct
       let reference = Reference.combine class_name name in
       (* let x = (FunctionTable.get_return_type ~less_or_equal ~property:true function_table reference ArgTypes.empty) in *)
       (* Log.dump "HMM? %a => %a (%a)" Reference.pp reference Type.pp x Reference.pp reference; *)
-      Some (FunctionTable.get_return_type ~less_or_equal ~property:true function_table reference ArgTypes.empty)
+      Some (FunctionTable.get_return_type ~type_join ~less_or_equal ~property:true function_table reference ArgTypes.empty)
     ) else (
       let type_from_funcs_opt =
         ReferenceMap.find class_var_type name
@@ -377,6 +377,9 @@ module ClassSummaryResolution = struct
  *)
     let filter_used_variable ~used_variable { class_var_type; temp_class_var_type; _ } =
       Reference.Map.fold used_variable ~init:Reference.Map.empty ~f:(fun ~key ~data:used_types acc -> 
+
+        (* Log.dump "TEST %a" Reference.pp key; *)
+
         let temp_type_from_funcs = 
           ReferenceMap.find temp_class_var_type key
           |> Option.value ~default:TypeFromFuncs.empty
@@ -389,14 +392,19 @@ module ClassSummaryResolution = struct
 
         let type_map =
           TypeFromFuncs.fold temp_type_from_funcs ~init:Type.Map.empty ~f:(fun ~key:typ ~data:funcs acc ->
+
+            (* Log.dump "HMM? %a %b" Type.pp typ (Reference.Set.is_empty funcs); *)
             
             let check_flag =
               Usedef.TypeSet.exists used_types ~f:(fun t -> 
-                let t = Type.filter_unknown t in
-                let typ = Type.filter_unknown typ in
+                (* Log.dump "USED : %a" Type.pp t; *)
+                let t = Type.filter_unknown t |> Type.weaken_union in
+                let typ = Type.filter_unknown typ |> Type.weaken_union in
                 Type.can_union t ~f:(Type.equal typ) || Type.can_union typ ~f:(Type.equal t)
               ) && not (Reference.Set.is_empty funcs)
             in
+
+            (* Log.dump "CHECK %b" check_flag; *)
 
             if check_flag then
               let origin_functions = funcs in
@@ -404,6 +412,8 @@ module ClassSummaryResolution = struct
 
               let defined_functions = 
                 TypeFromFuncs.fold type_from_funcs ~init:defined_functions ~f:(fun ~key:other_typ ~data:other_funcs defined_functions ->
+                  let other_typ = Type.weaken_union other_typ in
+                  let typ = Type.weaken_union typ in
                   if Type.can_union typ ~f:(Type.equal other_typ) || Type.can_union other_typ ~f:(Type.equal typ) then
                     defined_functions
                   else
@@ -414,6 +424,8 @@ module ClassSummaryResolution = struct
 
               let defined_functions = 
                 TypeFromFuncs.fold temp_type_from_funcs ~init:defined_functions ~f:(fun ~key:other_typ ~data:other_funcs defined_functions ->
+                  let other_typ = Type.weaken_union other_typ in
+                  let typ = Type.weaken_union typ in
                   if Type.can_union typ ~f:(Type.equal other_typ) || Type.can_union other_typ ~f:(Type.equal typ) then
                     defined_functions
                   else
@@ -422,20 +434,37 @@ module ClassSummaryResolution = struct
                 )
               in
 
+              (* Reference.Set.iter defined_functions ~f:(fun ref -> Log.dump "DEFINED %a" Reference.pp ref);
+              Reference.Set.iter origin_functions ~f:(fun ref -> Log.dump "ORIGIN %a" Reference.pp ref);
+ *)
               Type.Map.set ~key:typ ~data:(defined_functions, origin_functions) acc
             else
               acc
           )
         in
 
-        let type_map_filter = 
+        (* Type.Map.iteri type_map ~f:(fun ~key ~data:_ ->
+          Log.dump "OK? %a" Type.pp key;
+        ); *)
+
+        (* let type_map_filter = 
           Type.Map.filter_keys type_map ~f:(fun t ->
+            Log.dump "WHY?";
             TypeFromFuncs.existsi type_from_funcs ~f:(fun ~key:other_typ ~data:_ ->
+              Log.dump "%a vs %a" Type.pp other_typ Type.pp t;
+              let other_typ = Type.weaken_union other_typ in
+              let t = Type.weaken_union t in
               Type.can_union other_typ ~f:(Type.equal t)
             )
             |> not
           )
-        in
+        in *)
+
+        let type_map_filter = type_map in
+
+        (* Type.Map.iteri type_map_filter ~f:(fun ~key ~data:_ ->
+          Log.dump "WHAT? %a" Type.pp key;
+        ); *)
 
         Reference.Map.set acc ~key ~data:type_map_filter
 
@@ -477,7 +506,7 @@ module ClassSummaryResolution = struct
         ) *)
       )
 
-  let update_test_passed_used_variable ~test_passed_used_variable ({ class_var_type; _ } as t) =
+  let update_test_passed_used_variable ~test_passed_used_variable ~end_define ({ class_var_type; seen_var_type; _ } as t) =
     let class_var_type = 
       Reference.Map.fold test_passed_used_variable ~init:class_var_type ~f:(fun ~key ~data acc ->
         let type_from_funcs = 
@@ -495,7 +524,28 @@ module ClassSummaryResolution = struct
       )
     in
 
-    { t with class_var_type; }
+    let seen_var_type =
+      Reference.Map.fold test_passed_used_variable ~init:seen_var_type ~f:(fun ~key ~data acc ->
+        (* let data =
+          let refset = ReferenceMap.find acc end_define |> Option.value ~default:Reference.Set.empty in
+          Reference.Set.add refset key
+        in
+        
+        ReferenceMap.set acc ~key:end_define ~data *)
+
+        (* Log.dump "Update : %a" Reference.pp key; *)
+
+        if Type.Map.is_empty data then acc
+        else (
+          ReferenceMap.update acc end_define ~f:(fun origin ->
+            let origin = Option.value ~default:Reference.Set.empty origin in
+            Reference.Set.add origin key
+          )
+        )
+      )
+    in
+
+    { t with class_var_type; seen_var_type; }
 end
 
 module ClassTableResolution = struct
@@ -1161,9 +1211,9 @@ module ClassTableResolution = struct
     let final_summary = find_default final_class_table class_name in
     ClassSummaryResolution.filter_used_variable final_summary ~used_variable
 
-  let update_test_passed_used_variable ~class_name ~test_passed_used_variable t =
+  let update_test_passed_used_variable ~class_name ~test_passed_used_variable ~end_define t =
     let class_summary = find_default t class_name in
-    let data = ClassSummaryResolution.update_test_passed_used_variable class_summary ~test_passed_used_variable in
+    let data = ClassSummaryResolution.update_test_passed_used_variable class_summary ~test_passed_used_variable ~end_define in
     ClassHash.set t ~key:class_name ~data
 
 end
@@ -1516,6 +1566,9 @@ module FunctionTableResolution = struct
     FunctionSummaryResolution.find_class_of_attributes ~successors ~class_table ~debug ~func_name func_summary parent_usage_attributes
 
   let can_call_in_test ~filtered_used_variable ~end_define t =
+
+    (* Log.dump "HERE? %b" (Reference.Map.is_empty filtered_used_variable); *)
+
     let rec bfs_call_chain ?(max=3) ~skip_set n call_chain =
       if max = n then
         []
@@ -1595,7 +1648,9 @@ module FunctionTableResolution = struct
 
         (* Reference.Set.iter defined_defines ~f:(fun defined_define -> Log.dump "defined_defines : %a" Reference.pp defined_define);
 
-        Reference.Set.iter start_defines ~f:(fun start_define -> Log.dump "start_defines : %a" Reference.pp start_define); *)
+        Reference.Set.iter start_defines ~f:(fun start_define -> Log.dump "start_defines : %a" Reference.pp start_define);
+
+        Log.dump "end_defined : %a" Reference.pp end_define; *)
 
         let result = can_call ~start_defines ~defined_defines ~end_define () in
 
@@ -1687,8 +1742,8 @@ module OurSummaryResolution = struct
   let can_call_in_test ~filtered_used_variable ~end_define { function_table; _ } =
     FunctionTableResolution.can_call_in_test ~filtered_used_variable ~end_define function_table
 
-  let update_test_passed_used_variable ~class_name ~test_passed_used_variable { class_table; _ } =
-    ClassTableResolution.update_test_passed_used_variable ~class_name ~test_passed_used_variable class_table
+  let update_test_passed_used_variable ~class_name ~test_passed_used_variable ~end_define { class_table; _ } =
+    ClassTableResolution.update_test_passed_used_variable ~class_name ~test_passed_used_variable ~end_define class_table
 
 end
 

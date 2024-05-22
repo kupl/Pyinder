@@ -55,6 +55,12 @@ let produce_check_results global_environment define_info ~dependency =
   
   let mode = OurDomain.load_mode () in
 
+  if String.equal mode "recheck" then (
+    OurDomain.OurSummary.set_skip_reference_map ~define_name !OurDomain.our_model;
+  );
+
+  (* Reference.Set.iter !OurDomain.skip_reference_set ~f:(fun ref -> Log.dump "SKIP %a" Reference.pp ref); *)
+
   let init_time = Timer.stop_in_sec timer in
 
   let x = 
@@ -63,7 +69,12 @@ let produce_check_results global_environment define_info ~dependency =
       ~global_environment
       ~dependency
       define_name
-    )
+    ) (* else if String.equal mode "filter" then (
+      TypeCheckPost.check_define_by_name
+      ~global_environment
+      ~dependency
+      define_name
+    ) *)
     else
       TypeCheck.check_define_by_name
       ~type_check_controls
@@ -226,14 +237,22 @@ let populate_for_definitions ~scheduler environment defines =
     number_defines
   in
 
+  let minimum_chunk_size =
+    Int.max 10 (number_of_defines / 12 / 50)
+  in
+
+  let preferred_chunk_size =
+    Int.max 100 (number_of_defines / 12)
+  in
+
   let _ =
     SharedMemoryKeys.DependencyKey.Registry.collected_map_reduce
       scheduler
       ~policy:
         (Scheduler.Policy.fixed_chunk_size
-           ~minimum_chunk_size:100
+           ~minimum_chunk_size
            ~minimum_chunks_per_worker:2
-           ~preferred_chunk_size:5000
+           ~preferred_chunk_size
            ())
       ~initial:0
       ~map
@@ -312,7 +331,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   
 
   let mode = OurDomain.load_mode () in
-  if !OurDomain.is_first || String.equal mode "error" || (String.equal mode "last_inference") then
+  if !OurDomain.is_first || String.equal mode "error" || String.equal mode "filter" || String.equal mode "recheck" || (String.equal mode "last_inference") then
     List.iter all_defines ~f:(fun define -> 
      OurDomain.OurSummary.change_analysis_of_func our_model define
      );
@@ -387,6 +406,17 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
     ) *)
   in
 
+  let filtered_defines =
+    if String.equal mode "recheck" then (
+      let recheck_info = OurDomain.OurSummary.get_recheck_info our_model in
+      List.filter filtered_defines ~f:(fun name ->
+        Reference.Map.mem recheck_info name
+      )
+    ) else (
+      filtered_defines
+    )
+  in
+
   Log.dump "OKOK %i => %i" (List.length all_defines) (List.length filtered_defines);
 
   (*
@@ -427,7 +457,7 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
   if String.equal mode "preprocess" then (
     (* Log.dump "%a" OurDomain.OurSummary.pp !OurDomain.our_model; *)
     List.iter all_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_of_func our_model define)
-  )
+  ) 
   else (
     List.iter filtered_defines ~f:(fun define -> OurDomain.OurSummary.change_analysis_to_false_of_func our_model define);
 
@@ -466,9 +496,43 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
           (* OurDomain.OurSummary.set_usage_attributes our_model define AttributeAnalysis.AttributeStorage.empty; *)
           OurDomain.OurSummary.set_unique_analysis our_model define unique_analysis;
           updated_vars, our_errors
+        | Some t when String.equal mode "error" || String.equal mode "recheck" ->
+          let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
+          let global_environment =
+            global_environment environment
+            |> AnnotatedGlobalEnvironment.read_only
+          in
+          let unannotated_global_environment =
+            global_environment
+            |> AnnotatedGlobalEnvironment.ReadOnly.unannotated_global_environment
+          in
+
+          let global_resolution = GlobalResolution.create global_environment in
+
+          let ast_environment = UnannotatedGlobalEnvironment.ReadOnly.ast_environment unannotated_global_environment in
+          let ignore_lines =
+            let function_definition = 
+              GlobalResolution.function_definition global_resolution define
+            in
+
+            (match function_definition with
+            | Some { FunctionDefinition.qualifier; _ } ->
+              AstEnvironment.ReadOnly.get_raw_source ast_environment qualifier
+              |> (function
+              | Some (Result.Ok source) -> 
+                Source.ignore_lines source
+              | _ -> []
+              )
+            | _ -> []
+            )
+
+            
+          in
+          let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors ~ignore_lines our_errors in
+          Reference.Map.empty, our_errors
+
         | Some t -> 
           let cur_summary = OurDomain.OurSummary.t_of_sexp (TypeCheck.CheckResult.our_summary t) in
-          let errors = TypeCheck.CheckResult.errors t |> Option.value ~default:[] in
 
           let class_vars = OurDomain.OurSummary.get_class_vars cur_summary in
 
@@ -514,7 +578,6 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
             | `Left a | `Right a -> Some a
           )
           in
-          let our_errors = OurErrorDomain.OurErrorList.add ~join:type_join ~errors our_errors in
           (* Log.dump ">>> %a" OurDomain.OurSummary.pp cur_summary; *)
            (* if String.is_substring (Reference.show define) ~substring:"salt.states.smartos._parse_vmconfig"
             then (
@@ -590,7 +653,9 @@ let populate_for_modules ~scheduler ?type_join ?(skip_set=Reference.Set.empty) e
 
 
     (* For Baseline => update all *)
-    (* OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model; *)
+    if !OurDomain.baseline || true then (
+      OurDomain.OurSummary.update_unseen_temp_class_var_type ~type_join ~updated_vars:Reference.Map.empty !OurDomain.our_model;
+    );
 
     
     

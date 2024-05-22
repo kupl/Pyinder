@@ -66,6 +66,9 @@ module OurSummaryResolution : sig
   val can_call_in_test : filtered_used_variable:(Reference.Set.t * Reference.Set.t) Type.Map.t Reference.Map.t -> end_define:Reference.t -> t 
                           -> (Reference.Set.t * Reference.Set.t) Type.Map.t Reference.Map.t
 
-  val update_test_passed_used_variable : class_name:Reference.t -> test_passed_used_variable:(Reference.Set.t * Reference.Set.t) Type.Map.t Reference.Map.t -> t -> unit
+  val update_test_passed_used_variable : class_name:Reference.t 
+  -> test_passed_used_variable:(Reference.Set.t * Reference.Set.t) Type.Map.t Reference.Map.t 
+  -> end_define:Reference.t
+  -> t -> unit
 end
 

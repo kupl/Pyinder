@@ -8,6 +8,8 @@
 open Core
 open Ast
 
+val restrict_dict : bool ref
+
 module Record : sig
   module Variable : sig
     type state [@@deriving compare, eq, sexp, show, hash]
@@ -720,6 +722,8 @@ val is_iterable : t -> bool
 
 val is_iterator : t -> bool
 
+val is_generator : t -> bool
+
 val is_list : t -> bool
 
 val is_set : t -> bool
@@ -1237,6 +1241,8 @@ val top_to_bottom : t -> t
 
 val get_dict_value_type : ?with_key:string option -> ?value_type:type_t -> type_t -> type_t
 
+val weaken_union : t -> t
+
 val can_union : f:(t -> bool) -> t -> bool
 
 val can_unknown : t -> bool
@@ -1256,3 +1262,5 @@ val union_fold_with_filter : f:(t -> t option) -> t -> t option
 val our_dict_to_dict : t -> t
 
 val calc_type : t -> t -> float
+
+val del_type : less_or_equal:(left:t -> right:t -> bool) -> t -> t -> t

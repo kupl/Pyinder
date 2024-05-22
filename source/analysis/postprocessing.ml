@@ -73,9 +73,9 @@ let handle_ignores_and_fixmes
       in
       Hashtbl.find ignore_lookup key >>| List.iter ~f:process_ignore |> ignore;
 
-      if !ignored then (
+      (* if !ignored then (
         Log.dump "Ignoring error %a" Error.pp error;
-      );
+      ); *)
 
       not !ignored
     in
@@ -171,8 +171,15 @@ let run_on_source
   let x = add_local_mode_errors ~define:(Source.top_level_define_node source) source x in
 
   let x = 
+    if !OurDomain.ignore_error then
+      x
+      |> handle_ignores_and_fixmes ~qualifier source
+    else 
+      x
+  in
+
+  let x =
   x
-  |> handle_ignores_and_fixmes ~qualifier source
   |> List.map
        ~f:(fun x -> 
       let x = Error.dequalify (Preprocessing.dequalify_map source) ~resolution:global_resolution x in

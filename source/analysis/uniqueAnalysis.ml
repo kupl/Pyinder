@@ -102,10 +102,9 @@ module UniqueState = struct
       if VarSet.mem check_set reference then VarSet.empty
       else
         let var_set = Reference.Map.find relation_var_map reference |> Option.value ~default:VarSet.empty in
-        VarSet.fold var_set ~init:VarSet.empty ~f:(fun var_set reference -> 
-          VarSet.add var_set reference
-          |> VarSet.union (get_relative_variables ~check_set:(VarSet.add check_set reference) reference)
-          
+        let init_set = VarSet.add check_set reference in
+        VarSet.fold var_set ~init:init_set ~f:(fun var_set new_reference -> 
+          VarSet.union var_set (get_relative_variables ~check_set:var_set new_reference)
         )
     in
 
@@ -286,7 +285,7 @@ module type UniqueFixpoint = sig
 
   val find : t -> int -> state option
 
-  val find_pre_statements_of_location : t -> Location.t -> state option
+  val find_pre_statements_of_location : t -> Location.t -> (state * Location.t) option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 
@@ -357,7 +356,7 @@ module Make (State : UniqueState) = struct
       | None -> 
         let start_contains = Location.contains_eq ~location:key (Location.start location) in
         let stop_contains = Location.contains_eq ~location:key (Location.stop location) in
-        if start_contains && stop_contains then Some data else find
+        (if start_contains && stop_contains then Some (data, key) else find)
     )
 
   let our_compute_fixpoint cfg ~initial_index ~initial ~predecessors ~successors ~transition =

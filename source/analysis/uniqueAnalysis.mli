@@ -62,7 +62,7 @@ module type UniqueFixpoint = sig
 
   val find : t -> int -> state option
 
-  val find_pre_statements_of_location : t -> Location.t -> state option
+  val find_pre_statements_of_location : t -> Location.t -> (state * Location.t) option
 
   val forward : cfg:Cfg.t -> initial:state -> t
 

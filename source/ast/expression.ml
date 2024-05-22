@@ -2631,8 +2631,254 @@ let operator_name_to_symbol = function
   | "__or__" -> Some "|"
   | _ -> None
 
-let rec calc_similarity left right =
-  match left, right with
+
+module ExpressionCounter = struct
+  module Exp = struct
+    type t =
+      | Await
+      | BooleanOperator
+      | Call
+      | ComparisonOperator
+      | Constant
+      | Dictionary
+      | DictionaryComprehension
+      | Generator
+      | FormatString
+      | Lambda
+      | List
+      | ListComprehension
+      | Name of string
+      | Set
+      | SetComprehension
+      | Starred
+      | Ternary
+      | Tuple
+      | UnaryOperator
+      | WalrusOperator
+      | Yield
+      | YieldFrom
+    [@@deriving sexp, compare]
+  end
+
+  module ExpMap = Map.Make (Exp)
+
+  type t = int ExpMap.t [@@deriving sexp, compare]
+
+  let empty = ExpMap.empty
+
+  let count_up t exp = 
+    ExpMap.update t exp ~f:(function Some count -> count + 1 | None -> 1)
+
+  let count_expression_num ~state expression =
+    let fold_await ~folder ~state t =
+      let state = count_up state Exp.Await in
+      Folder.fold ~folder ~state t
+    in
+
+    let fold_boolean_operator ~folder ~state { BooleanOperator.left; right; _ } =
+      let state = count_up state Exp.BooleanOperator in
+      let state = Folder.fold ~folder ~state left in
+      Folder.fold ~folder ~state right
+    in
+
+    let fold_call ~folder ~state { Call.callee; _ } =
+      let state = count_up state Exp.Call in
+      Folder.fold ~folder ~state callee
+    in
+
+    let fold_comparison_operator ~folder ~state { ComparisonOperator.left; right; _ } =
+      let state = count_up state Exp.ComparisonOperator in
+      let state = Folder.fold ~folder ~state left in
+      Folder.fold ~folder ~state right
+    in
+
+    let fold_constant ~folder:_ ~state _ = 
+      count_up state Exp.Constant
+    in
+
+    let fold_dictionary ~folder:_ ~state _ =
+      count_up state Exp.Dictionary
+    in
+
+    let fold_dictionary_comprehension ~folder:_ ~state _ =
+      count_up state Exp.DictionaryComprehension
+    in
+
+    let fold_generator ~folder:_ ~state _ =
+      count_up state Exp.Generator
+    in
+
+    let fold_format_string ~folder:_ ~state _ =
+      count_up state Exp.FormatString
+    in
+
+    let fold_lambda ~folder ~state { Lambda.body; _ } =
+      let state = count_up state Exp.Lambda in
+      Folder.fold ~folder ~state body
+    in
+
+    let fold_list ~folder ~state t_list  =
+      let state = count_up state Exp.List in
+      List.fold t_list ~init:state ~f:(fun state t -> Folder.fold ~folder ~state t)
+    in
+
+    let fold_list_comprehension ~folder:_ ~state _ =
+      count_up state Exp.ListComprehension
+    in
+
+    let fold_name ~folder:_ ~state name =
+      (match name_to_reference name with
+      | Some reference -> 
+        let name_string = Reference.delocalize reference |> Reference.show in
+        count_up state (Exp.Name name_string)
+      | _ -> count_up state (Exp.Name (Name.show name))
+      )
+    in
+
+    let fold_set ~folder ~state t_list =
+      let state = count_up state Exp.Set in
+      List.fold t_list ~init:state ~f:(fun state t -> Folder.fold ~folder ~state t)
+    in
+
+    let fold_set_comprehension ~folder:_ ~state _ =
+      count_up state Exp.SetComprehension
+    in
+
+    let fold_starred ~folder:_ ~state _ =
+      count_up state Exp.Starred
+    in
+
+    let fold_ternary ~folder ~state { Ternary.target; test; alternative; } =
+      let state = count_up state Exp.Ternary in
+      let state = Folder.fold ~folder ~state target in
+      let state = Folder.fold ~folder ~state test in
+      Folder.fold ~folder ~state alternative
+    in
+
+    let fold_tuple ~folder ~state t_list =
+      let state = count_up state Exp.Tuple in
+      List.fold t_list ~init:state ~f:(fun state t -> Folder.fold ~folder ~state t)
+    in
+
+    let fold_unary_operator ~folder ~state { UnaryOperator.operand; _ } = 
+      let state = count_up state Exp.UnaryOperator in
+      Folder.fold ~folder ~state operand
+    in
+
+    let fold_walrus_operator ~folder ~state { WalrusOperator.target; value; _ } =
+      let state = count_up state Exp.WalrusOperator in
+      let state = Folder.fold ~folder ~state target in
+      Folder.fold ~folder ~state value
+    in
+
+    let fold_yield ~folder:_ ~state _ =
+      count_up state Exp.Yield
+    in
+
+    let fold_yield_from ~folder:_ ~state _ =
+      count_up state Exp.YieldFrom
+    in
+
+    let folder =
+      Folder.create_with_uniform_location_fold
+        ~fold_await
+        ~fold_boolean_operator
+        ~fold_call
+        ~fold_comparison_operator
+        ~fold_constant
+        ~fold_dictionary
+        ~fold_dictionary_comprehension
+        ~fold_generator
+        ~fold_format_string
+        ~fold_lambda
+        ~fold_list
+        ~fold_list_comprehension
+        ~fold_name
+        ~fold_set
+        ~fold_set_comprehension
+        ~fold_starred
+        ~fold_ternary
+        ~fold_tuple
+        ~fold_unary_operator
+        ~fold_walrus_operator
+        ~fold_yield
+        ~fold_yield_from
+        ()
+    in
+
+    Folder.fold ~folder ~state expression
+end
+  
+let check_attribute left right =
+  let left = (Node.create_with_default_location left) in
+  let right = (Node.create_with_default_location right) in
+
+  let left_counter = ExpressionCounter.count_expression_num ~state:ExpressionCounter.empty left in
+  let right_counter = ExpressionCounter.count_expression_num ~state:ExpressionCounter.empty right in
+
+  Map.fold left_counter ~init:false ~f:(fun ~key ~data acc ->
+    match key with
+    | Name left_name when data > 0 -> acc || String.is_substring left_name ~substring:"."
+    | _ -> acc
+  ) ||
+  Map.fold right_counter ~init:false ~f:(fun ~key ~data acc ->
+    match key with
+    | Name left_name when data > 0 -> acc || String.is_substring left_name ~substring:"."
+    | _ -> acc
+  )
+
+let get_reference_set exp =
+  let exp = (Node.create_with_default_location exp) in
+  let counter = ExpressionCounter.count_expression_num ~state:ExpressionCounter.empty exp in
+  Map.fold counter ~init:Reference.Set.empty ~f:(fun ~key ~data acc ->
+    match key with
+    | Name name when data > 0 -> Reference.Set.add acc (name |> Reference.create)
+    | _ -> acc
+  )
+
+let calc_similarity left right =
+  let left = (Node.create_with_default_location left) in
+  let right = (Node.create_with_default_location right) in
+  if location_insensitive_compare left right = 0 then 1.0 
+  else (
+    let left_counter = ExpressionCounter.count_expression_num ~state:ExpressionCounter.empty left in
+    let right_counter = ExpressionCounter.count_expression_num ~state:ExpressionCounter.empty right in
+
+    let total = Float.of_int (Map.length left_counter + Map.length right_counter) in
+    let intersection = Map.fold left_counter ~init:0 ~f:(fun ~key ~data acc ->
+        match Map.find right_counter key with
+        | Some right_data -> acc + Int.min data right_data
+        | None -> acc
+      ) 
+    in  
+
+    Float.of_int intersection /. (total -. Float.of_int intersection)
+  )
+  (* (match left, right with
+  | Lambda { body=left_body; _ }, Lambda { body=right_body; _ }
+    -> calc_similarity (Node.value left_body) (Node.value right_body)
+  | Name left, Name right ->
+    (match name_to_reference left, name_to_reference right with
+    | Some left, Some right -> if Reference.equal (left |> Reference.delocalize) (right |> Reference.delocalize) then 1.0 else 0.0
+    | None, None -> 
+      (match left, right with
+      | (Identifier left), (Identifier right) -> if String.equal left right then 1.0 else 0.0 
+      | (Attribute { base=left_base; attribute=left_attribute; _ }), 
+        (Attribute { base=right_base; attribute=right_attribute; _ }) 
+        ->
+        if String.equal left_attribute right_attribute
+        then calc_similarity (Node.value left_base) (Node.value right_base)
+        else 0.0 
+      | _ -> 0.0
+      )
+    | _ -> 0.0
+    )
+
+  | _ -> 
+    (* Log.dump "HMM? %i" (location_insensitive_compare (Node.create_with_default_location left) (Node.create_with_default_location right)); *)
+    if location_insensitive_compare (Node.create_with_default_location left) (Node.create_with_default_location right) = 0 then 1.0 else 0.0
+  ) *)
+  (* match left, right with
   | Await _, Await _
   | BooleanOperator _, BooleanOperator _ 
   | Call _, Call _ 
@@ -2663,7 +2909,7 @@ let rec calc_similarity left right =
     then calc_similarity (Node.value left_base) (Node.value right_base)
     else 0.0
   | _ -> 0.0
-
+ *)
 let is_used ~reference expression =
   let fold_name ~folder ~state name =
     match name with
@@ -2753,8 +2999,7 @@ let rec is_check_none ~reference expression =
     let folder = Folder.create_with_uniform_location_fold ~fold_boolean_operator () in
     Folder.fold ~folder ~state:false expression
 
-
-module ExpressionCounter = struct
+module BoolExpressionCounter = struct
   module Exp = struct
     type t =
       | Await
@@ -2782,36 +3027,77 @@ module ExpressionCounter = struct
     [@@deriving sexp, compare]
   end
 
+  module BoolOp = struct
+    type t = int String.Map.t [@@deriving sexp, compare]
+
+    let empty = String.Map.empty
+
+    let count_up ~op t = String.Map.update t op ~f:(function Some count -> count + 1 | None -> 1)
+
+    let count t = String.Map.fold ~f:(fun ~key:_ ~data acc -> acc + data) t ~init:0
+
+    let count_inter left right =
+      String.Map.fold2 left right ~init:0 ~f:(fun ~key:_ ~data acc -> 
+        match data with
+        | `Both (left_count, right_count) -> acc + (min left_count right_count)
+        | _ -> acc
+      )
+  end
+
   module ExpMap = Map.Make (Exp)
 
-  type t = int ExpMap.t [@@deriving sexp, compare]
+  type t = BoolOp.t ExpMap.t [@@deriving sexp, compare]
 
   let empty = ExpMap.empty
 
-  let count_up t exp = ExpMap.update t exp ~f:(function Some count -> count + 1 | None -> 1)
+  let count_up ~op t exp = 
+    ExpMap.update t exp ~f:(function Some bool_op -> BoolOp.count_up ~op bool_op | None -> BoolOp.empty |> BoolOp.count_up ~op)
 
   let count_expression_num ~state expression =
-    let fold_boolean_operator ~folder ~state { BooleanOperator.left; right; _ } =
-      let state = count_up state Exp.BooleanOperator in
+    let fold_boolean_operator ~folder ~state { BooleanOperator.left; right; operator; } =
+      let state = count_up ~op:(BooleanOperator.show_operator operator) state Exp.BooleanOperator in
       let state = Folder.fold ~folder ~state left in
       Folder.fold ~folder ~state right
     in
 
     let fold_call ~folder ~state { Call.callee; arguments; } =
-      let state = count_up state Exp.Call in
+      let callee_last = 
+        (match callee with
+        | { Node.value = Name (Name.Attribute { base; _ }); _ } -> base
+        | _ -> callee
+        )
+        |> Expression.show
+      in
+
+      let divide_callee =
+        if String.equal callee_last "isinstance" 
+        then callee_last
+        else "other"
+      in  
+
+      (* Log.dump "OH >>> %s" divide_callee; *)
+
+      let state = count_up ~op:divide_callee state Exp.Call in
       let _ = arguments in
       (* let state = List.fold ~f:(fun state arg -> Folder.fold ~folder ~state arg.value) ~init:state arguments in *)
       Folder.fold ~folder ~state callee
     in
 
-    let fold_comparison_operator ~folder ~state { ComparisonOperator.left; right; _ } =
-      let state = count_up state Exp.ComparisonOperator in
+    let fold_comparison_operator ~folder ~state { ComparisonOperator.left; right; operator; } =
+      let operator_kind =
+        (match operator with
+        | ComparisonOperator.Is | ComparisonOperator.IsNot -> "is"
+        | ComparisonOperator.In | ComparisonOperator.NotIn -> "in"
+        | _ -> "other"
+        )
+      in
+      let state = count_up ~op:operator_kind state Exp.ComparisonOperator in
       let state = Folder.fold ~folder ~state left in
       Folder.fold ~folder ~state right
     in
 
-    let fold_unary_operator ~folder ~state { UnaryOperator.operand; _ } = 
-      let state = count_up state Exp.UnaryOperator in
+    let fold_unary_operator ~folder ~state { UnaryOperator.operand; operator; } = 
+      let state = count_up ~op:(UnaryOperator.show_operator operator) state Exp.UnaryOperator in
       Folder.fold ~folder ~state operand
     in
 
@@ -2827,17 +3113,24 @@ module ExpressionCounter = struct
     Folder.fold ~folder ~state expression
 
   let calc_similarity left_map right_map =
-    let left_count = ExpMap.fold ~f:(fun ~key:_ ~data:count acc -> acc + count) left_map ~init:0 in
-    let right_count = ExpMap.fold ~f:(fun ~key:_ ~data:count acc -> acc + count) right_map ~init:0 in
-    let inter_count = ExpMap.fold ~f:(fun ~key ~data:count acc -> 
+    let left_count = ExpMap.fold ~f:(fun ~key:_ ~data acc -> acc + (BoolOp.count data)) left_map ~init:0 in
+    let right_count = ExpMap.fold ~f:(fun ~key:_ ~data acc -> acc + (BoolOp.count data)) right_map ~init:0 in
+    (* let inter_count = ExpMap.fold ~f:(fun ~key ~data:count acc -> 
       match ExpMap.find right_map key with
       | Some right_count -> acc + (min count right_count)
       | None -> acc
     ) left_map ~init:0 
+    in *)
+
+    let inter_count = ExpMap.fold2 left_map right_map ~init:0 ~f:(fun ~key:_ ~data acc ->
+      match data with
+      | `Both (left_boolop, right_boolop) -> acc + (BoolOp.count_inter left_boolop right_boolop)
+      | _ -> acc  
+    )
     in
 
-    let union_count = left_count + right_count in
+    let union_count = left_count + right_count + 1 in
     if union_count = 0
     then 1.0
-    else (float_of_int inter_count) /. (float_of_int union_count)
+    else (float_of_int (inter_count + 1)) /. (float_of_int union_count)
 end

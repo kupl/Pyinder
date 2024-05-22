@@ -149,7 +149,7 @@ let less_or_equal resolution = full_order resolution |> TypeOrder.always_less_or
 let join resolution left right = 
   let order = full_order resolution in
   TypeOrder.join order left right
-  (*|> Type.narrow_iterable ~max_depth:3*)
+  (* |> Type.narrow_iterable ~max_depth:3 *)
 
 let meet resolution left right = 
   let order = full_order resolution in 
@@ -554,7 +554,7 @@ let our_signature_select ~global_resolution:({ dependency; _ } as resolution) ~r
         let type_join = join resolution in
         let final_model = !OurDomain.our_model in
         let arg_types = callable_to_arg_types ~global_resolution:resolution ~self_argument ~arguments callable in
-        let return_type = OurDomain.OurSummary.get_callable_return_type ~successors:(successors ~resolution) final_model arg_types callable in
+        let return_type = OurDomain.OurSummary.get_callable_return_type ~type_join ~successors:(successors ~resolution) final_model arg_types callable in
 
         (* Log.dump "Before %a" Type.pp selected_return_annotation; *)
 

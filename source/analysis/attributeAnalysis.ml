@@ -25,7 +25,8 @@ module CallInfo = struct
   let calculate ~signature target =
     let position_score = 1.0 /. (Float.of_int (Int.abs (target.position - signature.position) + 1)) in
     let default_score = 
-      (Float.of_int (Identifier.Set.length target.default) +. 1.0) /. (Float.of_int (Identifier.Set.length signature.default) +. 1.0)
+      ((Identifier.Set.inter target.default signature.default |> Identifier.Set.length |> Float.of_int) +. 1.0) /. ((Identifier.Set.union target.default signature.default |> Identifier.Set.length |> Float.of_int) +. 1.0)
+     (*  (Float.of_int (Identifier.Set.length target.default) +. 1.0) /. (Float.of_int (Identifier.Set.length signature.default) +. 1.0) *)
     in
     let star_score =
       1.0 /. (Float.of_int (Int.abs (Bool.to_int (not (Bool.equal target.star signature.star)) + Bool.to_int (not (Bool.equal target.double_star signature.double_star)) + 1)))

@@ -6,19 +6,30 @@ module Error = AnalysisError
 module LocationMap : Map.S with type Key.t = Location.WithModule.t
 
 module OurErrorList : sig
-    type t = Error.t LocationMap.t [@@deriving sexp]
+    type error_with_ignore = {
+        error : Error.t;
+        ignore : bool
+    } [@@deriving sexp]
+
+    type t = error_with_ignore LocationMap.t [@@deriving sexp]
 
     val empty : t
+    
+    val equal : t -> t -> bool
 
-    val set : key:Location.WithModule.t -> data:Error.t -> t -> t
+    val set : key:Location.WithModule.t -> data:error_with_ignore -> t -> t
 
-    val get : key:Location.WithModule.t -> t -> Error.t option
+    val get : key:Location.WithModule.t -> t -> error_with_ignore option
 
-    val add : join:(Type.t -> Type.t -> Type.t) -> errors:Error.t list -> t -> t
+    val add : join:(Type.t -> Type.t -> Type.t) -> errors:Error.t list -> ignore_lines:Ignore.t list -> t -> t
 
     val num : t -> int
 
-    val cause_analysis : t -> OurDomain.OurSummary.t -> t
+    val inter_error: t -> t -> t
+
+    val merge_error: t -> t -> t
+
+    val cause_analysis : global_resolution:GlobalResolution.t -> t -> OurDomain.OurSummary.t -> t * t * (Type.t Reference.Map.t) Reference.Map.t
 
     (* val get_repeated_errors : t -> Reference.t list -> t *)
 end

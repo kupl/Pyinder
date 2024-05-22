@@ -124,7 +124,7 @@ let preprocess ~our_model ~global_resolution define =
           Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name;
           *)
 
-          (* if String.is_substring (Reference.show name) ~substring:"io.formats.html" then
+          (* if String.is_substring (Reference.show name) ~substring:"modules.state.show_states" then
           Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
           (* Log.dump "RESULT Name : %a ===> %a (%a)" Expression.pp_expression value Type.pp duck_type Reference.pp name; *)
 

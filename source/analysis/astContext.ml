@@ -10,17 +10,19 @@ type kind =
 
 module T = struct
   type t =
-    | Empty
-    (* | Define of string *)
+    | Empty 
+    | Define of Reference.t
     | Context of kind * t
   [@@deriving compare, sexp, show, hash]
 
   let empty = Empty
 
+  let define func_name = Define func_name
+
   let remove t =
     match t with
-    | Empty -> Empty
     | Context (_, t) -> t
+    | _ -> t
 
   let set_context t node =
     match Cfg.Node.kind node with
@@ -35,8 +37,8 @@ module T = struct
   let to_list t =
     let rec aux t acc =
       match t with
-      | Empty -> acc
       | Context (kind, t) -> aux t (kind :: acc)
+      | _ -> acc
     in
     aux t []
 
@@ -55,18 +57,18 @@ let calc_test_sim left right =
   let right_test = List.filter_map (function If t | While t -> Some t | _ -> None) right_list in
 
   let left_exp_map = List.fold_right (fun t acc -> 
-      Expression.ExpressionCounter.count_expression_num ~state:acc t
+      Expression.BoolExpressionCounter.count_expression_num ~state:acc t
     )
-    left_test Expression.ExpressionCounter.empty
+    left_test Expression.BoolExpressionCounter.empty
   in
 
   let right_exp_map = List.fold_right (fun t acc -> 
-      Expression.ExpressionCounter.count_expression_num ~state:acc t
+      Expression.BoolExpressionCounter.count_expression_num ~state:acc t
     )
-    right_test Expression.ExpressionCounter.empty
+    right_test Expression.BoolExpressionCounter.empty
   in
 
-  let exp_map_calc = Expression.ExpressionCounter.calc_similarity left_exp_map right_exp_map in
+  let exp_map_calc = Expression.BoolExpressionCounter.calc_similarity left_exp_map right_exp_map in
 
   exp_map_calc
 
@@ -93,6 +95,14 @@ let calc_kind_sim left right =
 let calc_metric left right =
   let test_sim = calc_test_sim left right in
   let kind_sim = calc_kind_sim left right in
-  1.0 -. (test_sim *. kind_sim)
+  let _ = kind_sim in
+  1.0 -. test_sim
 
 let context = ref empty
+
+
+(* let gumtree ~source ~target =
+  let source_list = to_list source in
+  let target_list = to_list target in *)
+  
+  

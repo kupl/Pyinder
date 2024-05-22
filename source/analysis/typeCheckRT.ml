@@ -244,10 +244,12 @@ let errors_from_not_found
                       in
 
                       
-
-
-                      if ((String.equal operator_name "+") && Type.is_all_list left_operand && Type.is_all_list right_operand)
-                        || ((String.equal operator_name "+") && Type.is_all_tuple left_operand && Type.is_all_tuple right_operand)
+                      if false || !OurDomain.baseline (* Baseline *)
+                      then
+                        Error.UnsupportedOperandWithReference
+                        (BinaryWithReference { operator_name; left_operand; right_operand; left_reference=target_expression; right_reference=base;})
+                      else if (((String.equal operator_name "+") && Type.is_all_list left_operand && Type.is_all_list right_operand)
+                        || ((String.equal operator_name "+") && Type.is_all_tuple left_operand && Type.is_all_tuple right_operand)) 
                       then Error.Top
                       else if Type.can_type left_operand || Type.can_type right_operand then
                         Error.Top 
@@ -1010,11 +1012,19 @@ module TypeCheckRT (Context : OurContext) = struct
               check_unimplemented tail
           | _ -> false
         in
+
+        let default_expression = Node.create_with_default_location (Expression.Name (Identifier "")) in
+        let reference_exp =
+          match expression with
+          | Some expression -> expression
+          | _ -> default_expression
+        in
+
         emit_error
           ~errors
           ~location
           ~kind:
-            (Error.IncompatibleReturnType
+            (Error.IncompatibleReturnTypeWithExpression
                 {
                   mismatch =
                     Error.create_mismatch
@@ -1024,6 +1034,7 @@ module TypeCheckRT (Context : OurContext) = struct
                       ~covariant:true;
                   is_implicit;
                   is_unimplemented = check_unimplemented define.body;
+                  reference=reference_exp;
                   define_location;
                 })
       else
@@ -1084,7 +1095,7 @@ module TypeCheckRT (Context : OurContext) = struct
         Log.dump "Expression %a" Expression.pp expression;
       ); *)
 
-
+      (* Log.dump "Expression %a" Expression.pp expression; *)
 
     let global_resolution = Resolution.global_resolution resolution in
     let forward_entry ~resolution ~errors ~entry:{ Dictionary.Entry.key; value } =
@@ -1841,6 +1852,20 @@ module TypeCheckRT (Context : OurContext) = struct
       *)
       let { StatementDefine.Signature.name=define_name; _ } = define_signature in
 
+      (* Name (Name.Attribute _ as name) 
+      when  && (
+        
+      ) -> 
+
+      if OurDomain.is_recheck_mode (OurDomain.load_mode ()) then (
+        match name_to_reference name with
+        | Some reference ->
+          let reference = Reference.delocalize_only_name reference in
+          Reference.Set.fold !OurDomain.skip_reference_set ~init:false ~f:(fun flag ref ->
+            flag || (Reference.equal ref reference) || (String.is_substring (Reference.show reference) ~substring:(Reference.show ref))
+          )
+        | _ -> false
+      ) else ( *)
       (* if String.is_substring (Reference.show define_name) ~substring:"HTMLFormatter._write_col_header"
         then (
           Log.dump "Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (Callee.resolved callee);
@@ -1888,7 +1913,7 @@ module TypeCheckRT (Context : OurContext) = struct
                 let value_arg = List.nth_exn arguments 0 in
 
                 (match annotation_type, value_arg.expression with
-                | OurTypedDictionary _, Some expression ->
+                | OurTypedDictionary _, Some expression when (not !Type.restrict_dict) ->
                   let t = Type.get_dict_value_type ~with_key:(Some (Expression.show expression)) ~value_type:value_arg.resolved annotation_type in
                   Some t
                 | _ -> None
@@ -1946,7 +1971,10 @@ module TypeCheckRT (Context : OurContext) = struct
             let extract_element_type iterable =
               match iterable with
               | Type.Parametric { name = "list" | "typing.List"; parameters = [Single parameter] } ->
-                Some parameter
+                if Type.is_any parameter then
+                  Some Type.Unknown
+                else
+                  Some parameter
               | Tuple (Concrete parameters) ->
                 Some (Union parameters)
               | _ -> None
@@ -2228,7 +2256,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
                     let update_dict_field =
                       (* key 원소가 literal이면 OurTypedDictionary *)
-                      if Type.contains_literal key_arg.resolved
+                      if (not !Type.restrict_dict) && Type.contains_literal key_arg.resolved
                       then (
                         Type.OurTypedDictionary.update_dict_field ~join_f:(GlobalResolution.join global_resolution) annotation_type (Expression.show (Option.value_exn key_arg.expression)) value_arg_resolved
                       )
@@ -2341,7 +2369,6 @@ module TypeCheckRT (Context : OurContext) = struct
                     | OurTypedDictionary _ ->
                       GlobalResolution.join global_resolution value_type origin
                     | _ -> 
-                      (* TODO : Error Plz *)
                       origin
                     )
                   in
@@ -2506,6 +2533,8 @@ module TypeCheckRT (Context : OurContext) = struct
             | Name (Name.Attribute { attribute = "__set__"; _}) -> Type.set (Type.union resolved_arguments)
             | Name (Name.Attribute { attribute = "__tuple__"; _}) -> Type.tuple resolved_arguments
             | Name (Name.Attribute { attribute = "__dict__"; _}) -> Type.dictionary ~key:Type.Unknown ~value:Type.Unknown
+            | Name (Name.Attribute { attribute = "decode"; _}) -> Type.string
+            | Name (Name.Attribute { attribute = "encode"; _}) -> Type.bytes
             | _ -> 
               Type.Unknown
               (* resolved_dict_getitem t (Callee.resolved callee) *)
@@ -2709,8 +2738,18 @@ module TypeCheckRT (Context : OurContext) = struct
               let our_model = !OurDomain.our_model in
               let arg_types = GlobalResolution.callable_to_arg_types ~global_resolution ~self_argument ~arguments callable in
               let less_or_equal = GlobalResolution.less_or_equal global_resolution in 
-              let observed_return_type = OurDomain.OurSummary.get_return_type ~less_or_equal our_model reference arg_types in
+              let type_join = GlobalResolution.join global_resolution in
+              let observed_return_type = OurDomain.OurSummary.get_return_type ~type_join ~less_or_equal our_model reference arg_types in
 
+              (* if String.is_substring (Reference.show define_name) ~substring:"_write_col_header"
+                && (String.is_substring (Expression.show expression) ~substring:"columns.format") then
+              (
+                Log.dump "REF %a" Reference.pp reference;
+                Log.dump "OBSERVED %a" Type.pp observed_return_type;
+                Log.dump "UNION %a" Type.pp (Type.union [selected_return_annotation; observed_return_type]);
+
+                Log.dump "JOIN %a" Type.pp (Type.union_join selected_return_annotation observed_return_type);
+              ); *)
               (* Log.dump "NO? %a" Type.pp observed_return_type; *)
 
               (match selected_return_annotation with
@@ -2720,7 +2759,8 @@ module TypeCheckRT (Context : OurContext) = struct
             | _ -> `Fst selected_return_annotation
             )
             
-        | KnownCallable _ as not_found -> `Snd not_found
+        | KnownCallable _ as not_found -> 
+          `Snd not_found
         | UnknownCallableAttribute _ as unknown_callable_attribute ->
             `Trd unknown_callable_attribute
       in
@@ -2896,7 +2936,9 @@ module TypeCheckRT (Context : OurContext) = struct
               else (
                 match callable.kind with
                 | Named reference ->
-                  if (Reference.is_initialize reference)
+                  if (Reference.is_initialize reference) 
+                    || (String.is_suffix (Reference.show reference) ~suffix:"TemporaryFile")
+                    || (String.is_prefix (Reference.show reference) ~prefix:"re.")
                   then (
                     closest_return_annotation
                   )
@@ -2917,6 +2959,7 @@ module TypeCheckRT (Context : OurContext) = struct
               }
 
         | _ -> 
+          
           None
       in
       let check_for_error ({ Resolved.resolved; errors; _ } as input) =
@@ -3113,9 +3156,20 @@ module TypeCheckRT (Context : OurContext) = struct
       let { StatementDefine.Signature.name; _ } = define_signature in
 
       (* Log.dump "HMM"; *)
+      let ignore_lines = Context.ignore_lines in
+      let is_ignore = 
+        List.exists ignore_lines ~f:(fun { Ignore.location=ignore_location; _ } -> 
+          let ignore_line = Location.line ignore_location in
+          let node_line = Location.line location in
+
+          ignore_line = node_line
+        )
+      in
+
+
 
       let resolution =
-        if (Reference.is_test name || Reference.is_just_check name) then
+        if (Reference.is_test name || Reference.is_just_check name || is_ignore) then
           resolution
         else (
           List.fold callables_with_selected_return_annotations ~init:resolution ~f:(fun resolution callable ->
@@ -3124,11 +3178,7 @@ module TypeCheckRT (Context : OurContext) = struct
                 (* Log.dump "[[[ List Callable ]]]\n%a\n" Type.Callable.pp callable; *)
 
                 let update_arg_type arg_type ret_type =
-                  if Type.is_dict arg_type && Type.is_dict ret_type
-                  then
-                    GlobalResolution.join global_resolution arg_type ret_type
-                  else
-                    arg_type 
+                  GlobalResolution.join global_resolution arg_type ret_type
                 in 
                 
                 let allowed_list =
@@ -3157,207 +3207,276 @@ module TypeCheckRT (Context : OurContext) = struct
                     | Named reference when List.exists allowed_list ~f:(fun allowed -> String.equal allowed (Reference.first reference )) ->
                       resolution
                     | Named reference ->
-                      (* ToDo
-                      * Overload 구현
-                      *)
-                      let params = callable.implementation.parameters in
-                      let param_list = 
-                      (match params with
-                      | Defined defined_param_list ->
-                        List.fold defined_param_list ~init:[] ~f:(fun acc param ->
-                          (match param with
-                          | PositionalOnly s -> (String.concat ["__pyinder_"; string_of_int s.index; "__"])::acc
-                          | Named n -> n.name::acc
-                          | _ -> (*print_endline "Other Param";*) acc
+                      if (Reference.is_test name && not (String.equal (Reference.last reference) "__init__")) then
+                        resolution
+                      else (
+
+                        let params = callable.implementation.parameters in
+                        let param_list = 
+                        (match params with
+                        | Defined defined_param_list ->
+                          List.fold defined_param_list ~init:[] ~f:(fun acc param ->
+                            (match param with
+                            | PositionalOnly s -> ((String.concat ["__pyinder_"; string_of_int s.index; "__"]), s.annotation)::acc
+                            | Named n -> (n.name, n.annotation)::acc
+                            | _ -> (*print_endline "Other Param";*) acc
+                            )
                           )
+                        | _ -> (*print_endline "No defined";*) []
                         )
-                      | _ -> (*print_endline "No defined";*) []
-                      )
-                      in
-                      let param_list = List.rev param_list in
-                      let param_type_init, revise_index = 
-                      (match self_argument with
-                      | Some t -> if List.length param_list == 0 then [], 1 else [(List.nth_exn param_list 0,t)], 1
-                      | None -> (*Log.dump "No Self";*) [], 0
-                      )
-                      in
+                        in
+                        let param_list = List.rev param_list in
+                        let param_type_init, revise_index = 
+                        (match self_argument with
+                        | Some t -> 
+                          if List.length param_list == 0 then [], 1 else (
+                            let s, _ = List.nth_exn param_list 0 in
+                            [((s,t),None)], 1
+                          ) 
+                        | None -> (*Log.dump "No Self";*) [], 0
+                        )
+                        in
 
-                      (* Log.dump "TEST HERE";
-                      List.iter param_list ~f:(fun param ->
-                        Log.dump "%s\n" param; 
-                      );  *)
+                        (* Log.dump "TEST HERE";
+                        List.iter param_list ~f:(fun param ->
+                          Log.dump "%s\n" param; 
+                        );  *)
 
-                      let param_type_list, resolution = List.foldi arguments ~init:(param_type_init, resolution) ~f:(fun idx (acc, resolution) arg ->
-                        if List.length param_list <= (idx+revise_index) then acc, resolution
-                        else
-                        (match arg.kind with
-                        | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc, resolution
-                        | Named s ->  
-                          (s.value, arg.resolved)::acc, resolution
-                        | Positional -> 
-                          let update_resolution =
-                            (match arg.expression with
-                            | Some exp -> (
-                              match Node.value exp with
-                              | Name name ->
-                                (* let callee_name = reference in
-                                let our_model = !OurDomain.our_model in
-                                let ret_var_type = OurDomain.OurSummary.get_return_var_type our_model callee_name OurDomain.ArgTypes.empty in
-                                (* let func_arg_types = OurDomain.OurSummary.get_arg_annotation our_model callee_name in *)
-
-                                (* OurDomain.ReferenceMap.iteri ret_var_type ~f:(fun ~key ~data ->
-                                  Log.dump "Key %a Data %a" Reference.pp key Type.pp data;
-                                
-                                ); *)
-
-                                let param_identifier = List.nth_exn param_list (idx+revise_index) in
-                                let param_reference = Reference.create param_identifier in
-
-                                
-
-                                (* let target_func_arg_type = 
-                                  OurDomain.ArgTypes.get_type func_arg_types param_identifier
-                                in *)
-
-                                
-                                let arg_type = 
-                                  Resolution.resolve_expression_to_type resolution exp 
-                                  |> (function
-                                    | Type.Top -> Type.Unknown
-                                    | t -> t
-                                  )
-                                in
-                                (* let arg_annotation_type = 
-                                  OurDomain.OurSummary.get_arg_annotation our_model callee_name
-                                in *)
-                                let ret_type = 
-                                  OurDomain.ReferenceMap.find ret_var_type param_reference |> Option.value ~default:Type.Unknown
-                                in
-
-                                
-
-                                let new_arg_type = update_arg_type arg_type ret_type in 
-
-                                (* Log.dump "%a => %a" Reference.pp param_reference Type.pp ret_type;
-                                Log.dump "New %a" Type.pp new_arg_type; *)
-
-
-                                (* Not Used
-                                let usedef_tables = 
-                                  OurDomain.OurSummary.get_usedef_tables our_model callee_name 
-                                  |> Option.value ~default:Usedef.UsedefStruct.empty
-                                in
-                                
-                                          
-                                let new_arg_type =
-                                  match Usedef.UsedefStruct.normal_exit usedef_tables with
-                                  | Some usedef_state -> 
-                                    if Usedef.UsedefState.is_undefined usedef_state param_reference
-                                    then update_arg_type ~heuristic:true arg_type ret_type arg_annotation_type target_func_arg_type
-                                    else update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
-                                  | _ -> update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
-                                in
-                                *) 
-
-
-                                
-                                (* Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Expression.pp exp Type.pp new_arg_type; *)
-                                
-                                let update_resolution = Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable new_arg_type) in
-                                
-
-                                (* Log.dump "HMM? %a" Resolution.pp update_resolution; *)
-
-                                update_resolution *)
-
-                                let _ = name in
-                                resolution
-                              | _ -> resolution
-                            )
-                              
-                            | None -> resolution
-                            )
-                          in
-
-                          let arg_resolved =
-                            if Type.is_optional arg.resolved (* && false *) then (* For Baseline => False *)
+                        let param_type_list, resolution = List.foldi arguments ~init:(param_type_init, resolution) ~f:(fun idx (acc, resolution) arg ->
+                          if List.length param_list <= (idx+revise_index) then acc, resolution
+                          else
+                          (match arg.kind with
+                          | SingleStar | DoubleStar -> (*print_endline "This is Star Arg";*) acc, resolution
+                          | Named s ->  
+                            ((s.value, arg.resolved), arg.expression)::acc, resolution
+                          | Positional -> 
+                            let update_resolution =
                               (match arg.expression with
                               | Some exp -> (
                                 match Node.value exp with
-                                | Name name when is_simple_name name ->
-                                  (match name_to_reference name with
-                                  | Some ref when Reference.is_self ref || Reference.is_cls ref ->
-                                    (match Resolution.get_local_with_attributes_of_temp ~name update_resolution with
-                                    | Some t when Type.equal (Annotation.annotation t) arg.resolved ->
-                                      Resolution.get_local_with_attributes_of_anno ~name update_resolution
-                                      >>| Annotation.annotation
-                                      |> Option.value ~default:Type.Unknown
+                                | Name name ->
+(* 
+                                  let param_identifier, param_annotation = List.nth_exn param_list (idx+revise_index) in
+                                  let param_reference = Reference.create param_identifier in
+
+                                  
+
+                                  (* let target_func_arg_type = 
+                                    OurDomain.ArgTypes.get_type func_arg_types param_identifier
+                                  in *)
+
+                                  
+                                  let arg_type = 
+                                    Resolution.resolve_expression_to_type resolution exp 
+                                    |> (function
+                                      | Type.Top -> Type.Unknown
+                                      | t -> t
+                                    )
+                                  in
+                                  (* let arg_annotation_type = 
+                                    OurDomain.OurSummary.get_arg_annotation our_model callee_name
+                                  in *)
+                                  (* let ret_type = 
+                                    OurDomain.ReferenceMap.find ret_var_type param_reference |> Option.value ~default:Type.Unknown
+                                  in *)
+
+                                  let _ = param_reference in
+
+                                  let param_annotation = Type.top_to_unknown param_annotation |> Type.any_to_unknown in
+
+                                  let new_arg_type = update_arg_type arg_type param_annotation in 
+
+                                  (* Log.dump "%a => %a (%a)" Reference.pp param_reference Type.pp arg_type Type.pp param_annotation;
+                                  Log.dump "New %a" Type.pp new_arg_type; *)
+
+
+                                  (* Not Used
+                                  let usedef_tables = 
+                                    OurDomain.OurSummary.get_usedef_tables our_model callee_name 
+                                    |> Option.value ~default:Usedef.UsedefStruct.empty
+                                  in
+                                  
+                                            
+                                  let new_arg_type =
+                                    match Usedef.UsedefStruct.normal_exit usedef_tables with
+                                    | Some usedef_state -> 
+                                      if Usedef.UsedefState.is_undefined usedef_state param_reference
+                                      then update_arg_type ~heuristic:true arg_type ret_type arg_annotation_type target_func_arg_type
+                                      else update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
+                                    | _ -> update_arg_type arg_type ret_type arg_annotation_type target_func_arg_type
+                                  in
+                                  *) 
+
+
+                                  
+                                  (* Log.dump "Callee %a Arg %a New type %a" Reference.pp callee_name Expression.pp exp Type.pp new_arg_type; *)
+                                  
+                                  let update_resolution = Resolution.refine_local_with_attributes resolution ~name ~annotation:(Annotation.create_mutable new_arg_type) in
+                                  
+
+                                  (* Log.dump "HMM? %a" Resolution.pp update_resolution; *)
+
+                                  update_resolution *)
+
+                                  let _ = name in
+                                  resolution
+                                | _ -> resolution
+                              )
+                                
+                              | None -> resolution
+                              )
+                            in
+
+                            let arg_resolved =
+                              if Type.is_optional arg.resolved && (not !OurDomain.baseline) then (* For Baseline => False *)
+                                (match arg.expression with
+                                | Some exp -> (
+                                  match Node.value exp with
+                                  | Name name when is_simple_name name ->
+                                    (match name_to_reference name with
+                                    | Some ref when Reference.is_self ref || Reference.is_cls ref ->
+                                      (match Resolution.get_local_with_attributes_of_temp ~name update_resolution with
+                                      | Some t when Type.equal (Annotation.annotation t) arg.resolved ->
+                                        Resolution.get_local_with_attributes_of_anno ~name update_resolution
+                                        >>| Annotation.annotation
+                                        |> Option.value ~default:Type.Unknown
+                                      | _ -> arg.resolved
+                                      )
+                                    
                                     | _ -> arg.resolved
                                     )
-                                  
                                   | _ -> arg.resolved
                                   )
-                                | _ -> arg.resolved
+                                | None -> arg.resolved
                                 )
-                              | None -> arg.resolved
+                              else
+                                arg.resolved
+                            in
+                            let s, _ = List.nth_exn param_list (idx+revise_index) in
+                            ((s, arg_resolved), arg.expression)::acc, update_resolution
+                          )
+                        )
+                        in
+
+                        
+                        
+                        let param_type_list = List.rev param_type_list in
+
+                        
+                        (* Log.dump "TEST HERE";
+                        List.iter param_type_list ~f:(fun (param, typ) ->
+                          Log.dump "%s -> %a\n" param Type.pp typ; 
+                        );  *)
+                        
+                        
+                        
+
+                          (* Exclusive Self *)
+                        let save_param_type_list, argument_list =
+                          (match self_argument with
+                          | Some _ -> 
+                            if List.length param_list == 0 
+                            then param_type_list 
+                            else 
+                              let _, no_self_param = List.split_n param_type_list 1 in
+                              no_self_param
+                          | None -> param_type_list
+                          )
+                          |> List.unzip 
+                        in
+
+                        
+
+
+                        let join = GlobalResolution.join global_resolution in
+                        let less_or_equal = GlobalResolution.less_or_equal global_resolution in
+
+                        let arg_types = 
+                          OurDomain.ArgTypes.make_arg_types save_param_type_list 
+                          |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
+                        in
+
+                        (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then *)
+                          let { StatementDefine.Signature.name; _ } = define_signature in
+                          let our_summary = !Context.our_summary in
+
+                          (* Log.dump "??? %a" Reference.pp reference; *)
+
+                          if !OurDomain.is_first && (OurDomain.is_inference_mode (OurDomain.load_mode ())) then (
+                            let unique_analysis = OurDomain.OurSummary.get_unique_analysis !OurDomain.our_model name in
+
+                            (* Log.dump "NAME : %a" Reference.pp name;
+                            Log.dump "UNIQUE : %a" UniqueAnalysis.UniqueStruct.pp unique_analysis; *)
+
+                            let param_varset = 
+                              (
+                                match UniqueAnalysis.UniqueStruct.find_pre_statements_of_location unique_analysis location with
+                                | Some (state, loc) ->
+                                  let _ = state, loc in
+                                  let rec param_arg_map param_list argument_list acc =
+                                    (match param_list, argument_list with
+                                    | (param, _)::tl_param, arg::tl_arg ->
+                                      
+                                      let acc =
+                                        (match arg with
+                                        | Some exp -> (
+                                          match Node.value exp with
+                                          | Expression.Name name ->
+                                            let ref = name_to_reference name in
+                                            (match ref with
+                                            | Some ref ->
+                                              let var_set = UniqueAnalysis.UniqueState.get_all_relative_variables ~reference:ref state in
+                                              let var_set =
+                                                Reference.Set.filter var_set ~f:(fun v -> 
+                                                  let v = 
+                                                    if Reference.is_local v then Reference.delocalize_only_name v else v
+                                                  in
+                                                  Reference.is_cls v || Reference.is_self v || Reference.is_attribute v
+                                                )
+                                              in
+                                              Identifier.Map.set acc ~key:param ~data:var_set
+                                            | _ -> 
+                                              
+                                              acc
+                                            )
+                                          | _ -> acc
+                                        )
+                                        | _ -> acc
+                                        )
+                                      in
+                                      param_arg_map tl_param tl_arg acc
+                                    | _ -> acc
+                                    )
+                                  in
+
+                                  (* Log.dump "ARG LIST : %i" (List.length argument_list); *)
+
+                                  param_arg_map save_param_type_list argument_list Identifier.Map.empty
+                                | _ ->
+                                  Identifier.Map.empty
                               )
-                            else
-                              arg.resolved
-                          in
+                            in
+                            (* Log.dump "WHAT???"; *)
+                            
+                            (* List.iter save_param_type_list ~f:(fun (param, typ) ->
+                              Log.dump "%s -> %a" param Type.pp typ; 
+                            ); *)
+                            (* Identifier.Map.iteri param_varset ~f:(fun ~key:param_varset ~data:varset ->
+                              Log.dump "KEY %a" Identifier.pp param_varset;
+                              Reference.Set.iter varset ~f:(fun v -> Log.dump "VAR %a" Reference.pp v);
+                            ); *)
+                            OurDomain.OurSummary.add_param_varset our_summary reference param_varset;
+                          );
 
-                          (List.nth_exn param_list (idx+revise_index), arg_resolved)::acc, update_resolution
-                        )
+                          if !OurDomain.on_dataflow (* && (not (Reference.is_test name || Reference.is_just_check name)) *) then
+                            OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) ~caller_name:name our_summary reference arg_types;
+
+                          ();
+                          (* Context.our_summary := our_summary; *)
+                        (* else (); *)
+
+                        resolution
                       )
-                      in
-
-                      
-                      
-                      let param_type_list = List.rev param_type_list in
-
-                      
-                      (* Log.dump "TEST HERE";
-                      List.iter param_type_list ~f:(fun (param, typ) ->
-                        Log.dump "%s -> %a\n" param Type.pp typ; 
-                      );  *)
-                      
-                      
-                      
-
-                        (* Exclusive Self *)
-                      let save_param_type_list =
-                        (match self_argument with
-                        | Some _ -> 
-                          if List.length param_list == 0 
-                          then param_type_list 
-                          else 
-                            let _, no_self_param = List.split_n param_type_list 1 in
-                            no_self_param
-                        | None -> param_type_list
-                        )
-                      in
-
-                      let join = GlobalResolution.join global_resolution in
-                      let less_or_equal = GlobalResolution.less_or_equal global_resolution in
-
-                      let arg_types = 
-                        OurDomain.ArgTypes.make_arg_types save_param_type_list 
-                        |> OurDomain.ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal)
-                      in
-
-                      (* if OurDomain.is_inference_mode (OurDomain.load_mode ()) then *)
-                        let { StatementDefine.Signature.name; _ } = define_signature in
-                        let our_summary = !Context.our_summary in
-
-                        (* Log.dump "??? %a" Reference.pp reference; *)
-
-                        if !OurDomain.on_dataflow && (not (Reference.is_test name || Reference.is_just_check name)) then
-                          OurDomain.OurSummary.add_new_signature ~join:(GlobalResolution.join global_resolution) ~caller_name:name our_summary reference arg_types;
-
-                        ();
-                        (* Context.our_summary := our_summary; *)
-                      (* else (); *)
-
-                      resolution
                     | _ -> 
                       (* TODO: Must Fix 
                       ex) x = goo
@@ -3376,14 +3495,15 @@ module TypeCheckRT (Context : OurContext) = struct
                       | _ -> resolution 
                       )
                       
-                    )
+                    
+                  )
                   in
                   update_resolution callable resolution
+                  
                 in
                 resolution
               | _ -> resolution
-          )
-        )
+        ))
       in
 
 
@@ -3459,19 +3579,19 @@ module TypeCheckRT (Context : OurContext) = struct
       
 
       let resolved =
-      join_return_annotations
-        ~resolution
-        ~errors
-        (found_return_annotations, not_found_return_annotations)
+        join_return_annotations
+          ~resolution
+          ~errors
+          (found_return_annotations, not_found_return_annotations)
 
-      |> (function
-                  | Some resolved -> 
-                    (* Log.dump "??? %a" Type.pp resolved.resolved; *)
-                    { resolved with resolved=update_resolved_type resolved.resolved}
-                  | None -> 
-                    resolved_for_bad_callable ~resolution ~errors undefined_attributes)
+        |> (function
+                    | Some resolved -> 
+                      (* Log.dump "??? %a" Type.pp resolved.resolved; *)
+                      { resolved with resolved=update_resolved_type resolved.resolved}
+                    | None -> 
+                      resolved_for_bad_callable ~resolution ~errors undefined_attributes)
 
-      |> check_for_error
+        |> check_for_error
       in
 
 
@@ -3527,7 +3647,9 @@ module TypeCheckRT (Context : OurContext) = struct
         match callee_resolved with
         | Type.Parametric (* zip 처리 *)
           { name = "type" | "typing.Type"; parameters=[Single (Primitive "zip")]; } ->
-            { resolved with resolved = resolved_zip callee_resolved |> update_resolved_type }
+            let x = resolved_zip callee_resolved |> update_resolved_type in
+            
+            { resolved with resolved = x }
         | Type.Parametric (* Column 처리 *)
           { name = "type" | "typing.Type"; parameters=[Single (Primitive "sqlalchemy.sql.schema.Column")]; } 
         | Type.Parametric (* Column 처리 *)
@@ -3582,7 +3704,13 @@ module TypeCheckRT (Context : OurContext) = struct
               let heuristic_callee = 
                 Type.Parametric { name = "type"; parameters=[Single (Primitive "zip")]; }
               in
-              { resolved with resolved = resolved_zip heuristic_callee |> update_resolved_type }
+              let x = resolved_zip heuristic_callee |> update_resolved_type in
+              (* if String.is_substring (Reference.show define_name) ~substring:"_write_col_header"
+                then (
+                  (* Log.dump "%a" Resolution.pp resolved.resolution; *)
+                  Log.dump "ZIP %a" Type.pp x;
+                ); *)
+              { resolved with resolved = x }
             | t, Some callee_reference, _ when 
               String.is_suffix ~suffix:"get" (Reference.show callee_reference) &&
               (Type.can_union ~f:Type.is_dict (target |> Option.value ~default:Type.Unknown))
@@ -3675,7 +3803,6 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let _ = define_name in
 
-      (* Log.dump "HMM %a %s" Reference.pp define_name (Expression.show (Callee.expression callee)); *)
 
       (* if String.is_substring (Reference.show define_name) ~substring:"t.really"
        (*  && (String.equal (Expression.show (Callee.expression callee)) "$local_salt?state?State?call$ret.__getitem__") *)
@@ -3685,12 +3812,13 @@ module TypeCheckRT (Context : OurContext) = struct
           List.iter resolved.errors ~f:(fun e -> Log.dump "%a" Error.pp e);
         ); *)
 
-        (* if String.is_substring (Reference.show define_name) ~substring:"Order._eval_subs"
-          && (String.is_substring (Expression.show expression) ~substring:"solveset.solveset")
+        (* if String.is_substring (Reference.show define_name) ~substring:"_write_col_header"
+          && (String.is_substring (Expression.show expression) ~substring:"columns.format")
           then (
-            Log.dump "%a" Resolution.pp resolved.resolution;
+            (* Log.dump "%a" Resolution.pp resolved.resolution; *)
             Log.dump "END Callee %a ==> %a" Expression.pp expression Type.pp (resolved.resolved)
           ); *)
+
 
         (* if String.equal (Reference.show define_name) "salt.state.State.call"
           && (String.is_substring (Expression.show expression) ~substring:"ret.update")
@@ -3725,13 +3853,15 @@ module TypeCheckRT (Context : OurContext) = struct
       (* Log.dump ">>> %a" Expression.pp expression;
       Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved; *)
 
+      (* Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved; *)
+
       (* if String.is_substring (Reference.show define_name) ~substring:"settings" 
         && String.is_substring (Expression.show (Callee.expression callee)) ~substring:"getboolean" 
         then (
           Log.dump "END Callee %a ==> %a (%a)" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved) Type.pp x.resolved;
         ); *)
       resolved
-
+      (* ) *)
       
     in
 
@@ -4911,7 +5041,7 @@ module TypeCheckRT (Context : OurContext) = struct
         let _ = typed_dict in
 
         let resolved =
-          if List.length typed_dict = 0 then
+          if List.length typed_dict = 0 || !Type.restrict_dict then
             resolved_key_and_value
             >>| (fun (key, value) -> Type.dictionary ~key ~value)
             |> Option.value ~default:Type.Unknown
@@ -5072,6 +5202,21 @@ module TypeCheckRT (Context : OurContext) = struct
         }
     | Name (Name.Identifier identifier) ->
         forward_reference ~resolution ~errors:[] (Reference.create identifier)
+    | Name (Name.Attribute _ as name) 
+      when OurDomain.is_recheck_mode (OurDomain.load_mode ()) && (
+        match name_to_reference name with
+        | Some reference ->
+          let reference = Reference.delocalize_only_name reference in
+          Reference.Map.existsi !OurDomain.skip_reference_map ~f:(fun ~key ~data ->
+            let find_reference = (Reference.equal key reference) || (String.is_substring (Reference.show reference) ~substring:(Reference.show key)) in
+            if find_reference then (
+              Type.can_union ~f:(fun t -> Type.equal t Type.Unknown || Type.equal t Type.Any || Type.equal t Type.Top || Type.equal t Type.Bottom) data
+            ) else false
+          )
+        | _ -> false
+      ) -> 
+        let resolved = Type.Any in
+        { resolution; errors = []; resolved; resolved_annotation = None; base = None }
     | Name (Name.Attribute { base; attribute; special } as name) -> (
         (*
           * Attribute accesses are recursively resolved by stripping mames off
@@ -5131,9 +5276,8 @@ module TypeCheckRT (Context : OurContext) = struct
           >>| fun reference -> GlobalResolution.legacy_resolve_exports global_resolution ~reference
         with
         | Some name_reference ->
-          (* Log.dump "NAME : %a" Name.pp name; *)
+
           let resolved = forward_reference ~resolution ~errors:[] name_reference in
-          (* Log.dump "Reference %a => %a" Reference.pp name_reference Type.pp resolved.resolved; *)
           let resolved =
           (match resolved.resolved with
           | Type.Any ->
@@ -5150,11 +5294,35 @@ module TypeCheckRT (Context : OurContext) = struct
           | _ -> resolved
           )
           in
-          (* Log.dump "%a.%s >>>> %a" Expression.pp base attribute Type.pp resolved.resolved; *)
+
+          let resolved =
+          (match name_to_reference name with
+          | Some reference when OurDomain.is_recheck_mode (OurDomain.load_mode ()) ->
+            let reference = Reference.delocalize_only_name reference in
+            let find_type =
+              Reference.Map.fold !OurDomain.skip_reference_map ~init:None ~f:(fun ~key ~data acc ->
+                if Option.is_some acc then acc
+                else (
+                let find_reference = (Reference.equal key reference) || (String.is_substring (Reference.show reference) ~substring:(Reference.show key)) in
+                if find_reference then (
+                  Some data
+                ) else acc
+                )
+              )
+            in
+            (match find_type with
+            | Some t ->
+              let less_or_equal = GlobalResolution.less_or_equal global_resolution in
+              let del_type = Type.del_type ~less_or_equal resolved.resolved t in
+              { resolved with resolved=del_type; }
+            | _ -> resolved
+            )
+            
+          | _ -> resolved)
+          in
+
           resolved
         | None ->
-
-          (* Log.dump "NAME : %a" Name.pp name; *)
           (* let tt =
           Ast.Expression.name_to_reference base
           >>= GlobalResolution.resolve_exports global_resolution
@@ -5198,9 +5366,55 @@ module TypeCheckRT (Context : OurContext) = struct
               ~has_default:false
             in
 
+            let resolved =
+              (match name_to_reference name with
+              | Some reference when OurDomain.is_recheck_mode (OurDomain.load_mode ()) ->
+                let reference = Reference.delocalize_only_name reference in
+                let find_type =
+                  Reference.Map.fold !OurDomain.skip_reference_map ~init:None ~f:(fun ~key ~data acc ->
+                    if Option.is_some acc then acc
+                    else (
+                    let find_reference = (Reference.equal key reference) || (String.is_substring (Reference.show reference) ~substring:(Reference.show key)) in
+                    if find_reference then (
+                      Some data
+                    ) else acc
+                    )
+                  )
+                in
+                (match find_type with
+                | Some t ->
+                  let less_or_equal = GlobalResolution.less_or_equal global_resolution in
+                  let del_type = Type.del_type ~less_or_equal x.resolved t in
+                  { x with resolved=del_type; }
+                | _ -> x
+                )
+                
+              | _ -> x)
+            in
+
+            (* let x =
+              match x.resolved with
+              | Unknown ->
+                if (String.is_suffix (Expression.show expression) ~suffix:"temp_stdout.write") then (
+                  let t = (Type.Callable { 
+                    kind = Named (Reference.create "temp_stdout.write"); 
+                    implementation = { parameters = Defined [
+                        Type.Callable.RecordParameter.PositionalOnly { index = 0; annotation = Type.bytes; default = false};
+                        Type.Callable.RecordParameter.Keywords (Type.Any);
+                      ]; annotation = Unknown 
+                    }; 
+                    overloads = [] }) in
+                  { x with resolved = t }
+                ) else (
+                  x
+                )
+              | _ -> x
+            in
+            Log.dump "%a => %a" Expression.pp expression Type.pp x.resolved; *)
+
             (* Log.dump "%a => %a" Expression.pp expression Type.pp x.resolved; *)
 
-            x
+            resolved
             )
     | Constant Constant.NoneLiteral ->
         {
@@ -5782,7 +5996,7 @@ module TypeCheckRT (Context : OurContext) = struct
         ->
         let _ = annotation_expression in
         (match existing_annotation name with
-        | Some annotation ->
+        | Some annotation when not !Type.restrict_dict ->
           let existing_type = Annotation.annotation annotation in
           let new_dict = Type.OurTypedDictionary.refine_dict_field existing_type (Expression.show value) (Type.dictionary ~key:Type.Any ~value:Type.Any) in
 
@@ -7045,7 +7259,7 @@ module TypeCheckRT (Context : OurContext) = struct
         let { Resolved.resolved; _ } = forward_expression ~resolution ~at_resolution right in
         let check_exist_field t name =
           (match t with
-          | Type.OurTypedDictionary { typed_dict; _ } ->
+          | Type.OurTypedDictionary { typed_dict; _ } when not !Type.restrict_dict ->
             Type.OurTypedDictionary.get_field_annotation typed_dict name
             |> Option.is_some
           | _ -> false
@@ -7162,7 +7376,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
         let { Resolved.resolved = refined_type; _ } = forward_expression ~resolution ~at_resolution right in
         
-        if GlobalResolution.less_or_equal global_resolution ~left:refined_type ~right:value_type then (
+        if (not !Type.restrict_dict) && GlobalResolution.less_or_equal global_resolution ~left:refined_type ~right:value_type then (
           let new_type = Type.OurTypedDictionary.set_dict_field annotation_type key_string refined_type in
           let resolution =
             refine_local
@@ -7213,7 +7427,7 @@ module TypeCheckRT (Context : OurContext) = struct
           )
         in
 
-        if Type.is_bottom new_value_type then Unreachable
+        if (not !Type.restrict_dict) && Type.is_bottom new_value_type then Unreachable
         else (
           let new_type = Type.OurTypedDictionary.set_dict_field annotation_type key_string new_value_type in
           let resolution =
@@ -7236,7 +7450,7 @@ module TypeCheckRT (Context : OurContext) = struct
         let value_type = Type.get_dict_value_type ~with_key:(Some key_string) ~value_type annotation_type in
         (match value_type with
         | Type.NoneType -> Unreachable
-        | Type.Union parameters ->
+        | Type.Union parameters when (not !Type.restrict_dict) ->
           let refined_annotation =
             List.filter parameters ~f:(fun parameter -> not (Type.is_none parameter))
           in
@@ -7422,7 +7636,7 @@ module TypeCheckRT (Context : OurContext) = struct
       match origin with
       | Assert.Origin.If { true_branch = false; _ }
       | Assert.Origin.While { true_branch = false; _ } 
-        when (OurDomain.is_error_mode (OurDomain.load_mode ())) ->
+        when (OurDomain.is_error_mode (OurDomain.load_mode ())) || OurDomain.is_recheck_mode (OurDomain.load_mode ()) ->
           []
       | _ -> errors
     in
@@ -7454,12 +7668,15 @@ module TypeCheckRT (Context : OurContext) = struct
     in
     match Node.value target with
     | Expression.Name (Name.Identifier _)
-      when delocalize target
+      when 
+        let alias = delocalize target
             |> Expression.show
             |> GlobalResolution.aliases global_resolution
-            |> Option.is_some ->
+        in
+        Option.is_some alias && not (String.equal (Option.value_exn ~message:"Alias Error" alias |> Type.show_alias) "(Type.TypeAlias top)") ->
         (* The statement has been recognized as a type alias definition instead of an actual value
             assignment. *)
+        
         let parsed =
           GlobalResolution.parse_annotation ~validation:NoValidation global_resolution value
         in
@@ -7520,7 +7737,6 @@ module TypeCheckRT (Context : OurContext) = struct
         ( Value resolution,
           add_annotation_errors errors |> add_type_variable_errors |> add_prohibited_any_errors )
     | _ ->
-      
         (* Processing actual value assignments. *)
         let resolution, errors, resolved_value =
           let { Resolved.resolution; errors = new_errors; resolved; _ } =
@@ -8806,12 +9022,25 @@ module TypeCheckRT (Context : OurContext) = struct
             ~f:(fun expression -> (* Log.dump "?? %a" Expression.pp expression; *) 
             forward_expression ~resolution ~at_resolution expression)
         in
+
+        let ignore_lines = Context.ignore_lines in
+        let is_ignore = 
+          List.exists ignore_lines ~f:(fun { Ignore.location=ignore_location; _ } -> 
+            let ignore_line = Location.line ignore_location in
+            let node_line = Location.line location in
+
+            ignore_line = node_line
+          )
+        in
+
         let actual =
-          if define_signature.generator && not define_signature.async then
+          if is_ignore then 
+            Type.Unknown
+          else if define_signature.generator && not define_signature.async then
             Type.generator ~return_type ()
           else (
             match expression with
-            | Some { Node.value=Expression.Name name; _ } when is_simple_name name && (Reference.is_self (name_to_reference_exn name)) ->
+            | Some ({ Node.value=Expression.Name name; _ }) when is_simple_name name && (Reference.is_self (name_to_reference_exn name)) ->
               
               (* let x = 
                 Resolution.get_local_with_attributes_of_anno ~name resolution
@@ -8825,6 +9054,9 @@ module TypeCheckRT (Context : OurContext) = struct
               return_type
           )
         in
+
+        
+        
         
         (* Log.dump "Before %a" Type.pp actual; *)
         let actual =
@@ -8833,8 +9065,10 @@ module TypeCheckRT (Context : OurContext) = struct
         (* Log.dump "After %a" Type.pp actual; *)
 
         let { StatementDefine.Signature.name; _ } = define_signature in
+
         
-        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) not (Reference.is_initialize name) then
+        
+        if (* OurDomain.is_inference_mode (OurDomain.load_mode ()) && *) (not (Reference.is_initialize name)) && (not is_ignore) then
           let our_summary = !Context.our_summary in
           let entry_arg_types = !Context.entry_arg_types in
           let convert_actual =
@@ -8850,6 +9084,19 @@ module TypeCheckRT (Context : OurContext) = struct
           in
 
           (* Log.dump "After %a" Type.pp convert_actual; *)
+
+          (* (match expression with
+          | Some expression ->
+            let { StatementDefine.Signature.name=define_name; _ } = define_signature in
+            if String.is_substring (Reference.show define_name) ~substring:"MultiIndex.format"
+              && (String.equal (Expression.show expression) "$local_pandas?core?indexes?multi?MultiIndex?format$result_levels")
+              then (
+                Log.dump "%a" Resolution.pp resolution;
+                
+                Log.dump "RETURN %a ==> %a (%a) (%a)" Expression.pp expression Type.pp (return_type) Type.pp actual Type.pp convert_actual;
+              );
+          | _ -> ()
+          ); *)
           
           OurDomain.OurSummary.add_return_type ~type_join:(GlobalResolution.join global_resolution) our_summary name entry_arg_types convert_actual;
           (* Context.our_summary := our_summary; *)
@@ -9314,7 +9561,7 @@ module TypeCheckRT (Context : OurContext) = struct
             | _ -> failwith "did not transform"
           in
           fix_invalid_parameters_in_bounds unary |> fun unary -> Type.Variable.Unary unary
-        in
+        in  
         let extract = function
           | Type.Variable.Unary unary -> unarize unary
           | ParameterVariadic variable -> ParameterVariadic variable
@@ -10479,7 +10726,7 @@ module TypeCheckRT (Context : OurContext) = struct
 
     let update_resolution_of_error ~resolution errors =
       Error.get_expression_type errors
-      |> List.fold ~init:resolution ~f:(fun resolution (exp, typ) -> 
+      |> List.fold ~init:resolution ~f:(fun resolution (exp, typ, _, _) -> 
         match Node.value exp with
         | Expression.Name name ->
           (match name_to_reference name with
@@ -10511,7 +10758,8 @@ module TypeCheckRT (Context : OurContext) = struct
 
       
       match resolution with
-      | Value _ when List.length interesting_errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ())) (* && false *) -> 
+      | Value _ when List.length interesting_errors > 0 
+        && not ((OurDomain.is_error_mode (OurDomain.load_mode ())) || OurDomain.is_recheck_mode (OurDomain.load_mode ())) (* && false *) -> 
         Resolution.Unreachable
         (* let resolution = update_resolution_of_error ~resolution errors in
         Resolution.Reachable { resolution; errors } *)
@@ -10545,7 +10793,8 @@ module TypeCheckRT (Context : OurContext) = struct
       List.iter errors ~f:(fun e -> Log.dump "HO : %a" Error.pp e);
     ); *)
     match resolution with
-    | Value _ when List.length interesting_errors > 0 && not (OurDomain.is_error_mode (OurDomain.load_mode ())) (* && false *) -> 
+    | Value _ when List.length interesting_errors > 0 
+      && not (OurDomain.is_error_mode (OurDomain.load_mode ()) || OurDomain.is_recheck_mode (OurDomain.load_mode ())) (* && false *) -> 
       Unreachable, errors
       (* let resolution = update_resolution_of_error ~resolution errors in
       Value resolution, errors *)

@@ -186,9 +186,11 @@
               let our_model = !Analysis.OurDomain.our_model in
               
               (* Log.dump "OKOK %a" Analysis.OurDomain.OurSummary.pp our_model; *)
-              if (k >= 2) || (n >= 2) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
+              if (k >= 2) || (n >= 2) || (not !Analysis.OurDomain.on_dataflow) (* || (k >= 2 && (not (Analysis.OurDomain.OurSummary.has_analysis our_model))) *)
               then (
                 Analysis.OurDomain.save_mode "last_inference";
+
+                (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
                 
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:our_model configuration
@@ -210,7 +212,48 @@
                 Analysis.OurErrorDomain.our_errors := List.fold functions_list ~init:!Analysis.OurErrorDomain.our_errors ~f:(fun our_errors functions -> Analysis.OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
                  *)
                 (* Log.dump "Error : %i" (Analysis.OurErrorDomain.OurErrorList.num !Analysis.OurErrorDomain.our_errors); *)
-                Analysis.OurErrorDomain.our_errors := Analysis.OurErrorDomain.OurErrorList.cause_analysis !Analysis.OurErrorDomain.our_errors our_model;
+                if (not !Analysis.OurDomain.baseline) (* && false *) then (
+                  let global_resolution =
+                    Analysis.TypeEnvironment.ReadOnly.global_resolution
+                    (Analysis.ErrorsEnvironment.ReadOnly.type_environment (Analysis.ErrorsEnvironment.read_only read_write_environment))
+                  in
+
+                  (* Analysis.OurDomain.save_mode "filter";
+                  let errors_sexp = Analysis.OurErrorDomain.OurErrorList.sexp_of_t !Analysis.OurErrorDomain.our_errors in
+                  Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.set_errors !Analysis.OurDomain.our_model errors_sexp;
+                  let environment =
+                    Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+                    |> Analysis.ErrorsEnvironment.set_environment environment
+                  in
+                  Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+ *)
+                  let noise_errors, cluster_errors, function_to_reference = Analysis.OurErrorDomain.OurErrorList.cause_analysis ~global_resolution !Analysis.OurErrorDomain.our_errors our_model in
+                  
+                  (* Analysis.OurErrorDomain.our_errors := Analysis.OurErrorDomain.OurErrorList.cause_analysis !Analysis.OurErrorDomain.our_errors our_model; *)
+                  let _ = cluster_errors, function_to_reference in
+
+                  Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.set_recheck_info !Analysis.OurDomain.our_model function_to_reference;
+
+                  Analysis.OurErrorDomain.our_errors := Analysis.OurErrorDomain.OurErrorList.empty;
+                  Log.dump "ReCheck";
+                  Analysis.OurDomain.save_mode "recheck";
+                  let environment =
+                    Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
+                    |> Analysis.ErrorsEnvironment.set_environment environment
+                  in
+                  Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
+
+                  let re_errors = !Analysis.OurErrorDomain.our_errors in
+                  let remain_errors = Analysis.OurErrorDomain.OurErrorList.inter_error cluster_errors re_errors in
+
+                  Log.dump "Remain Error : %i" (Analysis.OurErrorDomain.OurErrorList.num remain_errors);
+
+                  let total_errors = Analysis.OurErrorDomain.OurErrorList.merge_error noise_errors remain_errors in
+
+                  Log.dump "Done";
+
+                  Analysis.OurErrorDomain.our_errors := total_errors;
+                );
                 let our_errors = Analysis.OurErrorDomain.read_only !Analysis.OurErrorDomain.our_errors in
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_errors configuration
@@ -230,8 +273,7 @@
                       |> Analysis.ErrorsEnvironment.set_environment environment
                     in
 
-                    if !Analysis.OurDomain.on_attribute then
-                      preprocess environment;
+                    preprocess environment;
 
                     let our_model = !Analysis.OurDomain.our_model in
 
@@ -330,9 +372,6 @@
    
    let errors, ast_environment, _ = do_check configuration in
     
-  
-   
-
    (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
    (*
    Log.dump "%s" "Type Error Searching...";

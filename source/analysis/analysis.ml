@@ -72,6 +72,7 @@ module WeakTopologicalOrder = WeakTopologicalOrder
 module OurTypeSet = OurTypeSet
 module OurDomain = OurDomain
 module OurErrorDomain = OurErrorDomain
+module OurErrorAnalysis = OurErrorAnalysis
 module PossibleFixpoint = PossibleFixpoint
 module UniqueAnalysis = UniqueAnalysis
 module Usedef = Usedef

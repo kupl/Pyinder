@@ -59,6 +59,8 @@ module type OurContext = sig
 
   val entry_arg_types : OurDomain.ArgTypes.t ref
 
+  val ignore_lines : Ignore.t list
+
   module Builder : Callgraph.Builder
 end
 

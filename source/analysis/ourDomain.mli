@@ -14,9 +14,13 @@ val on_any : bool ref
 val on_dataflow : bool ref
 val on_class_var : bool ref
 val on_attribute : bool ref
-
+val type_sensitive : bool ref
+val ignore_error : bool ref
+val baseline : bool ref
 
 val debug : bool ref
+
+val skip_reference_map : (Type.t Reference.Map.t) ref
 
 module ReferenceHash : sig
     type key = Ast.Reference.t
@@ -284,6 +288,7 @@ module ClassSummary: sig
     class_var_type: TypeFromFuncs.t ReferenceMap.t;
     temp_class_var_type: TypeFromFuncs.t ReferenceMap.t;
     join_temp_class_var_type: TypeFromFuncs.t ReferenceMap.t;
+    seen_var_type: Reference.Set.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set: ReferenceSet.t;
@@ -433,6 +438,7 @@ module FunctionSummary : sig
     arg_annotation: ArgTypes.t; (* Argument Annotation *)
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
+    param_varset: Reference.Set.t Identifier.Map.t;
     callers: CallerSet.t;
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
@@ -459,7 +465,7 @@ end
 module FunctionTable : sig
   type t = FunctionSummary.t FunctionHash.t
 
-  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> ?property:bool -> t -> Reference.t -> ArgTypes.t -> Type.t
+  val get_return_type : type_join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> ?property:bool -> t -> Reference.t -> ArgTypes.t -> Type.t
 end
 
 module type OurSummary = sig
@@ -467,6 +473,8 @@ module type OurSummary = sig
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
     stub_info : StubInfo.t;
+    recheck_info: (Type.t Reference.Map.t) Reference.Map.t;
+    errors: Ppx_sexp_conv_lib.Sexp.t;
   }
 end
 
@@ -475,10 +483,22 @@ module OurSummary : sig
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
     stub_info : StubInfo.t;
+    recheck_info: (Type.t Reference.Map.t) Reference.Map.t;
+    errors: Ppx_sexp_conv_lib.Sexp.t;
   }
   [@@deriving equal, sexp]
 
   val empty : ?size:int -> unit -> t
+
+  val set_errors : t -> Ppx_sexp_conv_lib.Sexp.t -> t
+
+  val get_errors : t -> Ppx_sexp_conv_lib.Sexp.t
+
+  val set_recheck_info: t -> (Type.t Reference.Map.t) Reference.Map.t -> t
+
+  val get_recheck_info: t -> (Type.t Reference.Map.t) Reference.Map.t
+
+  val set_skip_reference_map : define_name:Reference.t -> t -> unit
 
   val update_check_preprocess : define:Reference.t -> type_join:(Type.t -> Type.t -> Type.t) -> prev:t -> t -> unit
 
@@ -499,6 +519,12 @@ module OurSummary : sig
   (*val copy : t -> t*)
 
   val find_signature : t -> Reference.t -> ArgTypes.t -> (* Signatures.t *) Signatures.return_info option
+
+  val filter_seen_var : class_name:Reference.t -> func_name:Reference.t -> var_set:Reference.Set.t -> t -> Reference.Set.t
+
+  val add_param_varset : t -> Reference.t -> Reference.Set.t Identifier.Map.t -> unit
+
+  val get_param_varset : t -> Reference.t -> Reference.Set.t Identifier.Map.t
 
   val add_new_signature : join:(Type.t -> Type.t -> Type.t) -> ?caller_name:Reference.t -> t -> Reference.t -> ArgTypes.t -> unit
 
@@ -551,7 +577,7 @@ module OurSummary : sig
 
   val get_return_var_type : t -> Reference.t -> ArgTypes.t -> Type.t ReferenceMap.t
 
-  val get_return_type : less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> ArgTypes.t -> Type.t
+  val get_return_type : type_join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> t -> Reference.t -> ArgTypes.t -> Type.t
 
   val get_callers : t -> Reference.t -> CallerSet.t
 
@@ -567,7 +593,7 @@ module OurSummary : sig
 
   val get_callable : join:(Type.t -> Type.t -> Type.t) -> less_or_equal:(left:Type.t -> right:Type.t -> bool) -> successors:(string -> string list) -> t -> ArgTypes.t -> Type.Callable.t -> Type.Callable.t
 
-  val get_callable_return_type :  successors:(string -> string list) -> t -> ArgTypes.t -> Type.Callable.t -> Type.t
+  val get_callable_return_type : type_join:(Type.t -> Type.t -> Type.t) -> successors:(string -> string list) -> t -> ArgTypes.t -> Type.Callable.t -> Type.t
   
   val add_class_attribute : t -> Reference.t -> string -> unit
 
@@ -643,6 +669,8 @@ val is_inference_mode : string -> bool
 val is_last_inference_mode : string -> bool
 
 val is_error_mode : string -> bool
+
+val is_recheck_mode : string -> bool
 
 val is_check_preprocess_mode : string -> bool
 

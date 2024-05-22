@@ -12,6 +12,9 @@ open Pyre
 open PyreParser
 module ExpressionParameter = Parameter
 
+
+let restrict_dict = ref true (* True: No use value dependent dict *)
+
 module Record = struct
   module Variable = struct
     type state =
@@ -7071,6 +7074,11 @@ let callable_name = function
       Some name
   | _ -> None
 
+let rec weaken_union t =
+  match t with
+  | Union t_list -> Union (List.map t_list ~f:weaken_union)
+  | _ -> weaken_literals t
+
 let rec can_union ~f t =
   match t with
   | Union t_list -> List.fold t_list ~init:false ~f:(fun acc t -> acc || (can_union ~f t))
@@ -7249,7 +7257,7 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
           if List.length filter_unknown_t_list = 1
           then List.nth_exn filter_unknown_t_list 0
           else 
-            Unknown
+            Union t_list
             (* (match key_parameter with
             | Union t_list -> if List.exists t_list ~f:(equal value_type) then value_parameter else Unknown
             | t -> if equal t value_type then value_parameter else Unknown
@@ -7268,7 +7276,7 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
   )
   | OurTypedDictionary { general; typed_dict } -> (
       match with_key with
-      | Some key -> 
+      | Some key when (not !restrict_dict) -> 
         OurTypedDictionary.get_field_annotation typed_dict key
         |> Option.value ~default:(get_dict_value_type ~value_type general)
       | _ -> get_dict_value_type ~value_type general
@@ -7694,7 +7702,10 @@ let narrow_union_inner ~join ~less_or_equal t =
     if (List.length loose_t_list) > (List.length narrow_result)
       then Log.dump "[[ Before : %i ]]\n%a\n[[ After : %i ]]\n%a\n" (List.length loose_t_list) pp (Union loose_t_list) (List.length narrow_result) pp (Union narrow_result);
     *)
-    let result = (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join in
+    (* let result = (Union narrow_result) |> narrow_callable ~join |> narrow_boundmethod ~join in *)
+    let result = Union narrow_result in (* Baseline *)
+
+    let _ = narrow_boundmethod in
 
     
 
@@ -7705,7 +7716,7 @@ let narrow_union_inner ~join ~less_or_equal t =
       (* List.iter t_list ~f:(fun t -> Log.dump ">>> %a" pp t); *)
       if List.length filter_unknown_loose_t_list = 1
       then List.nth_exn filter_unknown_loose_t_list 0 
-      else if check_length check_loose_t_list > 4
+      else if check_length check_loose_t_list > 12 (* 4 *) (* Basline *)
       then (
         Any
       )
@@ -7833,6 +7844,28 @@ let calc_type left right =
 
     | Union t_list, other 
     | other, Union t_list -> calc (Union t_list) (Union [other])
+    | Parametric { name; parameters }, Parametric { name = expected_name; parameters=expected_parameters } when String.equal name expected_name ->
+      if List.length parameters = 1 && List.length expected_parameters = 1
+      then (
+        let param_type = List.nth_exn parameters 0 in
+        let expected_type = List.nth_exn expected_parameters 0 in
+        (match param_type, expected_type with
+        | Single param, Single expected -> 
+          calc param expected
+        | _ -> (Int.min (List.length parameters) (List.length expected_parameters)) // (Int.max (List.length parameters) (List.length expected_parameters))
+        )
+      )
+      else (Int.min (List.length parameters) (List.length expected_parameters)) // (Int.max (List.length parameters) (List.length expected_parameters))
     | left, right -> if is_match left right then 1.0 else 0.0
   in
   calc left right
+
+let del_type ~less_or_equal origin del =
+  match origin, del with
+  | _, Unknown | _, Any | _, Top | _, Bottom -> Any
+  | Union t_list, t ->
+    let new_t_list = List.filter t_list ~f:(fun t' -> not (less_or_equal ~left:t' ~right:t)) in
+    (match new_t_list with
+    | [] -> Any
+    | _ -> union new_t_list)
+  | t1, t2 -> if less_or_equal ~left:t1 ~right:t2 then Any else t1

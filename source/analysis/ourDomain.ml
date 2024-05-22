@@ -7,13 +7,57 @@ open Usedef
 exception NotEqualException;;
 *)
 
+let check_dir : string -> bool 
+= fun path ->
+  match Sys.is_directory path with
+  | `Yes -> true
+  | _ -> false
+
+let check_and_make_dir : string -> unit
+= fun path ->
+  if check_dir path then ()
+  else Unix.mkdir path
+
+
+
+(*
+let check_file : string -> bool
+= fun path ->
+match Sys.file_exists path with
+| `Yes -> true
+| _ -> false
+  *)
+  
+let data_path = ref ""
+
+let save_mode (mode: string) =
+  check_and_make_dir !data_path;
+  let target_path = !data_path ^ "/mode" ^ ".marshalled" in
+  let data_out = open_out target_path in
+  let sexp = String.sexp_of_t mode in
+  Marshal.to_channel data_out sexp [];
+  close_out data_out
+
+let load_mode () =
+  let data_in = open_in (!data_path ^ "/mode" ^ ".marshalled") in
+  let mode = String.t_of_sexp (Marshal.from_channel data_in) in
+  close_in data_in;
+  mode
+
 let on_any = ref true
 let on_dataflow = ref true
+
+let type_sensitive = ref true
 let on_class_var = ref true
 let on_attribute = ref true
 
+let ignore_error = ref true
+
+let baseline = ref false
 
 let debug = ref false
+
+let skip_reference_map = ref (Reference.Map.empty)
 
 module ReferenceSet = Reference.Set
 
@@ -593,16 +637,12 @@ module StubInfo = struct
     x
 end
 
-
-
-
-
-
 module ClassSummary = struct
   type t = {
     class_var_type: TypeFromFuncs.t ReferenceMap.t;
     temp_class_var_type : TypeFromFuncs.t ReferenceMap.t;
     join_temp_class_var_type : TypeFromFuncs.t ReferenceMap.t;
+    seen_var_type: Reference.Set.t ReferenceMap.t;
     class_attributes: ClassAttributes.t;
     usage_attributes: AttributeStorage.t;
     change_set : ReferenceSet.t;
@@ -611,6 +651,7 @@ module ClassSummary = struct
 
   let empty = {
     class_var_type=ReferenceMap.empty;
+    seen_var_type=ReferenceMap.empty;
     temp_class_var_type=ReferenceMap.empty;
     join_temp_class_var_type=ReferenceMap.empty;
     (* updated_var = ReferenceSet.empty; *)
@@ -624,6 +665,23 @@ module ClassSummary = struct
     let empty_typefuncs = TypeFromFuncs.empty in
     let typefuncs = TypeFromFuncs.set ~key:typ ~data:Reference.Set.empty empty_typefuncs in
     { t with join_temp_class_var_type=ReferenceMap.set join_temp_class_var_type ~key:reference ~data:typefuncs; }
+
+  let filter_seen_var ~func_name { seen_var_type; _ } var_set =
+    let var_set = Reference.Set.filter var_set ~f:(fun var -> 
+      
+      if Reference.is_self var
+      then (
+        match ReferenceMap.find seen_var_type func_name with
+        | Some refset -> not (Reference.Set.exists refset ~f:(fun ref_ -> 
+          (* Log.dump "?? %a vs %a" Reference.pp (Reference.drop_head var) Reference.pp ref_; *)
+          Reference.is_contain ~base:(Reference.drop_head var) ~target:ref_
+        ))
+        | _ -> true
+      ) else true
+    ) 
+    in
+    var_set
+    
 
   (* let should_analysis { should_analysis; _ } = should_analysis *)
   let get_class_var_type { class_var_type; _ } = class_var_type
@@ -743,6 +801,12 @@ module ClassSummary = struct
   let join ~type_join left right =
     let _ = type_join in
     let class_var_type = ReferenceMap.join_var_from_funcs left.class_var_type right.class_var_type in
+    let seen_var_type = ReferenceMap.merge left.seen_var_type right.seen_var_type ~f:(fun ~key:_ data ->
+        match data with
+        | `Both (left, right) -> Some (Reference.Set.union left right)
+        | `Left data | `Right data -> Some data
+      )  
+    in
     let join_temp_class_var_type = ReferenceMap.join_var_from_funcs left.temp_class_var_type right.join_temp_class_var_type in
     (* let update_var_list = ReferenceMap.keys left.class_var_type @ ReferenceMap.keys left.temp_class_var_type in
     let updated_var = List.fold update_var_list ~init:right.updated_var ~f:(fun updated_var var -> ReferenceSet.add updated_var var) in *)
@@ -756,6 +820,7 @@ module ClassSummary = struct
     (* let should_analysis = right.should_analysis || ((not (ReferenceMap.equal Type.equal class_var_type right.class_var_type)) && left.should_analysis) in *)
     {
       class_var_type;
+      seen_var_type;
       temp_class_var_type=right.temp_class_var_type;
       join_temp_class_var_type;
       (* updated_var; *)
@@ -764,9 +829,20 @@ module ClassSummary = struct
       change_set;
     }
 
-  let pp_class_var_type format { class_var_type; join_temp_class_var_type; temp_class_var_type; _ } =
-      Format.fprintf format "[[[ Class Variable Type ]]] \n%a\n\n[[[ Classs JOIN Variable Type ]]]\n%a\n\n[[[ Classs Temp Variable Type ]]]\n%a\n" 
-      (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) class_var_type (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) join_temp_class_var_type  (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) temp_class_var_type 
+  let ref_set_pp format refset =
+    Reference.Set.iter refset ~f:(fun ref_ ->
+      Format.fprintf format "%a, " Reference.pp ref_
+    )
+
+  let pp_class_var_type format { class_var_type; join_temp_class_var_type; temp_class_var_type; seen_var_type; _ } =
+      Format.fprintf format "[[[ Class Variable Type ]]] 
+      \n%a\n[[[ Classs JOIN Variable Type ]]]\n%a\n
+      \n[[[ Classs Temp Variable Type ]]]\n%a\n
+      \n[[[ Seen Variable Type ]]]\n%a\n" 
+      (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) class_var_type 
+      (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) join_temp_class_var_type  
+      (ReferenceMap.pp ~data_pp:TypeFromFuncs.pp) temp_class_var_type 
+      (ReferenceMap.pp ~data_pp:ref_set_pp) seen_var_type
 
   let pp_class_info format { class_attributes; _ } =
       Format.fprintf format "[[[ Class Info ]]] \n%a\n" ClassAttributes.pp class_attributes
@@ -790,6 +866,11 @@ module ClassTable = struct
   let empty = ClassHash.create
 
   let find_default t name = ClassHash.find t name |> Option.value ~default:ClassSummary.empty 
+
+
+  let filter_seen_var ~class_name ~func_name ~var_set t =
+    let class_info = find_default t class_name in
+    ClassSummary.filter_seen_var ~func_name class_info var_set
 
 
   let add ~class_name ~data ~f t =
@@ -1153,7 +1234,7 @@ module Signatures = struct
     let ret_type = 
       type_join data.return_type typ 
       |> Type.narrow_iterable ~max_depth:2
-      |> Type.narrow_return_type
+      (* |> Type.narrow_return_type *) (* Baseline *)
     in
     (* Log.dump "%a + %a => %a => %a" Type.pp data.return_type Type.pp typ Type.pp x Type.pp ret_type; *)
     ArgTypesMap.set t ~key:arg_types ~data:{ data with return_type=ret_type }
@@ -1188,10 +1269,34 @@ module Signatures = struct
     let return_info = get_return_info t arg_types in
     return_info.return_var_type
 
-  let get_return_type ?property t arg_types =
-    let new_arg_types = filter_unknown arg_types in
-    let return_info = get_return_info ?property t new_arg_types in
-    return_info.return_type
+  let get_return_type ~type_join ?property t arg_types =
+    if !type_sensitive then (
+      let new_arg_types = filter_unknown arg_types in
+      let return_info = get_return_info ?property t new_arg_types in
+      (match return_info.return_type with
+      | Type.Bottom when String.equal (load_mode ()) "error" ->
+        ArgTypesMap.fold t ~init:Type.Unknown ~f:(fun ~key:_ ~data acc ->
+          type_join data.return_type acc  
+        )
+      | return_type when String.equal (load_mode ()) "error" ->
+        let default_type = ArgTypesMap.data t in
+        (match List.hd default_type with
+        | Some default -> type_join default.return_type return_type
+        | _ -> return_type
+        )
+        
+      | t -> t
+      )
+    ) else (
+      ArgTypesMap.fold t ~init:Type.Bottom ~f:(fun ~key:_ ~data acc -> 
+        type_join data.return_type acc
+      )
+      |> (fun t ->
+        match t with
+        | Type.Bottom -> Type.Unknown
+        | _ -> t  
+      )
+    )
 
   
 
@@ -1313,6 +1418,7 @@ module FunctionSummary = struct
     arg_annotation: ArgTypes.t; (* Argument Annotation *)
     return_var_type: Type.t ReferenceMap.t; (* Return 했을 때의 parameter 정보 *)
     return_type: Type.t; (* Function의 Return Type *) *)
+    param_varset: Reference.Set.t Identifier.Map.t;
     callers: CallerSet.t;
     return_annotation: Type.t;
     usage_attributes : AttributeStorage.t;
@@ -1331,6 +1437,7 @@ module FunctionSummary = struct
     return_var_type= ReferenceMap.empty; (* Return 했을 때의 parameter 정보 *)
     return_type= Type.Unknown; (* Function의 Return Type *) *)
     return_annotation=Type.Unknown;
+    param_varset=Identifier.Map.empty;
     callers=CallerSet.empty;
     usage_attributes=AttributeStorage.empty;
     unique_analysis=UniqueAnalysis.UniqueStruct.empty;
@@ -1346,6 +1453,19 @@ module FunctionSummary = struct
       Signatures.find_signature signatures ArgTypes.empty
     else
       Signatures.find_signature signatures arg_types
+
+  let add_param_varset t param_varset =
+    let param_varset =
+      Identifier.Map.merge t.param_varset param_varset ~f:(fun ~key:_ data ->
+        match data with
+        | `Left v | `Right v -> Some v
+        | `Both (v1, v2) -> Some (Reference.Set.union v1 v2)
+      )
+    in
+
+    { t with param_varset; }
+
+  let get_param_varset { param_varset; _ } = param_varset
 
   let add_new_signature ~join ?caller_name ({signatures; unknown_decorator; callers; _ } as t) arg_type_list =
     let callers =
@@ -1437,7 +1557,7 @@ module FunctionSummary = struct
 
   let get_return_annotation { return_annotation; _ } = return_annotation
 
-  let get_return_type ?property { signatures; _ } arg_types = Signatures.get_return_type ?property signatures arg_types
+  let get_return_type ~type_join ?property { signatures; _ } arg_types = Signatures.get_return_type ~type_join ?property signatures arg_types
 
   let get_callers { callers; _ } = callers
 
@@ -1477,6 +1597,14 @@ module FunctionSummary = struct
       )
     in
 
+    let param_varset =
+      Identifier.Map.merge left.param_varset right.param_varset ~f:(fun ~key:_ data ->
+        match data with
+        | `Left v | `Right v -> Some v
+        | `Both (v1, v2) -> Some (Reference.Set.union v1 v2)
+      )
+    in
+
     let return_annotation =
       match left.return_annotation, right.return_annotation with
       | Type.Unknown, t | t, Type.Unknown -> t
@@ -1490,6 +1618,7 @@ module FunctionSummary = struct
     signatures;
     preprocess;
     callers;
+    param_varset;
     return_annotation;
     usage_attributes;
     unique_analysis=UniqueAnalysis.UniqueStruct.join left.unique_analysis right.unique_analysis; 
@@ -1576,6 +1705,14 @@ module FunctionSummary = struct
         ) *)
       in
 
+      let param_varset =
+        Identifier.Map.merge prev.param_varset next.param_varset ~f:(fun ~key:_ data ->
+          match data with
+          | `Left v | `Right v -> Some v
+          | `Both (v1, v2) -> Some (Reference.Set.union v1 v2)
+        )
+      in
+
       (* if !debug then
         Log.dump "OK!!!! %a" Signatures.pp signatures; *)
 
@@ -1603,6 +1740,7 @@ module FunctionSummary = struct
       signatures;
       preprocess;
       callers;
+      param_varset;
       return_annotation;
       usage_attributes;
       unique_analysis=next.unique_analysis; 
@@ -1664,7 +1802,7 @@ module FunctionSummary = struct
       else
         ArgTypes.map ~f:(Type.narrow_union ~join ~less_or_equal) arg_types 
     in
-    let return_type = Signatures.get_return_type signatures arg_types in
+    let return_type = Signatures.get_return_type ~type_join:join signatures arg_types in
     
     let arg_callable = Type.Callable.map_parameters callable ~f:(fun x -> x) in 
 
@@ -1760,6 +1898,14 @@ module FunctionTable = struct
   let find_signature t reference arg_types =
     let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.find_signature func_summary arg_types
+
+  let add_param_varset t reference param_varset =
+    let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
+    FunctionHash.set ~key:reference ~data:(FunctionSummary.add_param_varset func_summary param_varset) t
+
+  let get_param_varset t reference =
+    let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
+    FunctionSummary.get_param_varset func_summary
 
   let add_new_signature ~join ?caller_name t reference arg_typ_list =
     let func_summary = FunctionHash.find t reference |> Option.value ~default:FunctionSummary.empty in
@@ -1863,17 +2009,21 @@ module FunctionTable = struct
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     FunctionSummary.get_return_var_type func_summary arg_types
 
-  let get_return_type ~less_or_equal ?property t func_name arg_types =
+  let get_return_type ~type_join ~less_or_equal ?property t func_name arg_types =
     let func_summary = FunctionHash.find t func_name |> Option.value ~default:FunctionSummary.empty in
     let annotation = FunctionSummary.get_return_annotation func_summary in
-    let real_type = FunctionSummary.get_return_type ?property func_summary arg_types in
+    let real_type = FunctionSummary.get_return_type ~type_join ?property func_summary arg_types in
 
-    
+    (* if String.is_substring (Reference.show func_name) ~substring:"MultiIndex.format" then (
+      Log.dump "%a => %a" Reference.pp func_name Type.pp real_type;
+      Log.dump "OK %a" FunctionSummary.pp func_summary;
+    ); *)
 
     let return_type =
       match annotation with
+      | t when not !on_dataflow -> t
       | Type.Unknown -> real_type
-      | t when !on_dataflow && not (Type.is_unknown real_type) -> 
+      | t when not (Type.is_unknown real_type) -> 
         let filtered_annotation = Type.filter_unknown t in
         let filtered_real_type = Type.filter_unknown real_type in
         if less_or_equal ~left:filtered_real_type ~right:filtered_annotation
@@ -1884,11 +2034,18 @@ module FunctionTable = struct
 
     (* Log.dump "??? %a => %a (%a) => %a" Reference.pp func_name Type.pp real_type Type.pp annotation Type.pp return_type; *)
 
+    (* let old_type = return_type in *)
+
     let return_type =
       if !on_any 
       then return_type
       else (if Type.can_unknown return_type then Type.Any else return_type)
     in
+
+    (* if String.is_substring (Reference.show func_name) ~substring:"MultiIndex.format" then (
+      Log.dump "%a => %a (%a) (%a)" Reference.pp func_name Type.pp return_type Type.pp old_type Type.pp real_type;
+      (* Log.dump "OK %a" FunctionSummary.pp func_summary; *)
+    ); *)
 
     return_type
 
@@ -1954,7 +2111,7 @@ module FunctionTable = struct
       callable
     | _ -> callable
 
-  let get_callable_return_type ~successors t arg_types (callable: Type.Callable.t) =
+  let get_callable_return_type ~type_join ~successors t arg_types (callable: Type.Callable.t) =
     match callable.kind with
     | Named name ->
       (* let class_name = Reference.drop_last name in 
@@ -1972,7 +2129,7 @@ module FunctionTable = struct
       in
 
       (* let func_summary = FunctionHash.find t name |> Option.value ~default:FunctionSummary.empty in *)
-      let x = FunctionSummary.get_return_type func_summary arg_types in
+      let x = FunctionSummary.get_return_type ~type_join func_summary arg_types in
 
       (* if String.is_substring (Reference.show name) ~substring:"solveset" then
         Log.dump "%a ==> %a" Reference.pp name Type.pp x; *)
@@ -2014,7 +2171,7 @@ module FunctionTable = struct
   let change_analysis_of_argtypes t callers =
     ReferenceMap.iteri callers ~f:(fun ~key ~data -> 
       match FunctionHash.find t key with
-      | Some func_summary when not (Reference.is_initialize key) -> 
+      | Some func_summary (* when not (Reference.is_initialize key) *) -> 
         (* Log.dump "%a ..." Reference.pp key; *)
         (* Log.dump "%a ..." Reference.pp key;
         ArgTypesOptSet.iter data ~f:(fun arg_types -> 
@@ -2068,6 +2225,9 @@ module type OurSummary = sig
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
     stub_info : StubInfo.t;
+    recheck_info: (Type.t Reference.Map.t) Reference.Map.t;
+    errors: Ppx_sexp_conv_lib.Sexp.t;
+    (* errors: OurErrorDomain.OurErrorList.t; *)
   }
 end
 
@@ -2076,6 +2236,8 @@ module OurSummary = struct
     class_table : ClassTable.t;
     function_table : FunctionTable.t;
     stub_info : StubInfo.t;
+    recheck_info: (Type.t Reference.Map.t) Reference.Map.t;
+    errors: Ppx_sexp_conv_lib.Sexp.t;
   }
   [@@deriving equal, sexp]
 
@@ -2083,7 +2245,21 @@ module OurSummary = struct
     class_table=ClassTable.empty ~size ();
     function_table=FunctionTable.empty ~size ();
     stub_info=StubInfo.empty;
+    recheck_info=Reference.Map.empty;
+    errors = Ppx_sexp_conv_lib.Sexp.Atom "";
   }
+
+  let set_errors t errors = { t with errors}
+
+  let get_errors { errors; _ } = errors
+
+  let set_recheck_info t recheck_info =
+    { t with recheck_info }
+
+  let get_recheck_info { recheck_info; _ } = recheck_info
+
+  let set_skip_reference_map ~define_name { recheck_info; _ } =
+    skip_reference_map := Reference.Map.find recheck_info define_name |> Option.value ~default:Reference.Map.empty
 
   let update_default_value ~prev next =
     ClassTable.update_default_value prev.class_table next.class_table
@@ -2121,8 +2297,17 @@ module OurSummary = struct
     { t with function_table = FunctionTable.join_return_type ~type_join function_table func_name return_type }
  *)
 
+ let filter_seen_var ~class_name ~func_name ~var_set { class_table; _ } =
+  ClassTable.filter_seen_var ~class_name ~func_name ~var_set class_table
+
  let find_signature {function_table; _ } reference arg_types =
   FunctionTable.find_signature function_table reference arg_types
+
+ let add_param_varset { function_table; _ } reference param_varset =
+  FunctionTable.add_param_varset function_table reference param_varset
+
+ let get_param_varset { function_table; _ } reference =
+  FunctionTable.get_param_varset function_table reference
 
  let add_new_signature ~join ?caller_name { function_table; _} reference arg_typ_list =
   FunctionTable.add_new_signature ~join ?caller_name function_table reference arg_typ_list
@@ -2204,8 +2389,8 @@ module OurSummary = struct
   let get_return_var_type {function_table; _} func_name arg_types =
     FunctionTable.get_return_var_type function_table func_name arg_types
 
-  let get_return_type ~less_or_equal {function_table; _} func_name arg_types  =
-    FunctionTable.get_return_type ~less_or_equal function_table func_name arg_types
+  let get_return_type ~type_join ~less_or_equal {function_table; _} func_name arg_types  =
+    FunctionTable.get_return_type ~type_join ~less_or_equal function_table func_name arg_types
 
   let get_callers {function_table; _} func_name =
     FunctionTable.get_callers function_table func_name
@@ -2219,8 +2404,8 @@ module OurSummary = struct
   let get_callable ~join ~less_or_equal ~successors { function_table; _ } arg_types callable =
     FunctionTable.get_callable ~join ~less_or_equal ~successors function_table arg_types callable
 
-  let get_callable_return_type ~successors { function_table; _ } arg_types callable =
-    FunctionTable.get_callable_return_type ~successors function_table arg_types callable
+  let get_callable_return_type ~type_join ~successors { function_table; _ } arg_types callable =
+    FunctionTable.get_callable_return_type ~type_join ~successors function_table arg_types callable
 
   let get_unique_analysis { function_table; _ } func_name =
     FunctionTable.get_unique_analysis function_table func_name
@@ -2282,6 +2467,8 @@ module OurSummary = struct
     Format.fprintf format "%a" FunctionTable.pp function_table
 
   let pp formatter t =
+    (* let _ = pp_class in
+    Format.fprintf formatter "%a" pp_func t *)
     Format.fprintf formatter "%a\n\n%a" pp_class t pp_func t
 
   let get_analysis_arg_types { function_table; _ } func_name =
@@ -2347,28 +2534,9 @@ module OurSummary = struct
 end
 
 let global_summary = "Pyinder.finalSummary"
-let check_dir : string -> bool 
-= fun path ->
-  match Sys.is_directory path with
-  | `Yes -> true
-  | _ -> false
-
-let check_and_make_dir : string -> unit
-= fun path ->
-  if check_dir path then ()
-  else Unix.mkdir path
 
 
 
-(*
-let check_file : string -> bool
-= fun path ->
-match Sys.file_exists path with
-| `Yes -> true
-| _ -> false
-  *)
-  
-let data_path = ref ""
 
 let is_func_model_exist () = check_dir !data_path
 
@@ -2397,24 +2565,13 @@ let is_last_inference_mode = String.equal "last_inference"
 
 let is_error_mode = String.equal "error"
 
+let is_recheck_mode = String.equal "recheck"
 
 let is_check_preprocess_mode = String.equal "check_preprocess"
 
 let is_preprocess = ref false;;
 
-let save_mode (mode: string) =
-  check_and_make_dir !data_path;
-  let target_path = !data_path ^ "/mode" ^ ".marshalled" in
-  let data_out = open_out target_path in
-  let sexp = String.sexp_of_t mode in
-  Marshal.to_channel data_out sexp [];
-  close_out data_out
 
-let load_mode () =
-  let data_in = open_in (!data_path ^ "/mode" ^ ".marshalled") in
-  let mode = String.t_of_sexp (Marshal.from_channel data_in) in
-  close_in data_in;
-  mode
 
 let save_summary (summary: OurSummary.t) func_name =
   check_and_make_dir !data_path;

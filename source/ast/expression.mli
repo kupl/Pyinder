@@ -564,6 +564,10 @@ val is_operator : string -> bool
 
 val operator_name_to_symbol : string -> string option
 
+val check_attribute : expression -> expression -> bool
+
+val get_reference_set : expression -> Reference.Set.t
+
 val calc_similarity : expression -> expression -> float
 
 val is_used : reference:Reference.t -> t -> bool
@@ -572,7 +576,7 @@ val is_used_call : reference:Reference.t -> t -> bool
 
 val is_check_none : reference:Reference.t -> t -> bool
 
-module ExpressionCounter : sig
+module BoolExpressionCounter : sig
   type t
 
   val empty : t

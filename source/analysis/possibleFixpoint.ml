@@ -154,6 +154,8 @@ module Make (State : PossibleState) = struct
     (*
     let possibleconditions = Int.Table.create () in
     *)
+    let context_initial = AstContext.define func_name in
+    let contexts = Int.Table.create () in
 
     let class_hierachy = Hashtbl.create (module Reference) in
     let _ = class_hierachy in
@@ -169,6 +171,15 @@ module Make (State : PossibleState) = struct
                |> Option.value ~default:State.bottom
                (*|> State.top_to_bottom*)
                |> State.join sofar)
+    in
+
+    let propagate_context node state =
+      successors node
+      |> Set.iter ~f:(fun successor_index ->
+          if Hashtbl.mem contexts successor_index
+          then ()
+          else Hashtbl.set contexts ~key:successor_index ~data:state 
+        )
     in
 
     (*
@@ -194,6 +205,13 @@ module Make (State : PossibleState) = struct
         |> Option.value ~default:State.bottom
         |> join_with_predecessors_postconditions node
       in
+
+      let context = 
+        if Int.equal (Cfg.Node.id node) initial_index
+        then context_initial
+        else Hashtbl.find_exn contexts node_id
+      in
+
       (* let join_time = Timer.stop_in_sec timer in
 
       if Float.(>) join_time 0.5 then
@@ -228,12 +246,16 @@ module Make (State : PossibleState) = struct
           Log.dump "%a" Cfg.Node.pp node;
         ); *)
 
-        (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node); *)
+        (* Log.dump "%s" (Format.asprintf "[ Node ]\n%a\n" Cfg.Node.pp node);
+        Log.dump "HMM %a" AstContext.pp context; *)
+
+      AstContext.context := context;
 
       Hashtbl.set preconditions ~key:node_id ~data:precondition;
-      let postcondition = transition ~context:!AstContext.context node_id precondition (Cfg.Node.statements node) in
+      let postcondition = transition ~context node_id precondition (Cfg.Node.statements node) in
 
-      AstContext.context := AstContext.set_context !AstContext.context node;
+      let context = AstContext.set_context context node in
+      AstContext.context := AstContext.set_context context node;
 
       let trans_time = Timer.stop_in_sec timer in
       let _ = trans_time in
@@ -258,8 +280,8 @@ module Make (State : PossibleState) = struct
         Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition);
           ); *)
 
-          
-          (* Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
+          (* Log.dump "%a" Cfg.Node.pp node;
+          Log.dump "%s" (Format.asprintf "[ Node Precondition ]\n%a\n" State.pp precondition);
           Log.dump "%s" (Format.asprintf "[ Node Postcondition ]\n%a\n" State.pp postcondition); *)
       (*
       if Int.equal 3 (Cfg.Node.id node)
@@ -273,6 +295,7 @@ module Make (State : PossibleState) = struct
      
       Hashtbl.set postconditions ~key:node_id ~data:postcondition;
       
+      propagate_context node context;
       (*
       (*Log.dump "%s" (Format.asprintf "[ Node Pre Possiblecondition ]\n%a\n" State.pp prepossible);*)
       let possiblecondition = State.set_possibleconditions precondition postcondition in

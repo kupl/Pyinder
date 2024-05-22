@@ -318,6 +318,13 @@ and kind =
       is_unimplemented: bool;
       define_location: Location.t;
     }
+  | IncompatibleReturnTypeWithExpression of {
+    mismatch: mismatch;
+    is_implicit: bool;
+    is_unimplemented: bool;
+    reference: Expression.t;
+    define_location: Location.t;
+  }
   | IncompatibleVariableType of {
       incompatible_type: incompatible_type;
       declare_location: Location.WithPath.t;
@@ -485,6 +492,8 @@ type t = {
 
 val compare_except_of_cause : t -> t -> int
 
+val compare_only_location : t -> t -> int
+
 module Instantiated : sig
   type t [@@deriving sexp, compare, show, hash, yojson { strict = false }]
 
@@ -546,7 +555,9 @@ val filter_typical_errors : exist:(Expression.t * Type.t -> bool) -> t list -> t
 
 val get_expression_list : t -> Expression.t list
 
-val get_expression_type : t list -> (Expression.t * Type.t) list
+val get_expression_type : t list -> (Expression.t * Type.t * Type.t * string) list
+
+val get_call_error : t -> Reference.t option
 
 val filter_interesting_error : t list -> t list
 

@@ -327,6 +327,13 @@ and kind =
       is_unimplemented: bool;
       define_location: Location.t;
     }
+  | IncompatibleReturnTypeWithExpression of {
+      mismatch: mismatch;
+      is_implicit: bool;
+      is_unimplemented: bool;
+      reference: Expression.t;
+      define_location: Location.t;
+    }
   | IncompatibleVariableType of {
       incompatible_type: incompatible_type;
       declare_location: Location.WithPath.t;
@@ -495,6 +502,7 @@ let code_of_kind = function
   | IncompatibleParameterType _ -> 6
   | IncompatibleParameterTypeWithReference _ -> 71
   | IncompatibleReturnType _ -> 7
+  | IncompatibleReturnTypeWithExpression _ -> 74
   | IncompatibleAttributeType _ -> 8
   | IncompatibleVariableType _ -> 9
   | UnboundName _ -> 10
@@ -574,6 +582,7 @@ let name_of_kind = function
   | IncompatibleParameterType _ -> "Incompatible parameter type"
   | IncompatibleParameterTypeWithReference _ -> "Incompatible parameter type with reference"
   | IncompatibleReturnType _ -> "Incompatible return type"
+  | IncompatibleReturnTypeWithExpression _ -> "Incompatible return type with expression"
   | IncompatibleVariableType _ -> "Incompatible variable type"
   | InconsistentOverride _ -> "Inconsistent override"
   | IncompatibleOverload _ -> "Incompatible overload"
@@ -690,6 +699,8 @@ let weaken_literals kind =
       IncompatibleParameterTypeWithReference { incompatible with mismatch = weaken_mismatch mismatch }
   | IncompatibleReturnType ({ mismatch; _ } as incompatible) ->
       IncompatibleReturnType { incompatible with mismatch = weaken_mismatch mismatch }
+  | IncompatibleReturnTypeWithExpression ({ mismatch; _ } as incompatible) ->
+      IncompatibleReturnTypeWithExpression { incompatible with mismatch = weaken_mismatch mismatch }
   | UninitializedAttribute ({ mismatch; _ } as uninitialized) ->
       UninitializedAttribute { uninitialized with mismatch = weaken_mismatch mismatch }
   | MissingAttributeAnnotation { parent; missing_annotation } ->
@@ -853,6 +864,9 @@ let simplify_kind kind =
       IncompatibleParameterTypeWithReference { details with mismatch = simplify_mismatch details.mismatch }
   | IncompatibleReturnType details ->
       IncompatibleReturnType { details with mismatch = simplify_mismatch details.mismatch }
+  | IncompatibleReturnTypeWithExpression details ->
+      IncompatibleReturnTypeWithExpression
+        { details with mismatch = simplify_mismatch details.mismatch }
   | IncompatibleVariableType details ->
       IncompatibleVariableType
         { details with incompatible_type = simplify_incompatible_type details.incompatible_type }
@@ -1075,6 +1089,24 @@ let rec messages ~concise ~signature location kind =
           annotation;
       ]
   | IncompatibleReturnType { mismatch = { actual; expected; due_to_invariance; _ }; is_implicit; _ }
+    ->
+      let trace =
+        Format.asprintf
+          "Type `%a` expected on line %d, specified on line %d.%s"
+          pp_type
+          expected
+          stop_line
+          define_location.Location.start.Location.line
+          (if due_to_invariance then " " ^ invariance_message else "")
+      in
+      let message =
+        if is_implicit then
+          Format.asprintf "Expected `%a` but got implicit return value of `None`." pp_type expected
+        else
+          Format.asprintf "Expected `%a` but got `%a`." pp_type expected pp_type actual
+      in
+      [message; trace]
+  | IncompatibleReturnTypeWithExpression { mismatch = { actual; expected; due_to_invariance; _ }; is_implicit; _ }
     ->
       let trace =
         Format.asprintf
@@ -2604,6 +2636,9 @@ module T = struct
 
   let compare_except_of_cause left right =
     (compare {left with cause=None} {right with cause=None})
+
+  let compare_only_location left right =
+    Location.WithModule.compare left.location right.location
 end
 
 include T
@@ -2739,6 +2774,7 @@ let due_to_analysis_limitations { kind; _ } =
   | TypedDictionaryInvalidOperation { mismatch = { actual; _ }; _ }
   | TypedDictionaryInitializationError (FieldTypeMismatch { actual_type = actual; _ })
   | IncompatibleReturnType { mismatch = { actual; _ }; _ }
+  | IncompatibleReturnTypeWithExpression { mismatch = { actual; _ }; _ }
   | IncompatibleAttributeType { incompatible_type = { mismatch = { actual; _ }; _ }; _ }
   | IncompatibleVariableType { incompatible_type = { mismatch = { actual; _ }; _ }; _ }
   | InconsistentOverride { override = StrengthenedPrecondition (Found { actual; _ }); _ }
@@ -2869,6 +2905,8 @@ let less_or_equal ~resolution left right =
   | IncompatibleConstructorAnnotation left, IncompatibleConstructorAnnotation right ->
       GlobalResolution.less_or_equal resolution ~left ~right
   | IncompatibleReturnType left, IncompatibleReturnType right ->
+      less_or_equal_mismatch left.mismatch right.mismatch
+  | IncompatibleReturnTypeWithExpression left, IncompatibleReturnTypeWithExpression right ->
       less_or_equal_mismatch left.mismatch right.mismatch
   | IncompatibleOverload left, IncompatibleOverload right -> (
       match left, right with
@@ -3171,6 +3209,7 @@ let less_or_equal ~resolution left right =
   | IncompatibleParameterType _, _
   | IncompatibleParameterTypeWithReference _, _
   | IncompatibleReturnType _, _
+  | IncompatibleReturnTypeWithExpression _, _
   | IncompatibleOverload _, _
   | IncompleteType _, _
   | IncompatibleVariableType _, _
@@ -3409,6 +3448,16 @@ let join_without_resolution ~type_join left right =
             mismatch = join_mismatch left.mismatch right.mismatch;
             is_implicit = left.is_implicit && right.is_implicit;
             is_unimplemented = left.is_unimplemented && right.is_unimplemented;
+            define_location = right.define_location;
+          }
+    | IncompatibleReturnTypeWithExpression left, IncompatibleReturnTypeWithExpression right
+      when [%compare.equal: Expression.t] left.reference right.reference ->
+        IncompatibleReturnTypeWithExpression
+          {
+            mismatch = join_mismatch left.mismatch right.mismatch;
+            is_implicit = left.is_implicit && right.is_implicit;
+            is_unimplemented = left.is_unimplemented && right.is_unimplemented;
+            reference = left.reference;
             define_location = right.define_location;
           }
     | IncompatibleAttributeType left, IncompatibleAttributeType right
@@ -3786,6 +3835,7 @@ let join_without_resolution ~type_join left right =
     | IncompatibleParameterType _, _
     | IncompatibleParameterTypeWithReference _, _
     | IncompatibleReturnType _, _
+    | IncompatibleReturnTypeWithExpression _, _
     | IncompatibleOverload _, _
     | IncompleteType _, _
     | IncompatibleVariableType _, _
@@ -4038,6 +4088,16 @@ let join ~resolution left right =
             mismatch = join_mismatch left.mismatch right.mismatch;
             is_implicit = left.is_implicit && right.is_implicit;
             is_unimplemented = left.is_unimplemented && right.is_unimplemented;
+            define_location = right.define_location;
+          }
+    | IncompatibleReturnTypeWithExpression left, IncompatibleReturnTypeWithExpression right
+      when [%compare.equal: Expression.t] left.reference right.reference ->
+        IncompatibleReturnTypeWithExpression
+          {
+            mismatch = join_mismatch left.mismatch right.mismatch;
+            is_implicit = left.is_implicit && right.is_implicit;
+            is_unimplemented = left.is_unimplemented && right.is_unimplemented;
+            reference = left.reference;
             define_location = right.define_location;
           }
     | IncompatibleAttributeType left, IncompatibleAttributeType right
@@ -4340,6 +4400,7 @@ let join ~resolution left right =
     | IncompatibleParameterType _, _
     | IncompatibleParameterTypeWithReference _, _
     | IncompatibleReturnType _, _
+    | IncompatibleReturnTypeWithExpression _, _
     | IncompatibleOverload _, _
     | IncompleteType _, _
     | IncompatibleVariableType _, _
@@ -4558,45 +4619,117 @@ let get_expression_type errors =
   let tmp = 
   List.fold errors ~init:[] ~f:(fun acc { kind; _ } ->
     match kind with
-    | UnsupportedOperandWithReference (BinaryWithReference {left_operand; right_operand; left_reference; right_reference; _ }) ->
-      (left_reference, left_operand)::(right_reference, right_operand)::acc
+    | UnsupportedOperandWithReference (BinaryWithReference {left_operand; right_operand; left_reference; right_reference; operator_name; }) ->
+      (left_reference, left_operand, left_operand, operator_name)::(right_reference, right_operand, right_operand, operator_name)::acc
 
-    | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; _ }) ->
-
-      (reference, operand)::acc
+    | UnsupportedOperandWithReference (UnaryWithReference { operand; reference; operator_name; }) ->
+      (reference, operand, operand, operator_name)::acc
     | IncompatibleParameterTypeWithReference { name; callee; mismatch = { actual; _ }; reference; _ }
     ->
+(*       let actual =
+        (match actual, expected with
+        | Parametric { name; parameters }, Parametric { name = expected_name; parameters=expected_parameters } when String.equal name expected_name ->
+          if List.length parameters = 1 && List.length expected_parameters = 1
+          then (
+            let param_type = List.nth_exn parameters 0 in
+            let expected_type = List.nth_exn expected_parameters 0 in
+            (match param_type, expected_type with
+            | Single param, Single expected -> 
+              let x = 
+                Type.filter_type ~f:(Type.equal expected) param
+              in
+
+              Log.dump ">>> %a" Type.pp x;
+
+              x
+            | _ -> actual
+            )
+          )
+          else actual
+        | _ -> actual
+        )
+      in *)
       (match name, callee with
       | Some name, Some callee -> 
+        
         let name_exp = 
           name |> Reference.create |> Expression.create_name_from_reference_without_location
         in
         let exp = Expression.Expression.Name name_exp |> Node.create_with_default_location in
+
+        let operator = callee |> Reference.last in
         let typ = callee |> Reference.drop_last |> Reference.show in
-        let _ = exp, typ in
-        (reference, actual)::acc
-        (* (exp, Primitive typ)::(reference, actual)::acc *)
-      | _ -> (reference, actual)::acc
+        (* Log.dump "%a, %a" Expression.pp exp Type.pp (Primitive typ); *)
+        (* (reference, actual)::acc *)
+
+        if String.equal typ ""
+        then (reference, actual, actual, "")::acc
+        else (exp, Primitive typ, Primitive typ, operator)::(reference, actual, actual, "")::acc
+      | _ -> (reference, actual, actual, "")::acc
       )
 
-    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; _ } when
-      Type.is_none actual || Type.is_optional actual
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassType actual; _ }; reference; attribute; _ } (* when
+      Type.is_none actual || Type.is_optional actual *)
     ->
+      let is_special =
+        String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__"
+      in
 
-      (reference, actual)::acc
-    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; reference; _ } when
+      if not is_special then (
+        (reference, actual, actual, attribute)::acc
+      ) else (
+        (reference, actual, actual, attribute)::acc
+        (* let name_exp = 
+          Expression.Expression.Name (Expression.Name.Attribute { base=reference; attribute; special=true; }) 
+          |> Node.create_with_default_location
+        in
+        (name_exp, actual)::acc *)
+      )
+      (* let name_exp = 
+        Expression.Expression.Name (Expression.Name.Attribute { base=reference; attribute; special=true; }) 
+        |> Node.create_with_default_location
+      in
+      (name_exp, actual)::acc *)
+    | UndefinedAttributeWithReference { origin = Class { class_origin = ClassInUnion { unions; index }; _ }; reference; attribute; _ } (* when
       let actual = (fst (Type.split (List.nth_exn unions index))) in
-      Type.is_none actual || Type.is_optional actual ->
+      Type.is_none actual || Type.is_optional actual *) ->
       let actual = (fst (Type.split (List.nth_exn unions index))) in
-      (reference, actual)::acc
+      let is_special =
+        String.is_prefix attribute ~prefix:"__" && String.is_suffix attribute ~suffix:"__"
+      in
+
+      if not is_special then (
+        (reference, actual, Type.union unions, attribute)::acc
+      ) else (
+        (reference, actual, Type.union unions, attribute)::acc
+        (* let name_exp = 
+          Expression.Expression.Name (Expression.Name.Attribute { base=reference; attribute; special=true; }) 
+          |> Node.create_with_default_location
+        in
+        (name_exp, actual)::acc *)
+      )
+      (* let name_exp = 
+        Expression.Expression.Name (Expression.Name.Attribute { base=reference; attribute; special=true; }) 
+        |> Node.create_with_default_location
+      in
+      (name_exp, actual)::acc *)
     | NotCallableWithExpression { expression; annotation; } 
       when Type.is_none annotation || Type.is_optional annotation ->
-      (expression, annotation)::acc
+      (expression, annotation, annotation, "")::acc
+    | IncompatibleReturnTypeWithExpression { mismatch = { actual; _ }; reference; _ } ->
+      (reference, actual, actual, "")::acc
     | _ -> 
       acc
   )
   in
   tmp
+
+let get_call_error error =
+  match error.kind with
+  | UnexpectedKeyword { callee; _ } -> callee
+  | TooManyArguments { callee; _ } -> callee
+  | MissingArgument { callee; _ } -> callee 
+  | _ -> None
 
 let filter_interesting_error errors =
   List.filter errors ~f:(fun error -> 
@@ -4686,6 +4819,7 @@ let filter ~resolution errors =
       | IncompatibleParameterType { mismatch = { actual; _ }; _ }
       | IncompatibleParameterTypeWithReference { mismatch = { actual; _ }; _ }
       | IncompatibleReturnType { mismatch = { actual; _ }; _ }
+      | IncompatibleReturnTypeWithExpression { mismatch = { actual; _ }; _ }
       | IncompatibleVariableType { incompatible_type = { mismatch = { actual; _ }; _ }; _ }
       | TypedDictionaryInvalidOperation { mismatch = { actual; _ }; _ }
       | UndefinedAttribute { origin = Class { class_origin = ClassType actual; _ }; _ } 
@@ -4733,6 +4867,7 @@ let filter ~resolution errors =
       | IncompatibleParameterType { mismatch = { expected; actual; _ }; _ }
       | IncompatibleParameterTypeWithReference { mismatch = { expected; actual; _ }; _ }
       | IncompatibleReturnType { mismatch = { expected; actual; _ }; _ }
+      | IncompatibleReturnTypeWithExpression { mismatch = { expected; actual; _ }; _ }
       | IncompatibleAttributeType
           { incompatible_type = { mismatch = { expected; actual; _ }; _ }; _ }
       | TypedDictionaryInvalidOperation { mismatch = { expected; actual; _ }; _ }
@@ -4869,6 +5004,7 @@ let suppress ~mode ~ignore_codes error =
     | RevealedType _ -> false
     | UnsafeCast _ -> false
     | IncompatibleReturnType { is_unimplemented = true; _ } -> true
+    | IncompatibleReturnTypeWithExpression { is_unimplemented = true; _ } -> true
     | _ ->
         due_to_analysis_limitations error
         || Define.Signature.is_untyped signature
@@ -5118,6 +5254,8 @@ let dequalify
           }
     | IncompatibleReturnType ({ mismatch; _ } as return) ->
         IncompatibleReturnType { return with mismatch = dequalify_mismatch mismatch }
+    | IncompatibleReturnTypeWithExpression ({ mismatch; _ } as return) ->
+        IncompatibleReturnTypeWithExpression { return with mismatch = dequalify_mismatch mismatch }
     | IncompatibleAttributeType { parent; incompatible_type = { mismatch; _ } as incompatible_type }
       ->
         IncompatibleAttributeType
@@ -5346,13 +5484,15 @@ let filter_type_error errors =
       | IncompatibleAttributeType _
       | NotCallable _ | NotCallableWithExpression _
       | TooManyArguments _ | MissingArgument _  | UnexpectedKeyword _ 
+      | IncompatibleReturnType _
+      | IncompatibleReturnTypeWithExpression _
         -> true
       | MissingParameterAnnotation _ | MissingReturnAnnotation _ | MissingAttributeAnnotation _
       | MissingCaptureAnnotation _ | MissingGlobalAnnotation _ | MissingOverloadImplementation _
        -> false
       | UndefinedImport _ 
       | InvalidTypeParameters _ | UndefinedType _ | UnboundName _ | UninitializedLocal _ | InvalidDecoration _
-      | IncompatibleReturnType _
+      
       | InvalidOverride _
       | InvalidType _
       | InconsistentOverride _
