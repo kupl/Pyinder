@@ -14626,6 +14626,7 @@ let exit_state ~resolution (module Context : OurContext) =
         | Some state ->
           
           (match state.rt_type with
+          | _ when not (!OurDomain.on_class_var) -> ()
           | Value v when (!OurDomain.on_class_var) || (Reference.is_initialize name) ->
             (* Log.dump "WHY?? %a" Resolution.pp v; *)
             (* if String.is_substring (Reference.show name) ~substring:"blueprints.Blueprint.group"

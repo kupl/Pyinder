@@ -13,7 +13,9 @@ open PyreParser
 module ExpressionParameter = Parameter
 
 
-let restrict_dict = ref true (* True: No use value dependent dict *)
+let restrict_dict = ref false (* True: No use value dependent dict *)
+
+let element_join = ref false (* True: use element join *)
 
 module Record = struct
   module Variable = struct
@@ -7257,7 +7259,12 @@ let rec get_dict_value_type ?(with_key = None) ?(value_type = Unknown) t =
           if List.length filter_unknown_t_list = 1
           then List.nth_exn filter_unknown_t_list 0
           else 
-            Union t_list
+            ( 
+              if !element_join && ((List.length filter_unknown_t_list) > 1) then
+                Any
+              else  
+                Union t_list
+            )
             (* (match key_parameter with
             | Union t_list -> if List.exists t_list ~f:(equal value_type) then value_parameter else Unknown
             | t -> if equal t value_type then value_parameter else Unknown
@@ -7331,6 +7338,91 @@ let deep_to_any annotation =
   | OurTypedDictionary _
   ->
     dictionary ~key:Any ~value:Any
+  | _ -> annotation
+
+let rec element_to_any annotation =
+  match annotation with
+  | Parametric { name = "typing.Iterable"; parameters } ->
+    (match List.hd parameters with
+    | Some (Single t) ->
+      (match t with
+      | Union t_list ->
+        let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+        if length > 1 then iterable Any else iterable t
+      | _ -> iterable t
+      )
+    | _ -> iterable Any
+    )
+    
+  | Parametric { name = "list"; parameters } ->
+    (match List.hd parameters with
+    | Some (Single t) ->
+      (match t with
+      | Union t_list ->
+        let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+        if length > 1 then list Any else list t
+      | _ -> list t
+      )
+    | _ -> list Any
+    )
+  | Parametric { name = "set" | "frozenset" | "typing.FrozenSet" ; parameters } ->
+    (match List.hd parameters with
+    | Some (Single t) ->
+      (match t with
+      | Union t_list ->
+        let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+        if length > 1 then set Any else set t
+      | _ -> set t
+      )
+    | _ -> set Any
+    )
+  | Tuple parameters
+  ->
+    (match parameters with
+    | Concrete t_list ->
+        let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+        if length > 1 then tuple [Any] else tuple t_list
+    | _ -> tuple [Any]
+    )
+    
+  | Parametric { name = "typing.Tuple" | "Tuple"; parameters } 
+  ->
+    (match List.hd parameters with
+    | Some (Single t) ->
+      (match t with
+      | Union t_list ->
+        let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+        if length > 1 then tuple [Any] else tuple [t]
+      | _ -> tuple [t]
+      )
+    | _ -> tuple [Any]
+    )
+  | Parametric { name = "typing.Mapping" | "dict" | "collections.defaultdict" | "typing.DefaultDict"; parameters } 
+  ->
+    (match parameters with
+    | [Single key; Single value] ->
+      let key_type = 
+        (match key with
+        | Union t_list ->
+          let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+          if length > 1 then Any else key
+        | _ -> Any
+        )
+      in
+      let value_type =
+        (match value with
+        | Union t_list ->
+          let length = List.fold t_list ~init:0 ~f:(fun acc t -> if is_unknown t then acc else acc+1) in
+          if length > 1 then Any else value
+        | _ -> Any
+        )
+        in
+      dictionary ~key:key_type ~value:value_type
+    | _ -> dictionary ~key:Any ~value:Any
+    )
+  | OurTypedDictionary { general; _ }
+  ->
+    element_to_any general
   | _ -> annotation
 
 let rec get_depth parent_annotation =

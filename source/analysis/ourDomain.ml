@@ -1298,6 +1298,10 @@ module Signatures = struct
       )
     )
 
+    |> (fun x ->
+      if !Type.element_join then Type.element_to_any x else x  
+    )
+
   
 
   let get_analysis_arg_types t = 
@@ -1524,6 +1528,8 @@ module FunctionSummary = struct
   let add_caller ({ callers; _ } as t) caller =
     { t with callers=(CallerSet.add callers caller); }
   
+  (* let divide_caller { callers; _ } = *)
+    
 
 (*     let set_arg_types t arg_types = 
     { t with arg_types }

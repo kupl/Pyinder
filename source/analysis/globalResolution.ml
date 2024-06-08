@@ -148,7 +148,12 @@ let less_or_equal resolution = full_order resolution |> TypeOrder.always_less_or
 
 let join resolution left right = 
   let order = full_order resolution in
-  TypeOrder.join order left right
+  let x = TypeOrder.join order left right in
+
+  if !Type.element_join then
+    Type.element_to_any x
+  else
+    x
   (* |> Type.narrow_iterable ~max_depth:3 *)
 
 let meet resolution left right = 

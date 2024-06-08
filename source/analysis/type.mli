@@ -10,6 +10,8 @@ open Ast
 
 val restrict_dict : bool ref
 
+val element_join : bool ref
+
 module Record : sig
   module Variable : sig
     type state [@@deriving compare, eq, sexp, show, hash]
@@ -1264,3 +1266,5 @@ val our_dict_to_dict : t -> t
 val calc_type : t -> t -> float
 
 val del_type : less_or_equal:(left:t -> right:t -> bool) -> t -> t -> t
+
+val element_to_any : t -> t
