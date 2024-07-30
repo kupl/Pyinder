@@ -595,7 +595,7 @@ module StubInfo = struct
   let is_empty = Identifier.Map.is_empty
 
   let create () =
-    let stub_json = Yojson.Basic.from_file "/home/wonseok/Pyinder/stubs/typeshed/typeshed-master/stub_info.json" in
+    let stub_json = Yojson.Basic.from_file "/home/wonseok/2tb/wonseok/Pyinder/stubs/typeshed/typeshed-master/stub_info.json" in
     let open Yojson.Basic.Util in
     let json_list = stub_json |> to_list in
 

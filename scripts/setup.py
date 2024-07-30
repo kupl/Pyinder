@@ -21,7 +21,7 @@ from typing import Dict, List, Mapping, NamedTuple, Optional, Type
 LOG: logging.Logger = logging.getLogger(__name__)
 
 
-COMPILER_VERSION = "4.10.2"
+COMPILER_VERSION = "pyinder"
 DEVELOPMENT_COMPILER: str = COMPILER_VERSION
 RELEASE_COMPILER = f"{COMPILER_VERSION}+flambda"
 DEPENDENCIES = [
