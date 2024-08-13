@@ -595,7 +595,17 @@ module StubInfo = struct
   let is_empty = Identifier.Map.is_empty
 
   let create () =
-    let stub_json = Yojson.Basic.from_file "/home/wonseok/Pyinder/stubs/typeshed/typeshed-master/stub_info.json" in
+    let home =
+      try
+        Sys.getenv "HOME"
+      with Not_found -> failwith "HOME environment variable is not set"
+    in
+
+    let stub_json = 
+      match home with
+      | Some home -> Yojson.Basic.from_file (home ^ "/Pyinder/stubs/typeshed/typeshed-master/stub_info.json")
+      | _ -> failwith "HOME environment variable is not set"
+    in
     let open Yojson.Basic.Util in
     let json_list = stub_json |> to_list in
 
