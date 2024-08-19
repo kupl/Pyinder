@@ -165,7 +165,7 @@
 
              let rec fixpoint n k environment prev_model skip_set =
               let _ = prev_model in
-              Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set);
+              (* Log.dump "Skip %i Functions" (Ast.Reference.Set.length skip_set); *)
 
               (* Ast.Reference.Set.iter skip_set ~f:(fun s -> Log.dump ">>> %a" Ast.Reference.pp s); *)
 
@@ -201,13 +201,13 @@
                 Analysis.OurDomain.save_mode "error";
                 Analysis.OurDomain.OurSummary.update_unseen_temp_class_var_type_to_unknown !Analysis.OurDomain.our_model;
                 (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
-                Log.dump "Check";
+                (* Log.dump "Check"; *)
                 let environment =
                   Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
                   |> Analysis.ErrorsEnvironment.set_environment environment
                 in
                 Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
-                Log.dump "Done";
+                (* Log.dump "Done"; *)
                 (* let functions_list = Analysis.OurDomain.OurSummary.get_functions_of_class our_model in
                 Analysis.OurErrorDomain.our_errors := List.fold functions_list ~init:!Analysis.OurErrorDomain.our_errors ~f:(fun our_errors functions -> Analysis.OurErrorDomain.OurErrorList.get_repeated_errors our_errors functions);
                  *)
@@ -235,7 +235,7 @@
                   Analysis.OurDomain.our_model := Analysis.OurDomain.OurSummary.set_recheck_info !Analysis.OurDomain.our_model function_to_reference;
 
                   Analysis.OurErrorDomain.our_errors := Analysis.OurErrorDomain.OurErrorList.empty;
-                  Log.dump "ReCheck";
+                  (* Log.dump "ReCheck"; *)
                   Analysis.OurDomain.save_mode "recheck";
                   let environment =
                     Analysis.EnvironmentControls.create ~populate_call_graph:true ~our_summary:!Analysis.OurDomain.our_model configuration
@@ -246,7 +246,7 @@
                   let re_errors = !Analysis.OurErrorDomain.our_errors in
                   let remain_errors = Analysis.OurErrorDomain.OurErrorList.inter_error cluster_errors re_errors in
 
-                  Log.dump "Remain Error : %i" (Analysis.OurErrorDomain.OurErrorList.num remain_errors);
+                  (* Log.dump "Remain Error : %i" (Analysis.OurErrorDomain.OurErrorList.num remain_errors); *)
 
                   let total_errors = Analysis.OurErrorDomain.OurErrorList.merge_error noise_errors remain_errors in
 

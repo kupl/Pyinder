@@ -3803,9 +3803,9 @@ module TypeCheckRT (Context : OurContext) = struct
 
       let _ = define_name in
 
-
-      (* if String.is_substring (Reference.show define_name) ~substring:"t.really"
-       (*  && (String.equal (Expression.show (Callee.expression callee)) "$local_salt?state?State?call$ret.__getitem__") *)
+      
+      (* if String.is_substring (Reference.show define_name) ~substring:"series.order"
+        && (String.is_substring (Expression.show (Callee.expression callee)) ~substring:"solveset")
         then (
           (* Log.dump "%a" Resolution.pp resolved.resolution; *)
           Log.dump "END Callee %a ==> %a" Expression.pp (Callee.expression callee) Type.pp (resolved.resolved);

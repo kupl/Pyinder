@@ -456,9 +456,14 @@ module OurCauseMap = struct
         then (
           get_noise_point next_t (ErrorCauseSet.fold ~init:noise_map ~f:(fun noise_map (key, data) -> ErrorMap.set ~key ~data noise_map) new_cluster) cluster_map common_reference
         )
-        else 
+        else (
+          (* ErrorCauseSet.iter new_cluster ~f:(fun (error, cause) -> 
+            Log.dump "Error >> %a\nCause >> %a" Error.pp error Cause.pp cause.cause
+          ); *)
+
           get_noise_point next_t noise_map (ErrorCauseSet.fold ~init:cluster_map ~f:(fun cluster_map (key, data) -> ErrorMap.set ~key ~data cluster_map) new_cluster)
           (function_to_reference ~type_join ~cluster:new_cluster common_reference)
+        )
     in
 
     get_noise_point t empty empty Reference.Map.empty
@@ -793,7 +798,7 @@ module OurErrorList = struct
     let cause_map, loc_map = get_cause ~global_resolution t our_model in
     let get_cause_time = Timer.stop_in_sec timer in
     let type_join = GlobalResolution.join global_resolution in
-    let noise_map, cluster_map, function_to_reference = OurCauseMap.dbscan ~type_join ~epsilon:0.30 ~min_pts:1 cause_map in
+    let noise_map, cluster_map, function_to_reference = OurCauseMap.dbscan ~type_join ~epsilon:0.5 ~min_pts:4 cause_map in
     let get_map_time = Timer.stop_in_sec timer in
     (* Log.dump "END MAP"; *)
     let noise_map =
