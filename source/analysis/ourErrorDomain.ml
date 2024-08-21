@@ -610,6 +610,13 @@ module OurErrorList = struct
                 | Some error_reference -> (
                   match UniqueAnalysis.UniqueStruct.find_pre_statements_of_location unique_analysis location with
                     | Some (state, loc) ->
+                      let error_reference =
+                        if String.equal cause "zip" then (
+                          Reference.combine error_reference (Reference.create "_zip")
+                        ) else (
+                          error_reference
+                        )
+                      in
                       let _ = state, loc in
                       let var_set = UniqueAnalysis.UniqueState.get_all_relative_variables ~reference:error_reference state in
 

@@ -4662,8 +4662,11 @@ let get_expression_type errors =
         (* Log.dump "%a, %a" Expression.pp exp Type.pp (Primitive typ); *)
         (* (reference, actual)::acc *)
 
-        if String.equal typ "" || String.is_substring typ ~substring:"zip"
+        if String.equal typ ""
         then (reference, actual, actual, "")::acc
+        else if String.is_substring typ ~substring:"zip" then (
+          (reference, actual, actual, "zip")::acc
+        )
         else (exp, Primitive typ, Primitive typ, operator)::(reference, actual, actual, "")::acc
       | _ -> (reference, actual, actual, "")::acc
       )
