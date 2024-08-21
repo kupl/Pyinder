@@ -1132,6 +1132,8 @@ val filter_type : f:(t -> bool) -> t -> t
 
 val filter_unknown : t -> t
 
+val check_other_set : t -> bool
+
 val union_join : t -> t -> t
 
 val count_defined_without_default : t Record.Callable.record_parameters -> int

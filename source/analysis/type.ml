@@ -2775,6 +2775,16 @@ let rec filter_unknown t =
     else Union new_t_list 
   | _ -> t
 
+let rec check_other_set t =
+  match t with
+  | Union t_list ->
+    List.fold t_list ~init:false ~f:(fun acc t -> acc || check_other_set t)
+  | Primitive typ ->
+    if String.is_substring typ ~substring:".set" || String.is_substring typ ~substring:".Set"
+    then true
+    else false
+  | _ -> false
+
 let union_join left right =
   let dedup =
     List.dedup_and_sort ~compare:(fun l r ->
