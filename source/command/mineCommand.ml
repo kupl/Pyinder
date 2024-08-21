@@ -153,11 +153,11 @@
               Log.dump "Preprocess...";
               Analysis.OurDomain.save_mode "preprocess";
               
-              let timer = Timer.start () in
+              (* let timer = Timer.start () in *)
 
               Analysis.ErrorsEnvironment.type_check ~scheduler ~type_join ~skip_set:Ast.Reference.Set.empty environment;
 
-              Log.dump "END %.3f" (Timer.stop_in_sec timer);
+              (* Log.dump "END %.3f" (Timer.stop_in_sec timer); *)
               (* Log.dump "%a" Analysis.OurDomain.OurSummary.pp !Analysis.OurDomain.our_model; *)
 
               Analysis.OurDomain.save_mode "inference";

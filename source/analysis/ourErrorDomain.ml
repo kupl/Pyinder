@@ -805,7 +805,7 @@ module OurErrorList = struct
     let cause_map, loc_map = get_cause ~global_resolution t our_model in
     let get_cause_time = Timer.stop_in_sec timer in
     let type_join = GlobalResolution.join global_resolution in
-    let noise_map, cluster_map, function_to_reference = OurCauseMap.dbscan ~type_join ~epsilon:0.5 ~min_pts:4 cause_map in
+    let noise_map, cluster_map, function_to_reference = OurCauseMap.dbscan ~type_join ~epsilon:0.5 ~min_pts:1 cause_map in
     let get_map_time = Timer.stop_in_sec timer in
     (* Log.dump "END MAP"; *)
     let noise_map =
@@ -841,7 +841,7 @@ module OurErrorList = struct
       )
     in *)
 
-    Log.dump "%i => %i" (LocationMap.length t) (LocationMap.length noise_map);
+    (* Log.dump "%i => %i" (LocationMap.length t) (LocationMap.length noise_map); *)
 
     noise_map, cluster_map, function_to_reference
 
