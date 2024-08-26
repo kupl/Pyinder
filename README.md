@@ -49,3 +49,6 @@ cd <directory-where-.pyre_configuration-is-located>
 pyinder mine
 ```
 
+## Learning More
+
+- **Uncovered Bugs**: We uploaded the uncovered bugs in the `find_bug_list.xlsx` file. Documentation will be provided soon.
