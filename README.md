@@ -10,7 +10,12 @@ We tested Pyinder on *Ubuntu 22.04 LTS*.
 
 ```bash
 git clone https://github.com/kupl/Pyinder
-cd <Pyinder-path>/source
+cd <Pyinder-path>
+# Install python dependencies
+pip install -r requirements.txt
+
+# Build OCaml
+cd source
 make
 ```
 
